@@ -338,7 +338,7 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", type=str, help="Path to the dataset.")
     parser.add_argument("--input-len", type=int, default=2048)
     parser.add_argument("--output-len", type=int, default=256)
-    parser.add_argument("--range-ratio", type=float, default=1.0)
+    parser.add_argument("--range-ratio", type=float, default=0.4)
     parser.add_argument(
         "--tokenizer",
         type=str,
