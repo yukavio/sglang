@@ -53,6 +53,7 @@ from sglang.srt.model_config import ModelConfig
 from sglang.srt.model_executor.forward_batch_info import ForwardMode
 from sglang.srt.model_executor.model_runner import ModelRunner
 from sglang.srt.server_args import ServerArgs
+from sglang.srt.profile.process_scheduler import ProcessScheduler
 from sglang.srt.utils import (
     get_int_token_logit_bias,
     is_multimodal_model,
@@ -98,6 +99,10 @@ class ModelTpServer:
             context_length=server_args.context_length,
             model_overide_args=model_overide_args,
         )
+
+        self.profile_scheduler = ProcessScheduler()
+
+
         self.model_runner = ModelRunner(
             model_config=self.model_config,
             mem_fraction_static=server_args.mem_fraction_static,
@@ -106,9 +111,12 @@ class ModelTpServer:
             tp_size=server_args.tp_size,
             nccl_port=nccl_port,
             server_args=server_args,
+            profile_scheduler=self.profile_scheduler, 
         )
+
         if server_args.skip_tokenizer_init:
             self.tokenizer = self.processor = None
+
         else:
             if is_multimodal_model(server_args.model_path):
                 self.processor = get_processor(
