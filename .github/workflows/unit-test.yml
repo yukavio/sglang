@@ -20,7 +20,7 @@ concurrency:
 jobs:
   unit-test:
     if: github.repository == 'sgl-project/sglang' || github.event_name == 'pull_request'
-    runs-on: self-hosted
+    runs-on: unit
 
     steps:
     - name: Checkout code
@@ -31,18 +31,18 @@ jobs:
         source $HOME/venv/bin/activate
         echo "$HOME/venv/bin" >> $GITHUB_PATH
 
-        pip cache purge
         pip install --upgrade pip
         pip install -e "python[all]"
         pip install flashinfer -i https://flashinfer.ai/whl/cu121/torch2.4/ --force-reinstall
         pip install accelerate
-
-    - name: Test Frontend Language
-      run: |
-        cd test/lang
-        python3 run_suite.py --suite minimal
+        pip install sentence_transformers
 
     - name: Test Backend Runtime
       run: |
         cd test/srt
+        python3 run_suite.py --suite minimal
+
+    - name: Test Frontend Language
+      run: |
+        cd test/lang
         python3 run_suite.py --suite minimal

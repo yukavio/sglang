@@ -27,6 +27,7 @@ class ServerArgs:
     model_path: str
     tokenizer_path: Optional[str] = None
     tokenizer_mode: str = "auto"
+    skip_tokenizer_init: bool = False
     load_format: str = "auto"
     dtype: str = "auto"
     trust_remote_code: bool = True
@@ -42,10 +43,11 @@ class ServerArgs:
 
     # Memory and scheduling
     mem_fraction_static: Optional[float] = None
-    max_prefill_tokens: Optional[int] = None
     max_running_requests: Optional[int] = None
     max_num_reqs: Optional[int] = None
     max_total_tokens: Optional[int] = None
+    chunked_prefill_size: int = -1
+    max_prefill_tokens: int = 16384
     schedule_policy: str = "lpm"
     schedule_conservativeness: float = 1.0
 
@@ -62,14 +64,11 @@ class ServerArgs:
 
     # Other
     api_key: Optional[str] = None
-    file_storage_pth: str = "SGlang_storage"
+    file_storage_pth: str = "SGLang_storage"
 
     # Data parallelism
     dp_size: int = 1
     load_balance_method: str = "round_robin"
-
-    # Chunked Prefill
-    chunked_prefill_size: Optional[int] = None
 
     # Optimization/debug options
     disable_flashinfer: bool = False
@@ -96,6 +95,10 @@ class ServerArgs:
         if self.served_model_name is None:
             self.served_model_name = self.model_path
 
+        if self.chunked_prefill_size <= 0:
+            # Disable chunked prefill
+            self.chunked_prefill_size = None
+
         if self.mem_fraction_static is None:
             if self.tp_size >= 16:
                 self.mem_fraction_static = 0.79
@@ -107,6 +110,7 @@ class ServerArgs:
                 self.mem_fraction_static = 0.87
             else:
                 self.mem_fraction_static = 0.88
+
         if isinstance(self.additional_ports, int):
             self.additional_ports = [self.additional_ports]
         elif self.additional_ports is None:
@@ -150,6 +154,11 @@ class ServerArgs:
             help="Tokenizer mode. 'auto' will use the fast "
             "tokenizer if available, and 'slow' will "
             "always use the slow tokenizer.",
+        )
+        parser.add_argument(
+            "--skip-tokenizer-init",
+            action="store_true",
+            help="If set, skip init tokenizer and pass input_ids in generate request",
         )
         parser.add_argument(
             "--load-format",
@@ -227,12 +236,6 @@ class ServerArgs:
             help="The fraction of the memory used for static allocation (model weights and KV cache memory pool). Use a smaller value if you see out-of-memory errors.",
         )
         parser.add_argument(
-            "--max-prefill-tokens",
-            type=int,
-            default=ServerArgs.max_prefill_tokens,
-            help="The maximum number of tokens in a prefill batch. The real bound will be the maximum of this value and the model's maximum context length.",
-        )
-        parser.add_argument(
             "--max-running-requests",
             type=int,
             default=ServerArgs.max_running_requests,
@@ -249,6 +252,18 @@ class ServerArgs:
             type=int,
             default=ServerArgs.max_total_tokens,
             help="The maximum number of tokens in the memory pool. If not specified, it will be automatically calculated based on the memory usage fraction. This option is typically used for development and debugging purposes.",
+        )
+        parser.add_argument(
+            "--chunked-prefill-size",
+            type=int,
+            default=ServerArgs.chunked_prefill_size,
+            help="The maximum number of tokens in a chunk for the chunked prefill. Setting this to -1 means disabling chunked prefill",
+        )
+        parser.add_argument(
+            "--max-prefill-tokens",
+            type=int,
+            default=ServerArgs.max_prefill_tokens,
+            help="The maximum number of tokens in a prefill batch. The real bound will be the maximum of this value and the model's maximum context length.",
         )
         parser.add_argument(
             "--schedule-policy",
@@ -346,14 +361,6 @@ class ServerArgs:
             "--nnodes", type=int, default=ServerArgs.nnodes, help="The number of nodes."
         )
         parser.add_argument("--node-rank", type=int, help="The node rank.")
-
-        # Chunked prefill
-        parser.add_argument(
-            "--chunked-prefill-size",
-            type=int,
-            default=ServerArgs.chunked_prefill_size,
-            help="The size of the chunked prefill.",
-        )
 
         # Optimization/debug options
         parser.add_argument(

@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from typing import Callable
 
 
 class BasePrefixCache(ABC):
@@ -17,11 +18,15 @@ class BasePrefixCache(ABC):
         pass
 
     @abstractmethod
-    def cache_req(self, **kwargs):
+    def cache_finished_req(self, **kwargs):
         pass
 
     @abstractmethod
-    def evict(self, num_tokens, evict_callback):
+    def cache_unfinished_req(self, **kwargs):
+        pass
+
+    @abstractmethod
+    def evict(self, num_tokens: int, evict_callback: Callable):
         pass
 
     @abstractmethod
@@ -37,7 +42,7 @@ class BasePrefixCache(ABC):
         pass
 
     def total_size(self):
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def pretty_print(self):
-        raise NotImplementedError
+        raise NotImplementedError()

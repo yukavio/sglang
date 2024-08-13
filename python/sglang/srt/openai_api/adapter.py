@@ -34,7 +34,7 @@ from sglang.srt.conversation import (
     generate_chat_conv,
     register_conv_template,
 )
-from sglang.srt.managers.io_struct import GenerateReqInput
+from sglang.srt.managers.io_struct import EmbeddingReqInput, GenerateReqInput
 from sglang.srt.openai_api.protocol import (
     BatchRequest,
     BatchResponse,
@@ -52,6 +52,9 @@ from sglang.srt.openai_api.protocol import (
     CompletionResponseStreamChoice,
     CompletionStreamResponse,
     DeltaMessage,
+    EmbeddingObject,
+    EmbeddingRequest,
+    EmbeddingResponse,
     ErrorResponse,
     FileDeleteResponse,
     FileRequest,
@@ -74,12 +77,25 @@ class FileMetadata:
 batch_storage: Dict[str, BatchResponse] = {}
 file_id_request: Dict[str, FileMetadata] = {}
 file_id_response: Dict[str, FileResponse] = {}
-# map file id to file path in SGlang backend
+# map file id to file path in SGLang backend
 file_id_storage: Dict[str, str] = {}
 
 
 # backend storage directory
 storage_dir = None
+
+
+def format_finish_reason(finish_reason) -> Optional[str]:
+    if finish_reason.startswith("None"):
+        return None
+    elif finish_reason.startswith("FINISH_MATCHED"):
+        return "stop"
+    elif finish_reason.startswith("FINISH_LENGTH"):
+        return "length"
+    elif finish_reason.startswith("FINISH_ABORT"):
+        return "abort"
+    else:
+        return "unknown"
 
 
 def create_error_response(
@@ -319,7 +335,7 @@ async def process_batch(tokenizer_manager, batch_id: str, batch_request: BatchRe
         }
 
     except Exception as e:
-        print("error in SGlang:", e)
+        print("error in SGLang:", e)
         # Update batch status to "failed"
         retrieve_batch = batch_storage[batch_id]
         retrieve_batch.status = "failed"
@@ -357,7 +373,6 @@ async def v1_retrieve_file_content(file_id: str):
 
 
 def v1_generate_request(all_requests):
-
     prompts = []
     sampling_params_list = []
     return_logprobs = []
@@ -378,10 +393,13 @@ def v1_generate_request(all_requests):
             {
                 "temperature": request.temperature,
                 "max_new_tokens": request.max_tokens,
+                "min_new_tokens": request.min_tokens,
                 "stop": request.stop,
+                "stop_token_ids": request.stop_token_ids,
                 "top_p": request.top_p,
                 "presence_penalty": request.presence_penalty,
                 "frequency_penalty": request.frequency_penalty,
+                "repetition_penalty": request.repetition_penalty,
                 "regex": request.regex,
                 "n": request.n,
                 "ignore_eos": request.ignore_eos,
@@ -485,14 +503,18 @@ def v1_generate_response(request, ret, tokenizer_manager, to_file=False):
                 "index": 0,
                 "text": text,
                 "logprobs": logprobs,
-                "finish_reason": ret_item["meta_info"]["finish_reason"],
+                "finish_reason": format_finish_reason(
+                    ret_item["meta_info"]["finish_reason"]
+                ),
             }
         else:
             choice_data = CompletionResponseChoice(
                 index=idx,
                 text=text,
                 logprobs=logprobs,
-                finish_reason=ret_item["meta_info"]["finish_reason"],
+                finish_reason=format_finish_reason(
+                    ret_item["meta_info"]["finish_reason"]
+                ),
             )
 
         choices.append(choice_data)
@@ -607,20 +629,34 @@ async def v1_completions(tokenizer_manager, raw_request: Request):
                         index=0,
                         text=delta,
                         logprobs=logprobs,
-                        finish_reason=content["meta_info"]["finish_reason"],
+                        finish_reason=format_finish_reason(
+                            content["meta_info"]["finish_reason"]
+                        ),
                     )
                     chunk = CompletionStreamResponse(
                         id=content["meta_info"]["id"],
                         object="text_completion",
                         choices=[choice_data],
                         model=request.model,
-                        usage=UsageInfo(
-                            prompt_tokens=prompt_tokens,
-                            completion_tokens=completion_tokens,
-                            total_tokens=prompt_tokens + completion_tokens,
-                        ),
                     )
                     yield f"data: {chunk.model_dump_json()}\n\n"
+                if request.stream_options and request.stream_options.include_usage:
+                    usage = UsageInfo(
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        total_tokens=prompt_tokens + completion_tokens,
+                    )
+
+                    final_usage_chunk = CompletionStreamResponse(
+                        id=str(uuid.uuid4().hex),
+                        choices=[],
+                        model=request.model,
+                        usage=usage,
+                    )
+                    final_usage_data = final_usage_chunk.model_dump_json(
+                        exclude_unset=True, exclude_none=True
+                    )
+                    yield f"data: {final_usage_data}\n\n"
             except ValueError as e:
                 error = create_streaming_error_response(str(e))
                 yield f"data: {error}\n\n"
@@ -648,7 +684,6 @@ async def v1_completions(tokenizer_manager, raw_request: Request):
 
 
 def v1_chat_generate_request(all_requests, tokenizer_manager):
-
     input_ids = []
     sampling_params_list = []
     image_data_list = []
@@ -691,10 +726,13 @@ def v1_chat_generate_request(all_requests, tokenizer_manager):
             {
                 "temperature": request.temperature,
                 "max_new_tokens": request.max_tokens,
+                "min_new_tokens": request.min_tokens,
                 "stop": stop,
+                "stop_token_ids": request.stop_token_ids,
                 "top_p": request.top_p,
                 "presence_penalty": request.presence_penalty,
                 "frequency_penalty": request.frequency_penalty,
+                "repetition_penalty": request.repetition_penalty,
                 "regex": request.regex,
                 "n": request.n,
             }
@@ -776,14 +814,18 @@ def v1_chat_generate_response(request, ret, to_file=False):
                 "index": 0,
                 "message": {"role": "assistant", "content": ret_item["text"]},
                 "logprobs": choice_logprobs,
-                "finish_reason": ret_item["meta_info"]["finish_reason"],
+                "finish_reason": format_finish_reason(
+                    ret_item["meta_info"]["finish_reason"]
+                ),
             }
         else:
             choice_data = ChatCompletionResponseChoice(
                 index=idx,
                 message=ChatMessage(role="assistant", content=ret_item["text"]),
                 logprobs=choice_logprobs,
-                finish_reason=ret_item["meta_info"]["finish_reason"],
+                finish_reason=format_finish_reason(
+                    ret_item["meta_info"]["finish_reason"]
+                ),
             )
 
         choices.append(choice_data)
@@ -900,18 +942,15 @@ async def v1_chat_completions(tokenizer_manager, raw_request: Request):
                         choice_data = ChatCompletionResponseStreamChoice(
                             index=0,
                             delta=DeltaMessage(role="assistant"),
-                            finish_reason=content["meta_info"]["finish_reason"],
+                            finish_reason=format_finish_reason(
+                                content["meta_info"]["finish_reason"]
+                            ),
                             logprobs=choice_logprobs,
                         )
                         chunk = ChatCompletionStreamResponse(
                             id=content["meta_info"]["id"],
                             choices=[choice_data],
                             model=request.model,
-                            usage=UsageInfo(
-                                prompt_tokens=prompt_tokens,
-                                completion_tokens=completion_tokens,
-                                total_tokens=prompt_tokens + completion_tokens,
-                            ),
                         )
                         yield f"data: {chunk.model_dump_json()}\n\n"
 
@@ -921,20 +960,34 @@ async def v1_chat_completions(tokenizer_manager, raw_request: Request):
                     choice_data = ChatCompletionResponseStreamChoice(
                         index=0,
                         delta=DeltaMessage(content=delta),
-                        finish_reason=content["meta_info"]["finish_reason"],
+                        finish_reason=format_finish_reason(
+                            content["meta_info"]["finish_reason"]
+                        ),
                         logprobs=choice_logprobs,
                     )
                     chunk = ChatCompletionStreamResponse(
                         id=content["meta_info"]["id"],
                         choices=[choice_data],
                         model=request.model,
-                        usage=UsageInfo(
-                            prompt_tokens=prompt_tokens,
-                            completion_tokens=completion_tokens,
-                            total_tokens=prompt_tokens + completion_tokens,
-                        ),
                     )
                     yield f"data: {chunk.model_dump_json()}\n\n"
+                if request.stream_options and request.stream_options.include_usage:
+                    usage = UsageInfo(
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        total_tokens=prompt_tokens + completion_tokens,
+                    )
+
+                    final_usage_chunk = ChatCompletionStreamResponse(
+                        id=str(uuid.uuid4().hex),
+                        choices=[],
+                        model=request.model,
+                        usage=usage,
+                    )
+                    final_usage_data = final_usage_chunk.model_dump_json(
+                        exclude_unset=True, exclude_none=True
+                    )
+                    yield f"data: {final_usage_data}\n\n"
             except ValueError as e:
                 error = create_streaming_error_response(str(e))
                 yield f"data: {error}\n\n"
@@ -957,6 +1010,81 @@ async def v1_chat_completions(tokenizer_manager, raw_request: Request):
         ret = [ret]
 
     response = v1_chat_generate_response(request, ret)
+
+    return response
+
+
+def v1_embedding_request(all_requests, tokenizer_manager):
+    prompts = []
+    sampling_params_list = []
+    first_prompt_type = type(all_requests[0].input)
+
+    for request in all_requests:
+        prompt = request.input
+        assert (
+            type(prompt) == first_prompt_type
+        ), "All prompts must be of the same type in file input settings"
+        prompts.append(prompt)
+
+    if len(all_requests) == 1:
+        prompt = prompts[0]
+        if isinstance(prompt, str) or isinstance(prompt[0], str):
+            prompt_kwargs = {"text": prompt}
+        else:
+            prompt_kwargs = {"input_ids": prompt}
+    else:
+        if isinstance(prompts[0], str) or isinstance(propmt[0][0], str):
+            prompt_kwargs = {"text": prompts}
+        else:
+            prompt_kwargs = {"input_ids": prompts}
+
+    adapted_request = EmbeddingReqInput(
+        **prompt_kwargs,
+    )
+
+    if len(all_requests) == 1:
+        return adapted_request, all_requests[0]
+    return adapted_request, all_requests
+
+
+def v1_embedding_response(ret, model_path, to_file=False):
+    embedding_objects = []
+    prompt_tokens = 0
+    for idx, ret_item in enumerate(ret):
+        embedding_objects.append(
+            EmbeddingObject(
+                embedding=ret[idx]["embedding"],
+                index=idx,
+            )
+        )
+        prompt_tokens += ret[idx]["meta_info"]["prompt_tokens"]
+
+    return EmbeddingResponse(
+        data=embedding_objects,
+        model=model_path,
+        usage=UsageInfo(
+            prompt_tokens=prompt_tokens,
+            total_tokens=prompt_tokens,
+        ),
+    )
+
+
+async def v1_embeddings(tokenizer_manager, raw_request: Request):
+    request_json = await raw_request.json()
+    all_requests = [EmbeddingRequest(**request_json)]
+    adapted_request, request = v1_embedding_request(all_requests, tokenizer_manager)
+
+    try:
+        ret = await tokenizer_manager.generate_request(
+            adapted_request, raw_request
+        ).__anext__()
+    except ValueError as e:
+        return create_error_response(str(e))
+
+    if not isinstance(ret, list):
+        ret = [ret]
+
+    response = v1_embedding_response(ret, tokenizer_manager.model_path)
 
     return response
 

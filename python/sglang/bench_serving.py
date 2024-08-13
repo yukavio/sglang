@@ -24,7 +24,7 @@ import warnings
 from argparse import ArgumentParser
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import AsyncGenerator, List, Optional, Tuple, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
 
 import aiohttp
 import numpy as np
@@ -39,6 +39,8 @@ from transformers import (
 
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
 
+global args
+
 
 @dataclass
 class RequestFuncInput:
@@ -47,6 +49,7 @@ class RequestFuncInput:
     prompt_len: int
     output_len: int
     model: str
+    extra_request_body: Dict[str, Any]
 
 
 @dataclass
@@ -84,6 +87,7 @@ async def async_request_trt_llm(
             "stream": True,
             "min_length": request_func_input.output_len,
             "end_id": 1048576,
+            **request_func_input.extra_request_body,
         }
         if args.disable_ignore_eos:
             del payload["min_length"]
@@ -154,6 +158,7 @@ async def async_request_openai_completions(
             "max_tokens": request_func_input.output_len,
             "stream": not args.disable_stream,
             "ignore_eos": not args.disable_ignore_eos,
+            **request_func_input.extra_request_body,
         }
         headers = {"Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}"}
 
@@ -192,7 +197,8 @@ async def async_request_openai_completions(
                                     output.ttft = ttft
 
                                 # Decoding phase
-                                output.itl.append(timestamp - most_recent_timestamp)
+                                else:
+                                    output.itl.append(timestamp - most_recent_timestamp)
 
                                 most_recent_timestamp = timestamp
                                 generated_text += data["choices"][0]["text"]
@@ -542,6 +548,7 @@ async def benchmark(
     request_rate: float,
     disable_tqdm: bool,
     enable_multi: bool,
+    extra_request_body: Dict[str, Any],
 ):
     if backend in ASYNC_REQUEST_FUNCS:
         request_func = ASYNC_REQUEST_FUNCS[backend]
@@ -556,6 +563,7 @@ async def benchmark(
         api_url=api_url,
         prompt_len=test_prompt_len,
         output_len=test_output_len,
+        extra_request_body=extra_request_body,
     )
     test_output = await request_func(request_func_input=test_input)
     if not test_output.success:
@@ -578,6 +586,7 @@ async def benchmark(
             api_url=api_url,
             prompt_len=prompt_len,
             output_len=output_len,
+            extra_request_body=extra_request_body,
         )
         tasks.append(
             asyncio.create_task(
@@ -742,9 +751,17 @@ def check_chat_template(model_path):
         return False
 
 
-def fire(args: argparse.Namespace):
+def run_benchmark(args_: argparse.Namespace):
+    global args
+    args = args_
+
+    set_ulimit()
     random.seed(args.seed)
     np.random.seed(args.seed)
+
+    extra_request_body = {}
+    if args.extra_request_body:
+        extra_request_body = json.loads(args.extra_request_body)
 
     if args.port is None:
         args.port = {
@@ -838,10 +855,11 @@ def fire(args: argparse.Namespace):
                     request_rate=rate,
                     disable_tqdm=args.disable_tqdm,
                     enable_multi=args.multi,
+                    extra_request_body=extra_request_body,
                 )
             )
     else:
-        asyncio.run(
+        return asyncio.run(
             benchmark(
                 backend=backend,
                 api_url=api_url,
@@ -851,6 +869,7 @@ def fire(args: argparse.Namespace):
                 request_rate=args.request_rate,
                 disable_tqdm=args.disable_tqdm,
                 enable_multi=args.multi,
+                extra_request_body=extra_request_body,
             )
         )
 
@@ -950,11 +969,6 @@ if __name__ == "__main__":
     )
     parser.add_argument("--seed", type=int, default=0, help="Default is 0.")
     parser.add_argument(
-        "--disable-tqdm",
-        action="store_true",
-        help="Specify to disable tqdm progress bar.",
-    )
-    parser.add_argument(
         "--multi",
         action="store_true",
         help="Use request rate range rather than single value.",
@@ -967,6 +981,11 @@ if __name__ == "__main__":
     )
     parser.add_argument("--output-file", type=str, help="Output JSONL file name.")
     parser.add_argument(
+        "--disable-tqdm",
+        action="store_true",
+        help="Specify to disable tqdm progress bar.",
+    )
+    parser.add_argument(
         "--disable-stream",
         action="store_true",
         help="Disable streaming mode.",
@@ -976,8 +995,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Disable ignoring EOS.",
     )
-
-    set_ulimit()
-
+    parser.add_argument(
+        "--extra-request-body",
+        metavar='{"key1": "value1", "key2": "value2"}',
+        type=str,
+        help="Append given JSON object to the request payload. You can use this to specify"
+        "additional generate params like sampling params.",
+    )
     args = parser.parse_args()
-    fire(args)
+    run_benchmark(args)

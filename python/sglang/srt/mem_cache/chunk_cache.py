@@ -1,6 +1,14 @@
+from __future__ import annotations
+
 """Cache for chunked prefill, used when RadixCache is disabled."""
 
-from sglang.srt.mem_cache.base_cache import BasePrefixCache
+from typing import TYPE_CHECKING, Callable, List, Optional
+
+from sglang.srt.mem_cache.base_prefix_cache import BasePrefixCache
+from sglang.srt.mem_cache.memory_pool import BaseTokenToKVPool, ReqToTokenPool
+
+if TYPE_CHECKING:
+    from sglang.srt.managers.schedule_batch import Req
 
 
 class ChunkCacheEntry:
@@ -10,7 +18,9 @@ class ChunkCacheEntry:
 
 
 class ChunkCache(BasePrefixCache):
-    def __init__(self, req_to_token_pool, token_to_kv_pool):
+    def __init__(
+        self, req_to_token_pool: ReqToTokenPool, token_to_kv_pool: BaseTokenToKVPool
+    ):
         self.disable = True
         self.req_to_token_pool = req_to_token_pool
         self.token_to_kv_pool = token_to_kv_pool
@@ -20,34 +30,47 @@ class ChunkCache(BasePrefixCache):
     def reset(self):
         self.entries = {}
 
-    def match_prefix(self, rid, **kwargs):
+    def match_prefix(self, rid: int, key: List[int]):
         if rid not in self.entries:
             return [], None
 
         entry = self.entries[rid]
-        return entry.value, entry
+        max_prefix_len = len(key)
+        return entry.value[:max_prefix_len], entry
 
-    def cache_req(
-        self, rid, token_ids, req_pool_idx, del_in_memory_pool=True, **kwargs
-    ):
-        indices = self.req_to_token_pool.req_to_token[req_pool_idx, : len(token_ids)]
-        if del_in_memory_pool:
-            assert rid in self.entries
-            self.req_to_token_pool.free(req_pool_idx)
-            self.token_to_kv_pool.free(indices)
-            return
+    def cache_finished_req(self, req: Req, token_ids: Optional[List[int]] = None):
+        if token_ids is None:
+            token_ids = (req.origin_input_ids + req.output_ids)[:-1]
 
-        if rid not in self.entries:
-            self.entries[rid] = ChunkCacheEntry(rid, indices)
+        kv_indices = self.req_to_token_pool.req_to_token[
+            req.req_pool_idx, : len(token_ids)
+        ]
+        self.req_to_token_pool.free(req.req_pool_idx)
+        self.token_to_kv_pool.free(kv_indices)
 
-        entry = self.entries[rid]
-        entry.value = indices
-        return indices, entry
+        if req.rid in self.entries:
+            del self.entries[req.rid]
+
+    def cache_unfinished_req(self, req: Req, token_ids: Optional[List[int]] = None):
+        if token_ids is None:
+            token_ids = req.fill_ids
+
+        kv_indices = self.req_to_token_pool.req_to_token[
+            req.req_pool_idx, : len(token_ids)
+        ]
+
+        if req.rid not in self.entries:
+            self.entries[req.rid] = ChunkCacheEntry(req.rid, kv_indices)
+
+        entry = self.entries[req.rid]
+        entry.value = kv_indices
+        req.prefix_indices = kv_indices
+        req.last_node = entry
 
     def insert(self):
         raise NotImplementedError
 
-    def evict(self, num_tokens, evict_callback):
+    def evict(self, num_tokens: int, evict_callback: Callable):
         pass
 
     def inc_lock_ref(self, node):

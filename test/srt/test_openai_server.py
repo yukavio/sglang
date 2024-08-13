@@ -6,7 +6,11 @@ import openai
 
 from sglang.srt.hf_transformers_utils import get_tokenizer
 from sglang.srt.utils import kill_child_process
-from sglang.test.test_utils import DEFAULT_MODEL_NAME_FOR_TEST, popen_launch_server
+from sglang.test.test_utils import (
+    DEFAULT_MODEL_NAME_FOR_TEST,
+    DEFAULT_URL_FOR_TEST,
+    popen_launch_server,
+)
 
 
 class TestOpenAIServer(unittest.TestCase):
@@ -14,7 +18,7 @@ class TestOpenAIServer(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.model = DEFAULT_MODEL_NAME_FOR_TEST
-        cls.base_url = "http://127.0.0.1:8157"
+        cls.base_url = DEFAULT_URL_FOR_TEST
         cls.api_key = "sk-123456"
         cls.process = popen_launch_server(
             cls.model, cls.base_url, timeout=300, api_key=cls.api_key
@@ -98,10 +102,17 @@ class TestOpenAIServer(unittest.TestCase):
             echo=echo,
             logprobs=logprobs,
             stream=True,
+            stream_options={"include_usage": True},
         )
 
         first = True
         for response in generator:
+            usage = response.usage
+            if usage is not None:
+                assert usage.prompt_tokens > 0
+                assert usage.completion_tokens > 0
+                assert usage.total_tokens > 0
+                continue
             if logprobs:
                 assert response.choices[0].logprobs
                 assert isinstance(response.choices[0].logprobs.tokens[0], str)
@@ -122,12 +133,8 @@ class TestOpenAIServer(unittest.TestCase):
                         prompt
                     ), f"{response.choices[0].text} and all args {echo} {logprobs} {token_input} {first}"
                 first = False
-
             assert response.id
             assert response.created
-            assert response.usage.prompt_tokens > 0
-            assert response.usage.completion_tokens > 0
-            assert response.usage.total_tokens > 0
 
     def run_chat_completion(self, logprobs, parallel_sample_num):
         client = openai.Client(api_key=self.api_key, base_url=self.base_url)
@@ -179,11 +186,20 @@ class TestOpenAIServer(unittest.TestCase):
             logprobs=logprobs is not None and logprobs > 0,
             top_logprobs=logprobs,
             stream=True,
+            stream_options={"include_usage": True},
         )
 
         is_first = True
         for response in generator:
+            usage = response.usage
+            if usage is not None:
+                assert usage.prompt_tokens > 0
+                assert usage.completion_tokens > 0
+                assert usage.total_tokens > 0
+                continue
+
             data = response.choices[0].delta
+
             if is_first:
                 data.role == "assistant"
                 is_first = False
@@ -387,9 +403,4 @@ class TestOpenAIServer(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main(warnings="ignore")
-
-    # t = TestOpenAIServer()
-    # t.setUpClass()
-    # t.test_completion()
-    # t.tearDownClass()
+    unittest.main()

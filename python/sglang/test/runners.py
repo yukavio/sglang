@@ -23,21 +23,17 @@ import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from sglang.srt.server import Runtime
+from sglang.srt.utils import is_generation_model
 
 DEFAULT_PROMPTS = [
-    "The capital of France is",
+    # the output of gemma-2-2b from SRT is unstable on the commented prompt
+    # "The capital of France is",
     "The capital of the United Kindom is",
     "Today is a sunny day and I like",
+    "AI is a field of computer science focused on",
 ]
 
 NUM_TOP_LOGPROBS = 5
-
-
-def is_embedding_model(model_path):
-    # FIXME incomplete list
-    if "e5-mistral-7b-instruct" in model_path.lower():
-        return True
-    return False
 
 
 def get_dtype_str(torch_dtype):
@@ -49,10 +45,11 @@ def get_dtype_str(torch_dtype):
 
 @dataclass
 class ModelOutput:
-    output_strs: str = None
-    top_input_logprobs: torch.Tensor = None
-    top_output_logprobs: torch.Tensor = None
-    embed_logits: torch.Tensor = None
+    output_strs: List[str] = None
+    output_ids: List[int] = None
+    top_input_logprobs: List[torch.Tensor] = None
+    top_output_logprobs: List[torch.Tensor] = None
+    embed_logits: List[torch.Tensor] = None
 
 
 class HFRunner:
@@ -60,7 +57,7 @@ class HFRunner:
         self,
         model_path,
         torch_dtype=torch.float16,
-        is_embedding_model=None,
+        is_generation_model=None,
     ):
         self.in_queue = multiprocessing.Queue()
         self.out_queue = multiprocessing.Queue()
@@ -72,13 +69,13 @@ class HFRunner:
                 self.out_queue,
                 model_path,
                 torch_dtype,
-                is_embedding_model,
+                is_generation_model,
             ),
         )
         self.model_proc.start()
 
     def start_model_process(
-        self, in_queue, out_queue, model_path, torch_dtype, is_embedding_model
+        self, in_queue, out_queue, model_path, torch_dtype, is_generation_model
     ):
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_path,
@@ -86,12 +83,12 @@ class HFRunner:
             trust_remote_code=True,
         )
 
-        self.is_embedding_model = (
-            is_embedding_model(model_path)
-            if is_embedding_model is None
-            else is_embedding_model
+        self.is_generation_model = (
+            is_generation_model(model_path)
+            if is_generation_model is None
+            else is_generation_model
         )
-        if not self.is_embedding_model:
+        if self.is_generation_model:
             self.model = AutoModelForCausalLM.from_pretrained(
                 model_path,
                 torch_dtype=torch_dtype,
@@ -103,13 +100,13 @@ class HFRunner:
 
             self.model = SentenceTransformer(
                 model_path,
-                device="cpu",
-            ).to(dtype=torch_dtype)
+                model_kwargs={"torch_dtype": torch_dtype},
+            )
 
         while True:
             prompts, max_new_tokens = in_queue.get()
             if prompts is not None:
-                if not self.is_embedding_model:
+                if self.is_generation_model:
                     output_strs = []
                     prefill_logprobs = []
                     for p in prompts:
@@ -123,7 +120,9 @@ class HFRunner:
                         output_ids = self.model.generate(
                             input_ids, do_sample=False, max_new_tokens=max_new_tokens
                         )
-                        output_strs.append(self.tokenizer.decode(output_ids[0]))
+                        output_strs.append(
+                            self.tokenizer.decode(output_ids[0][len(input_ids[0]) :])
+                        )
 
                         logits = self.model.forward(input_ids).logits[0]
                         logprobs = F.log_softmax(
@@ -144,7 +143,6 @@ class HFRunner:
                     )
 
                 else:
-                    assert isinstance(prompts, List[str])
                     logits = self.model.encode(prompts).tolist()
 
                     out_queue.put(ModelOutput(embed_logits=logits))
@@ -152,7 +150,7 @@ class HFRunner:
     def forward(
         self,
         prompts: Union[List[str], List[torch.Tensor]] = DEFAULT_PROMPTS,
-        max_new_tokens=64,
+        max_new_tokens=8,
     ):
         self.in_queue.put((prompts, max_new_tokens))
         return self.out_queue.get()
@@ -175,16 +173,13 @@ class SRTRunner:
         model_path,
         tp_size=1,
         torch_dtype=torch.float16,
-        is_embedding_model=None,
+        is_generation_model=None,
     ):
-        self.is_embedding_model = (
-            is_embedding_model(model_path)
-            if is_embedding_model is None
-            else is_embedding_model
+        self.is_generation_model = (
+            is_generation_model(model_path)
+            if is_generation_model is None
+            else is_generation_model
         )
-        if self.is_embedding_model:
-            raise NotImplementedError()
-
         self.runtime = Runtime(
             model_path=model_path,
             tp_size=tp_size,
@@ -194,40 +189,45 @@ class SRTRunner:
     def forward(
         self,
         prompts: Union[List[str], List[torch.Tensor]] = DEFAULT_PROMPTS,
-        max_new_tokens=64,
+        max_new_tokens=8,
     ):
-        # the return value contains logprobs from prefill
-        output_strs = []
-        top_input_logprobs = []
-        sampling_params = {"max_new_tokens": max_new_tokens, "temperature": 0}
-        for prompt in prompts:
-            response = self.runtime.generate(
-                prompt,
-                sampling_params=sampling_params,
-                return_logprob=True,
-                top_logprobs_num=NUM_TOP_LOGPROBS,
-            )
-            response = json.loads(response)
-            output_strs.append(response["text"])
-            top_input_logprobs.append(
-                [
-                    [tup[0] for tup in x[:NUM_TOP_LOGPROBS]]
-                    for x in response["meta_info"]["input_top_logprobs"][1:]
-                ]
-                + [
+        if self.is_generation_model:
+            # the return value contains logprobs from prefill
+            output_strs = []
+            top_input_logprobs = []
+            sampling_params = {"max_new_tokens": max_new_tokens, "temperature": 0}
+            for prompt in prompts:
+                response = self.runtime.generate(
+                    prompt,
+                    sampling_params=sampling_params,
+                    return_logprob=True,
+                    top_logprobs_num=NUM_TOP_LOGPROBS,
+                )
+                response = json.loads(response)
+                output_strs.append(response["text"])
+                top_input_logprobs.append(
                     [
-                        tup[0]
-                        for tup in response["meta_info"]["output_top_logprobs"][0][
-                            :NUM_TOP_LOGPROBS
+                        [tup[0] for tup in x[:NUM_TOP_LOGPROBS]]
+                        for x in response["meta_info"]["input_top_logprobs"][1:]
+                    ]
+                    + [
+                        [
+                            tup[0]
+                            for tup in response["meta_info"]["output_top_logprobs"][0][
+                                :NUM_TOP_LOGPROBS
+                            ]
                         ]
                     ]
-                ]
-            )
-            # print(response["meta_info"]["output_top_logprobs"][0])
+                )
 
-        return ModelOutput(
-            output_strs=output_strs, top_input_logprobs=top_input_logprobs
-        )
+            return ModelOutput(
+                output_strs=output_strs, top_input_logprobs=top_input_logprobs
+            )
+        else:
+            response = self.runtime.encode(prompts)
+            response = json.loads(response)
+            logits = [x["embedding"] for x in response]
+            return ModelOutput(embed_logits=logits)
 
     def __enter__(self):
         return self

@@ -52,7 +52,7 @@ from sglang.srt.managers.controller_single import (
     start_controller_process as start_controller_process_single,
 )
 from sglang.srt.managers.detokenizer_manager import start_detokenizer_process
-from sglang.srt.managers.io_struct import GenerateReqInput
+from sglang.srt.managers.io_struct import EmbeddingReqInput, GenerateReqInput
 from sglang.srt.managers.tokenizer_manager import TokenizerManager
 from sglang.srt.openai_api.adapter import (
     load_chat_template_for_openai_api,
@@ -60,6 +60,7 @@ from sglang.srt.openai_api.adapter import (
     v1_chat_completions,
     v1_completions,
     v1_delete_file,
+    v1_embeddings,
     v1_files_create,
     v1_retrieve_batch,
     v1_retrieve_file,
@@ -74,7 +75,8 @@ from sglang.srt.utils import (
     enable_show_time_cost,
     kill_child_process,
     maybe_set_triton_cache_manager,
-    set_torch_compile_config,
+    prepare_model,
+    prepare_tokenizer,
     set_ulimit,
 )
 from sglang.utils import get_exception_traceback
@@ -98,6 +100,7 @@ async def health() -> Response:
 async def get_model_info():
     result = {
         "model_path": tokenizer_manager.model_path,
+        "is_generation": tokenizer_manager.is_generation,
     }
     return result
 
@@ -149,6 +152,21 @@ app.post("/generate")(generate_request)
 app.put("/generate")(generate_request)
 
 
+async def encode_request(obj: EmbeddingReqInput, request: Request):
+    """Handle an embedding request."""
+    try:
+        ret = await tokenizer_manager.generate_request(obj, request).__anext__()
+        return ret
+    except ValueError as e:
+        return JSONResponse(
+            {"error": {"message": str(e)}}, status_code=HTTPStatus.BAD_REQUEST
+        )
+
+
+app.post("/encode")(encode_request)
+app.put("/encode")(encode_request)
+
+
 @app.post("/v1/completions")
 async def openai_v1_completions(raw_request: Request):
     return await v1_completions(tokenizer_manager, raw_request)
@@ -157,6 +175,12 @@ async def openai_v1_completions(raw_request: Request):
 @app.post("/v1/chat/completions")
 async def openai_v1_chat_completions(raw_request: Request):
     return await v1_chat_completions(tokenizer_manager, raw_request)
+
+
+@app.post("/v1/embeddings")
+async def openai_v1_embeddings(raw_request: Request):
+    response = await v1_embeddings(tokenizer_manager, raw_request)
+    return response
 
 
 @app.get("/v1/models")
@@ -234,6 +258,10 @@ def launch_server(
         nccl_ports=ports[3:],
     )
     logger.info(f"{server_args=}")
+
+    # Use model from www.modelscope.cn, first download the model.
+    server_args.model_path = prepare_model(server_args.model_path)
+    server_args.tokenizer_path = prepare_tokenizer(server_args.tokenizer_path)
 
     # Launch processes for multi-node tensor parallelism
     if server_args.nnodes > 1:
@@ -347,10 +375,6 @@ def _set_envs_and_config(server_args: ServerArgs):
         # FIXME: remove this after https://github.com/triton-lang/triton/pull/4295 is used as a dependency.
         maybe_set_triton_cache_manager()
 
-    # Set torch compile config
-    if server_args.enable_torch_compile:
-        set_torch_compile_config()
-
     # Set global chat template
     if server_args.chat_template:
         # TODO: replace this with huggingface transformers template
@@ -360,7 +384,7 @@ def _set_envs_and_config(server_args: ServerArgs):
     if not server_args.disable_flashinfer:
         assert_pkg_version(
             "flashinfer",
-            "0.1.3",
+            "0.1.4",
             "Please uninstall the old version and "
             "reinstall the latest version by following the instructions "
             "at https://docs.flashinfer.ai/installation.html.",
@@ -385,6 +409,7 @@ def _wait_and_warmup(server_args, pipe_finish_writer):
         except (AssertionError, requests.exceptions.RequestException) as e:
             last_traceback = get_exception_traceback()
             pass
+    model_info = res.json()
 
     if not success:
         if pipe_finish_writer is not None:
@@ -393,17 +418,24 @@ def _wait_and_warmup(server_args, pipe_finish_writer):
         sys.exit(1)
 
     # Send a warmup request
+    request_name = "/generate" if model_info["is_generation"] else "/encode"
+    max_new_tokens = 8 if model_info["is_generation"] else 1
+    json_data = {
+        "sampling_params": {
+            "temperature": 0,
+            "max_new_tokens": max_new_tokens,
+        },
+    }
+    if server_args.skip_tokenizer_init:
+        json_data["input_ids"] = [10, 11, 12]
+    else:
+        json_data["text"] = "The capital city of France is"
+
     try:
         for _ in range(server_args.dp_size):
             res = requests.post(
-                url + "/generate",
-                json={
-                    "text": "The capital city of France is",
-                    "sampling_params": {
-                        "temperature": 0,
-                        "max_new_tokens": 8,
-                    },
-                },
+                url + request_name,
+                json=json_data,
                 headers=headers,
                 timeout=600,
             )
@@ -530,6 +562,19 @@ class Runtime:
         }
         response = requests.post(
             self.url + "/generate",
+            json=json_data,
+        )
+        return json.dumps(response.json())
+
+    def encode(
+        self,
+        prompt: str,
+    ):
+        json_data = {
+            "text": prompt,
+        }
+        response = requests.post(
+            self.url + "/encode",
             json=json_data,
         )
         return json.dumps(response.json())
