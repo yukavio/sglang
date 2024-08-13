@@ -44,6 +44,9 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sglang.lang.backend.runtime_endpoint import RuntimeEndpoint
 from sglang.srt.constrained import disable_cache
 from sglang.srt.hf_transformers_utils import get_tokenizer
+from sglang.srt.managers.controller_flex import (
+    start_controller_process as start_controller_process_flex,
+)
 from sglang.srt.managers.controller_multi import (
     start_controller_process as start_controller_process_multi,
 )
