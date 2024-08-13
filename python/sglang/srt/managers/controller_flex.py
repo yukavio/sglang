@@ -38,7 +38,8 @@ from sglang.srt.managers.io_struct import (
 )
 from sglang.srt.server_args import PortArgs, ServerArgs
 from sglang.srt.utils import kill_parent_process
-from sglang.utils import get_exception_traceback
+from sglang.utils import get_exception_traceback, get_cache_info
+from sglang.srt.managers.io_struct import ControllerInfo
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,11 @@ class WorkerHandle:
 
     proc: multiprocessing.Process
     queue: multiprocessing.Queue
+
+
+
+class FlexScheduler:
+    """A scheduler which dispatch """
 
 
 class ControllerMultiFlex:
@@ -97,13 +103,8 @@ class ControllerMultiFlex:
         self.dispatching = dispatch_lookup[self.load_balance_method]
 
         # Start data parallel workers
-        
         self.workers = []
-        temp_array = np.array()
-        shm = multiprocessing.shared_memory.SharedMemory(create=True, size=temp_array.nbytes)
-        self.cpu_kv_cache = shm.name
-        del temp_array
-        self.swap_queue = multiprocessing.Queue()
+        self.controller_info = ControllerInfo(server_args, model_overide_args)
         for i in range(server_args.dp_size):
             self.start_dp_worker(i)
 
@@ -127,8 +128,7 @@ class ControllerMultiFlex:
                 gpu_ids,
                 dp_worker_id,
                 queue,
-                self.swap_queue,
-                self.cpu_kv_cache
+                self.controller_info
             ),
         )
         proc.start()

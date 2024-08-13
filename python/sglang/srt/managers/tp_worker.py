@@ -22,6 +22,7 @@ import pickle
 import time
 import warnings
 from typing import Any, List, Optional, Union
+from multiprocessing import shared_memory
 
 import torch
 import torch.distributed
@@ -60,6 +61,7 @@ from sglang.srt.utils import (
     suppress_other_loggers,
 )
 from sglang.utils import get_exception_traceback
+from sglang.srt.managers.io_struct import ControllerInfo
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +78,7 @@ class ModelTpServer:
         server_args: ServerArgs,
         nccl_port: int,
         model_overide_args: dict,
-        swap_queue: multiprocessing.Queue = None,
-        swap_cache: str = None
+        controller_info: ControllerInfo
     ):
         suppress_other_loggers()
 
@@ -89,13 +90,6 @@ class ModelTpServer:
         self.schedule_policy = server_args.schedule_policy
         self.disable_regex_jump_forward = server_args.disable_regex_jump_forward
         
-        #Flex DP inference
-        if swap_cache:
-            self.swap_queue = swap_queue
-            shm = multiprocessing.shared_memory.SharedMemory(name=swap_cache)
-            # 需要透传一下cache的 shape 和dtype
-            self.swap_cache = torch.from_numpy(np.ndarray((6,), dtype=np.int64, buffer=shm.buf))
-
         # Chunked prefill
         self.chunked_prefill_size = server_args.chunked_prefill_size
         self.current_inflight_req = None
@@ -116,6 +110,15 @@ class ModelTpServer:
             nccl_port=nccl_port,
             server_args=server_args,
         )
+        
+        #Flex DP inference
+        if controller_info:
+            self.controller_info = controller_info
+            shm = shared_memory.SharedMemory(self.controller_info.cpu_kv_cache)
+            self.swap_cache = torch.frombuffer(buffer=shm.buf, dtype=self.model_runner.dtype).reshape(self.controller_info.cache_shape)
+        else:
+            self.controller_info = None
+        
         if server_args.skip_tokenizer_init:
             self.tokenizer = self.processor = None
         else:
@@ -242,6 +245,9 @@ class ModelTpServer:
     @torch.inference_mode()
     def forward_step(self):
         new_batch = self.get_new_prefill_batch()
+        if self.controller_info:
+            self.controller_info.available_kv_cache[self.tp_rank] = self.token_to_kv_pool.available_size()
+            self.controller_info.current_bs[self.tp_rank] = new_batch.input_ids().numel() + self.running_batch.input_ids().numel()
 
         if new_batch is not None:
             # Run a new prefill batch

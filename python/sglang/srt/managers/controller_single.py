@@ -29,6 +29,7 @@ from sglang.srt.managers.tp_worker import (
 )
 from sglang.srt.server_args import PortArgs, ServerArgs
 from sglang.srt.utils import kill_parent_process
+from sglang.srt.managers.io_struct import ControllerInfo
 from sglang.utils import get_exception_traceback
 
 logger = logging.getLogger(__name__)
@@ -46,8 +47,7 @@ class ControllerSingle:
         is_data_parallel_worker: bool,
         dp_worker_id: int,
         mp_queue: multiprocessing.Queue,
-        swap_queue: multiprocessing.Queue = None,
-        swap_cache: str = None
+        controller_info: ControllerInfo = None,
     ):
         # Parse args
         self.tp_size = server_args.tp_size
@@ -55,8 +55,7 @@ class ControllerSingle:
         self.dp_worker_id = dp_worker_id
         self.mp_queue = mp_queue
         # Need by multi flex infer
-        self.swap_queue = swap_queue
-        self.swap_cache = swap_cache
+        self.controller_info = controller_info
 
         # Init communication
         context = zmq.Context(2)
@@ -92,8 +91,7 @@ class ControllerSingle:
             server_args,
             port_args.nccl_ports[dp_worker_id],
             model_overide_args,
-            self.swap_queue,
-            self.swap_cache
+            controller_info
         )
         self.tp_cpu_group = self.tp_server.model_runner.tp_group.cpu_group
 
@@ -139,8 +137,7 @@ def start_controller_process(
     gpu_ids: List[int] = None,
     dp_worker_id: int = None,
     queue: multiprocessing.connection.Connection = None,
-    swap_queue: multiprocessing.Queue = None,
-    swap_cache: np.array = None
+    controller_info: ControllerInfo = None
 ):
     """Start a controller process."""
 
@@ -164,8 +161,7 @@ def start_controller_process(
             is_data_parallel_worker,
             dp_worker_id,
             queue,
-            swap_queue,
-            swap_cache
+            controller_info
         )
     except Exception:
         pipe_writer.send(get_exception_traceback())
