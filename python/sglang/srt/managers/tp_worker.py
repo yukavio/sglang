@@ -76,6 +76,8 @@ class ModelTpServer:
         server_args: ServerArgs,
         nccl_port: int,
         model_overide_args: dict,
+        swap_queue: multiprocessing.Queue = None,
+        swap_cache: str = None
     ):
         suppress_other_loggers()
 
@@ -86,6 +88,13 @@ class ModelTpServer:
         self.dp_size = server_args.dp_size
         self.schedule_policy = server_args.schedule_policy
         self.disable_regex_jump_forward = server_args.disable_regex_jump_forward
+        
+        #Flex DP inference
+        if swap_cache:
+            self.swap_queue = swap_queue
+            shm = multiprocessing.shared_memory.SharedMemory(name=swap_cache)
+            # 需要透传一下cache的 shape 和dtype
+            self.swap_cache = torch.from_numpy(np.ndarray((6,), dtype=np.int64, buffer=shm.buf))
 
         # Chunked prefill
         self.chunked_prefill_size = server_args.chunked_prefill_size
@@ -635,6 +644,12 @@ class ModelTpServer:
                     req.output_top_logprobs.append(output.output_top_logprobs[i])
 
         self.handle_finished_requests(batch)
+        
+    def swap_in_decode_request(self, req: Req):
+        pass
+    
+    def swap_out_decode_request(self, req: Req):
+        pass
 
     def handle_finished_requests(self, batch: ScheduleBatch):
         output_rids = []

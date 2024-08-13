@@ -19,8 +19,10 @@ processes (TokenizerManager, DetokenizerManager, Controller).
 """
 
 import uuid
+import multiprocessing
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Union
+from multiprocessing import Value
 
 import torch
 
@@ -263,3 +265,11 @@ class AbortReq:
 @dataclass
 class DetokenizeReqInput:
     input_ids: List[int]
+
+
+class ControllerInfo:
+    def __init__(self):
+        self.available_kv_cache = Value(0)
+        self.current_bs = Value(0)
+        self.swap_queue = multiprocessing.Queue()
+        self.kv_cache_buf = ''
