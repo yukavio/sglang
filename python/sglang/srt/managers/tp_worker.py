@@ -78,13 +78,15 @@ class ModelTpServer:
         server_args: ServerArgs,
         nccl_port: int,
         model_overide_args: dict,
-        controller_info: ControllerInfo
+        controller_info: ControllerInfo,
+        dp_worker_id: int,
     ):
         suppress_other_loggers()
 
         # Copy arguments
         self.gpu_id = gpu_id
         self.tp_rank = tp_rank
+        self.dp_rank = dp_worker_id
         self.tp_size = server_args.tp_size
         self.dp_size = server_args.dp_size
         self.schedule_policy = server_args.schedule_policy
@@ -457,8 +459,8 @@ class ModelTpServer:
         )
 
         if self.controller_info:
-            self.controller_info.available_kv_cache[self.tp_rank] = self.token_to_kv_pool.available_size()
-            self.controller_info.current_bs[self.tp_rank].value = batch.input_ids.numel()
+            self.controller_info.available_kv_cache[self.dp_rank] = self.token_to_kv_pool.available_size()
+            self.controller_info.current_bs[self.dp_rank].value = batch.input_ids.numel()
 
         if self.model_runner.is_generation:
             # Forward and sample the next tokens
@@ -622,8 +624,8 @@ class ModelTpServer:
         batch.prepare_for_decode()
         
         if self.controller_info:
-            self.controller_info.available_kv_cache[self.tp_rank] = self.token_to_kv_pool.available_size()
-            self.controller_info.current_bs[self.tp_rank].value = batch.input_ids.numel()
+            self.controller_info.available_kv_cache[self.dp_rank] = self.token_to_kv_pool.available_size()
+            self.controller_info.current_bs[self.dp_rank].value = batch.input_ids.numel()
 
         # Forward and sample the next tokens
         output = self.model_runner.forward(batch, ForwardMode.DECODE)

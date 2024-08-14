@@ -273,7 +273,7 @@ class ControllerInfo:
         self.available_kv_cache  = []
         self.current_bs = []
         self.swap_in_queue = []
-        for i in range(server_args.tp_size):
+        for i in range(server_args.dp_size):
             self.available_kv_cache.append(Value('i', 0))
             self.current_bs.append(Value('i', 0))
             self.swap_in_queue.append(multiprocessing.Queue())

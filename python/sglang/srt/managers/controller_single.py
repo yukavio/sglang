@@ -91,7 +91,8 @@ class ControllerSingle:
             server_args,
             port_args.nccl_ports[dp_worker_id],
             model_overide_args,
-            controller_info
+            controller_info,
+            dp_worker_id,
         )
         self.tp_cpu_group = self.tp_server.model_runner.tp_group.cpu_group
 
