@@ -245,9 +245,6 @@ class ModelTpServer:
     @torch.inference_mode()
     def forward_step(self):
         new_batch = self.get_new_prefill_batch()
-        if self.controller_info:
-            self.controller_info.available_kv_cache[self.tp_rank] = self.token_to_kv_pool.available_size()
-            self.controller_info.current_bs[self.tp_rank] = new_batch.input_ids().numel() + self.running_batch.input_ids().numel()
 
         if new_batch is not None:
             # Run a new prefill batch
@@ -459,6 +456,10 @@ class ModelTpServer:
             self.model_config.vocab_size, self.int_token_logit_bias
         )
 
+        if self.controller_info:
+            self.controller_info.available_kv_cache[self.tp_rank] = self.token_to_kv_pool.available_size()
+            self.controller_info.current_bs[self.tp_rank].value = batch.input_ids.numel()
+
         if self.model_runner.is_generation:
             # Forward and sample the next tokens
             if batch.extend_num_tokens != 0:
@@ -619,6 +620,10 @@ class ModelTpServer:
         # Update batch tensors
         self.decode_forward_ct = (self.decode_forward_ct + 1) % (1 << 30)
         batch.prepare_for_decode()
+        
+        if self.controller_info:
+            self.controller_info.available_kv_cache[self.tp_rank] = self.token_to_kv_pool.available_size()
+            self.controller_info.current_bs[self.tp_rank].value = batch.input_ids.numel()
 
         # Forward and sample the next tokens
         output = self.model_runner.forward(batch, ForwardMode.DECODE)

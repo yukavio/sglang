@@ -274,8 +274,8 @@ class ControllerInfo:
         self.current_bs = []
         self.swap_in_queue = []
         for i in range(server_args.tp_size):
-            self.available_kv_cache.append(Value(0))
-            self.current_bs.append(Value(0))
+            self.available_kv_cache.append(Value('i', 0))
+            self.current_bs.append(Value('i', 0))
             self.swap_in_queue.append(multiprocessing.Queue())
         self.swap_out_queue = multiprocessing.Queue()
         
@@ -285,8 +285,8 @@ class ControllerInfo:
         cpu_cache_num = 10240
         self.cache_shape = (10240,) + cache_shape
         dtype_size = 2 # support float16 or bfloat16
-        cache_size = np.product(cache_shape) * dtype_size
+        cache_size = np.product(self.cache_shape) * dtype_size
 
         shm = multiprocessing.shared_memory.SharedMemory(create=True, size=cache_size)
-        del shm
         self.cpu_kv_cache = shm.name
+        del shm

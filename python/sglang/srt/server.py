@@ -297,7 +297,7 @@ def launch_server(
     if server_args.dp_size == 1:
         start_process = start_controller_process_single
     else:
-        start_process = start_controller_process_multi
+        start_process = start_controller_process_flex
     proc_controller = mp.Process(
         target=start_process,
         args=(server_args, port_args, pipe_controller_writer, model_overide_args),
