@@ -29,7 +29,7 @@ import numpy as np
 
 from sglang.srt.managers.schedule_batch import BaseFinishReason
 from sglang.srt.sampling_params import SamplingParams
-from sglang.srt.utils import get_cache_info
+from sglang.utils import get_cache_info
 
 @dataclass
 class GenerateReqInput:

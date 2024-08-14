@@ -49,6 +49,7 @@ class LoadBalanceMethod(Enum):
 
     ROUND_ROBIN = auto()
     SHORTEST_QUEUE = auto()
+    RESOURCES_AWARE = auto()
 
     @classmethod
     def from_str(cls, method: str):
@@ -99,6 +100,7 @@ class ControllerMultiFlex:
         dispatch_lookup = {
             LoadBalanceMethod.ROUND_ROBIN: self.round_robin_scheduler,
             LoadBalanceMethod.SHORTEST_QUEUE: self.shortest_queue_scheduler,
+            LoadBalanceMethod.RESOURCES_AWARE :self.resources_aware_scheduler
         }
         self.dispatching = dispatch_lookup[self.load_balance_method]
 
@@ -144,6 +146,18 @@ class ControllerMultiFlex:
                 queue=queue,
             )
         )
+        
+    def resources_aware_scheduler(self, input_requests):
+        self.controller_info.available_kv_cache
+        sorted_index = sorted(range(self.server_args.tp_size), key = lambda k : self.controller_info.current_bs[k])
+
+        for r in input_requests:
+            for i in sorted:
+                if self.controller_info.available_kv_cache[i] > len(r.input_ids) + r.sampling_params.max_new_tokens:
+                    self.workers[i].queue.put(r)
+                    break
+                self.workers[sorted[0]].queue.put(r)
+        
 
     def round_robin_scheduler(self, input_requests):
         for r in input_requests:
