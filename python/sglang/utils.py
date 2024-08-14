@@ -276,3 +276,36 @@ class LazyImport:
     def __call__(self, *args, **kwargs):
         module = self._load()
         return module(*args, **kwargs)
+
+
+def plot_usage_data(mem_data: list, batch_data: list):
+    import matplotlib.pyplot as plt
+
+
+    # gpu_memory_usage_percentage = [(float(self.shared_object.max_size - usage) / self.shared_object.max_size) * 100 for usage in self.shared_object.mem_data]
+    gpu_memory_usage_percentage = [usage for usage in mem_data]
+    compute_resource_usage = [float(usage) for usage in batch_data]
+
+    fig, ax1 = plt.subplots(figsize=(10, 6))
+
+    color = 'tab:red'
+    ax1.set_xlabel('Steps')
+    ax1.set_ylabel('GPU Memory Available', color=color)
+    ax1.plot(gpu_memory_usage_percentage, color=color, label='GPU Memory Available')
+    ax1.set_yscale('log')
+    ax1.tick_params(axis='y', labelcolor=color)
+
+    ax2 = ax1.twinx()  
+    color = 'tab:blue'
+    ax2.set_ylabel('Compute Resource Usage', color=color) 
+    ax2.plot(compute_resource_usage, color=color, label='Compute Resource Usage')
+    ax2.set_yscale('log') 
+    ax2.tick_params(axis='y', labelcolor=color)
+
+    fig.tight_layout()
+    ax1.legend(loc='upper left')
+    ax2.legend(loc='upper right')
+    plt.savefig('profile.png')
+    
+    plt.close()
+    print("Memory use saved...")

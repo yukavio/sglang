@@ -60,7 +60,7 @@ from sglang.srt.utils import (
     set_random_seed,
     suppress_other_loggers,
 )
-from sglang.utils import get_exception_traceback
+from sglang.utils import get_exception_traceback, plot_usage_data
 from sglang.srt.managers.io_struct import ControllerInfo
 
 logger = logging.getLogger(__name__)
@@ -217,6 +217,10 @@ class ModelTpServer:
         )
         self.new_token_ratio = self.min_new_token_ratio
         self.new_token_ratio_decay = global_config.new_token_ratio_decay
+
+        # add for plot usage of compute and memory
+        self.mem_list = []
+        self.batch_list = []
 
     def exposed_step(self, recv_reqs: List):
         try:
@@ -461,6 +465,15 @@ class ModelTpServer:
         if self.controller_info:
             self.controller_info.available_kv_cache[self.dp_rank] = self.token_to_kv_pool.available_size()
             self.controller_info.current_bs[self.dp_rank].value = batch.input_ids.numel()
+            
+            # add mem and compute data
+            self.mem_list.append(self.token_to_kv_pool.available_size())
+            self.batch_list.append(batch.input_ids.numel())
+            
+            usage_len = min(len(self.mem_list), len(self.batch_list))
+            # plot every 100 data
+            if usage_len % 100 == 0:
+                plot_usage_data(self.mem_list, self.batch_list)
 
         if self.model_runner.is_generation:
             # Forward and sample the next tokens
@@ -626,6 +639,15 @@ class ModelTpServer:
         if self.controller_info:
             self.controller_info.available_kv_cache[self.dp_rank] = self.token_to_kv_pool.available_size()
             self.controller_info.current_bs[self.dp_rank].value = batch.input_ids.numel()
+            # add mem and compute data
+            self.mem_list.append(self.token_to_kv_pool.available_size())
+            self.batch_list.append(batch.input_ids.numel())
+            
+            usage_len = min(len(self.mem_list), len(self.batch_list))
+            # plot every 100 data
+            if usage_len % 100 == 0:
+                plot_usage_data(self.mem_list, self.batch_list)
+
 
         # Forward and sample the next tokens
         output = self.model_runner.forward(batch, ForwardMode.DECODE)
