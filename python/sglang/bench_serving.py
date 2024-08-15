@@ -558,7 +558,14 @@ async def benchmark(
     print("Starting initial single prompt test run...")
     test_prompt, test_prompt_len, test_output_len = input_requests[0]
     
-    print(f"test_prompt={test_prompt},test_prompt_len={test_prompt_len} ,test_output_len={test_output_len}")
+    words = test_prompt.split()
+
+    # 使用random.shuffle打乱单词列表
+    random.shuffle(words)
+
+    # 将打乱后的单词列表合并回文本
+    test_prompt = ' '.join(words)
+
     
     test_input = RequestFuncInput(
         model=model_id,
