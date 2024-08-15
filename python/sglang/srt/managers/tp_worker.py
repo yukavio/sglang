@@ -477,9 +477,13 @@ class ModelTpServer:
 
         if self.controller_info:
             self.controller_info.available_kv_cache[self.dp_rank] = self.token_to_kv_pool.available_size()
-            self.controller_info.current_bs[self.dp_rank].value -= len(batch.input_ids)
             
-            logger.info(f"[{self.gpu_id}]:forward_prefill_batch ===> {len(batch.input_ids)}")
+            num = 0
+            for r in batch.reqs:
+                num += len(r.origin_input_ids)
+            self.controller_info.current_bs[self.dp_rank].value -= num
+            
+            logger.info(f"[{self.gpu_id}]:forward_prefill_batch ===> {num}")
             
             # add mem and compute data
             self.mem_list.append(self.controller_info.available_kv_cache[self.dp_rank])
