@@ -376,6 +376,9 @@ class ModelTpServer:
                 ),
                 self.max_req_input_len - 1 - len(req.origin_input_ids),
             )
+        if self.controller_info:
+            self.controller_info.available_kv_cache[self.dp_rank] = self.token_to_kv_pool.available_size()
+            self.controller_info.current_bs[self.dp_rank].value += len(req.origin_input_ids)
 
         self.waiting_queue.append(req)
 
@@ -464,7 +467,7 @@ class ModelTpServer:
 
         if self.controller_info:
             self.controller_info.available_kv_cache[self.dp_rank] = self.token_to_kv_pool.available_size()
-            self.controller_info.current_bs[self.dp_rank].value = batch.input_ids.numel()
+            self.controller_info.current_bs[self.dp_rank].value -= len(batch.input_ids.numel())
             
             # add mem and compute data
             self.mem_list.append(self.token_to_kv_pool.available_size())
