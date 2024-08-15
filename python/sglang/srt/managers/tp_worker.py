@@ -475,7 +475,10 @@ class ModelTpServer:
             # self.mem_list.append(self.controller_info.available_kv_cache[self.dp_rank])
             self.batch_list.append(self.controller_info.current_bs[self.dp_rank].value)
             
-            usage_len = min(len(self.mem_list), len(self.batch_list))
+
+            usage_len = len(self.batch_list)            
+            # usage_len = min(len(self.mem_list), len(self.batch_list))
+
             # plot every 100 data
             if usage_len % 100 == 0:
                 plot_usage_data(self.mem_list, self.batch_list, self.dp_rank)
