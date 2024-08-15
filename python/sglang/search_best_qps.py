@@ -1017,4 +1017,4 @@ if __name__ == "__main__":
     
     
     result = run_benchmark(args)
-    print(f"benchmark_result = {result}")
+    print(f"benchmark_result = {result["mean_ttft_ms"]}")
