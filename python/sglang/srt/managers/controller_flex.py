@@ -100,7 +100,12 @@ class ControllerMultiFlex:
         dispatch_lookup = {
             LoadBalanceMethod.ROUND_ROBIN: self.round_robin_scheduler,
             LoadBalanceMethod.SHORTEST_QUEUE: self.shortest_queue_scheduler,
-            LoadBalanceMethod.RESOURCES_AWARE :self.resources_aware_scheduler
+            LoadBalanceMethod.RESOURCES_AWARE :self.# The `resources_aware_scheduler` function in the
+            # `ControllerMultiFlex` class is a method used for
+            # scheduling input requests to data parallel
+            # workers based on the availability of resources.
+            # Here's a breakdown of what the function does:
+            resources_aware_scheduler
         }
         self.dispatching = dispatch_lookup[self.load_balance_method]
 
