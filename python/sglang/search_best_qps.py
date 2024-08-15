@@ -1038,9 +1038,6 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    
-    
-    
     mean_ttft_ms = 0.0
     search_qps_thread = args.search_qps_thread
     search_qps_start = args.search_qps_start
@@ -1048,7 +1045,7 @@ if __name__ == "__main__":
     
     
     qps_result_dict = []
-    while abs(mean_ttft_ms - search_qps_thread) < 500 and search_qps_start > search_qps_end: # 误差在0.5s以内都可以
+    while abs(mean_ttft_ms - search_qps_thread) < 500 and search_qps_start < search_qps_end: # 误差在0.5s以内都可以
         mid_qps = (search_qps_start + search_qps_end) / 2
         args.request_rate = mid_qps
         result = run_benchmark(args)
@@ -1058,7 +1055,6 @@ if __name__ == "__main__":
             "request_rate": mid_qps,
             "mean_ttft_ms": mean_ttft_ms
         })
-        # 如果结果和我们需要的很近了，则退出
         
         if mean_ttft_ms < search_qps_thread:
             # 增加mean_ttft_ms就是增加request_rate
