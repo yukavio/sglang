@@ -476,15 +476,16 @@ class ModelTpServer:
         if self.controller_info:
             self.controller_info.available_kv_cache[self.dp_rank] = self.token_to_kv_pool.available_size()
             self.controller_info.current_bs[self.dp_rank].value -= len(batch.input_ids.numel())
+            print(f"len(batch.input_ids.numel())={len(batch.input_ids.numel())},dp={self.dp_size},batch={self.controller_info.current_bs[self.dp_rank].value}")
             
             # add mem and compute data
-            self.mem_list.append(self.token_to_kv_pool.available_size())
-            self.batch_list.append(batch.input_ids.numel())
+            self.mem_list.append(self.controller_info.available_kv_cache[self.dp_rank])
+            self.batch_list.append(self.controller_info.current_bs[self.dp_rank].value)
             
             usage_len = min(len(self.mem_list), len(self.batch_list))
             # plot every 100 data
             if usage_len % 100 == 0:
-                plot_usage_data(self.mem_list, self.batch_list)
+                plot_usage_data(self.mem_list, self.batch_list, self.dp_size)
 
         if self.model_runner.is_generation:
             # Forward and sample the next tokens
@@ -647,18 +648,6 @@ class ModelTpServer:
         self.decode_forward_ct = (self.decode_forward_ct + 1) % (1 << 30)
         batch.prepare_for_decode()
         
-        if self.controller_info:
-            self.controller_info.available_kv_cache[self.dp_rank] = self.token_to_kv_pool.available_size()
-            self.controller_info.current_bs[self.dp_rank].value = batch.input_ids.numel()
-            # add mem and compute data
-            self.mem_list.append(self.token_to_kv_pool.available_size())
-            self.batch_list.append(batch.input_ids.numel())
-            
-            usage_len = min(len(self.mem_list), len(self.batch_list))
-            # plot every 100 data
-            if usage_len % 100 == 0:
-                plot_usage_data(self.mem_list, self.batch_list)
-
 
         # Forward and sample the next tokens
         output = self.model_runner.forward(batch, ForwardMode.DECODE)

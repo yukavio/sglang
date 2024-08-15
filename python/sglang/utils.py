@@ -283,7 +283,7 @@ class LazyImport:
         return module(*args, **kwargs)
 
 
-def plot_usage_data(mem_data: list, batch_data: list):
+def plot_usage_data(mem_data: list, batch_data: list, dp_size: int):
     import matplotlib.pyplot as plt
 
 
@@ -310,7 +310,7 @@ def plot_usage_data(mem_data: list, batch_data: list):
     fig.tight_layout()
     ax1.legend(loc='upper left')
     ax2.legend(loc='upper right')
-    plt.savefig('profile.png')
+    plt.savefig(f'profile{dp_size}.png')
     
     plt.close()
     print("Memory use saved...")
