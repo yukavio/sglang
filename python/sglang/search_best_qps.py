@@ -1012,9 +1012,61 @@ if __name__ == "__main__":
         help="Append given JSON object to the request payload. You can use this to specify"
         "additional generate params like sampling params.",
     )
+    
+    
+    parser.add_argument(
+        "--search-qps-start",
+        type=float,
+        default=0.0,
+        help="Binary search best QPS, start request_rate, real request rate will multi dp_size",
+    )
+    
+    parser.add_argument(
+        "--search-qps-end",
+        type=int,
+        default=0,
+        help="Binary search best QPS, end request_rate, real request rate will multi dp_size",
+    )
+    
+    parser.add_argument(
+        "--search-qps-thread",
+        type=int,
+        default=0,
+        help="The qps value that we want(ms)",
+    )
+    
+    
     args = parser.parse_args()
     
     
     
-    result = run_benchmark(args)
-    print(f"benchmark_result = {result['mean_ttft_ms']}")
+    
+    mean_ttft_ms = 0.0
+    search_qps_thread = args.search_qps_thread
+    search_qps_start = args.search_qps_start
+    search_qps_end = args.search_qps_end
+    
+    
+    qps_result_dict = []
+    while abs(mean_ttft_ms - search_qps_thread) < 500 and search_qps_start > search_qps_end: # 误差在0.5s以内都可以
+        mid_qps = (search_qps_start + search_qps_end) / 2
+        args.request_rate = mid_qps
+        result = run_benchmark(args)
+        mean_ttft_ms = float(result['mean_ttft_ms'])
+        
+        qps_result_dict.append({
+            "request_rate": mid_qps,
+            "mean_ttft_ms": mean_ttft_ms
+        })
+        # 如果结果和我们需要的很近了，则退出
+        
+        if mean_ttft_ms < search_qps_thread:
+            # 增加mean_ttft_ms就是增加request_rate
+            search_qps_end = mid_qps
+        else:
+            search_qps_start = mid_qps
+    
+        
+    print(f"request_rate\t\tmean_ttft_ms")
+    for item in qps_result_dict:
+        print(f"{item['request_rate']}\t\t{item['mean_ttft_ms']}")
