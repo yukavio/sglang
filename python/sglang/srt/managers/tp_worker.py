@@ -255,7 +255,6 @@ class ModelTpServer:
     @torch.inference_mode()
     def forward_step(self):
         new_batch = self.get_new_prefill_batch()
-        logger.info(f"{self.}")
 
         if new_batch is not None:
             # Run a new prefill batch
