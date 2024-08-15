@@ -148,15 +148,13 @@ class ControllerMultiFlex:
         )
         
     def resources_aware_scheduler(self, input_requests):
-        self.controller_info.available_kv_cache
-        sorted_index = sorted(range(self.server_args.tp_size), key = lambda k : self.controller_info.current_bs[k].value)
-
+        if len(input_requests) == 0:
+            return
+        remained_token = [k.value for k in self.controller_info.current_bs]
         for r in input_requests:
-            for i in sorted_index:
-                if self.controller_info.available_kv_cache[i].value > len(r.input_ids) + r.sampling_params.max_new_tokens:
-                    self.workers[i].queue.put(r)
-                    break
-                self.workers[sorted_index[0]].queue.put(r)
+            index = remained_token.index(min(remained_token))
+            self.workers[index].queue.put(r)
+            remained_token[index] += len(r.input_ids)
         
 
     def round_robin_scheduler(self, input_requests):

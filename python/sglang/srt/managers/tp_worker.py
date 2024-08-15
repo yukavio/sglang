@@ -372,6 +372,9 @@ class ModelTpServer:
                 ),
                 self.max_req_input_len - 1 - len(req.origin_input_ids),
             )
+        if self.controller_info:
+            self.controller_info.available_kv_cache[self.dp_rank] = self.token_to_kv_pool.available_size()
+            self.controller_info.current_bs[self.dp_rank].value += len(req.origin_input_ids)
 
         self.waiting_queue.append(req)
 
@@ -460,7 +463,7 @@ class ModelTpServer:
 
         if self.controller_info:
             self.controller_info.available_kv_cache[self.dp_rank] = self.token_to_kv_pool.available_size()
-            self.controller_info.current_bs[self.dp_rank].value = batch.input_ids.numel()
+            self.controller_info.current_bs[self.dp_rank].value -= len(batch.input_ids.numel())
 
         if self.model_runner.is_generation:
             # Forward and sample the next tokens
@@ -622,10 +625,6 @@ class ModelTpServer:
         # Update batch tensors
         self.decode_forward_ct = (self.decode_forward_ct + 1) % (1 << 30)
         batch.prepare_for_decode()
-        
-        if self.controller_info:
-            self.controller_info.available_kv_cache[self.dp_rank] = self.token_to_kv_pool.available_size()
-            self.controller_info.current_bs[self.dp_rank].value = batch.input_ids.numel()
 
         # Forward and sample the next tokens
         output = self.model_runner.forward(batch, ForwardMode.DECODE)
