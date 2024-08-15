@@ -388,7 +388,7 @@ class ModelTpServer:
                 req.origin_input_ids
             )
             
-            logger.info(f"handle_generate_request=>{len(req.origin_input_ids)}")
+            logger.info(f"[{self.gpu_id}]: handle_generate_request=>{len(req.origin_input_ids)}")
 
         self.waiting_queue.append(req)
 
@@ -479,7 +479,7 @@ class ModelTpServer:
             self.controller_info.available_kv_cache[self.dp_rank] = self.token_to_kv_pool.available_size()
             self.controller_info.current_bs[self.dp_rank].value -= len(batch.input_ids)
             
-            logger.info(f"forward_prefill_batch===>{len(batch.input_ids)}")
+            logger.info(f"[{self.gpu_id}]:forward_prefill_batch ===> {len(batch.input_ids)}")
             
             # add mem and compute data
             self.mem_list.append(self.controller_info.available_kv_cache[self.dp_rank])
