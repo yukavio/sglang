@@ -18,18 +18,22 @@ The definition of objects transfered between different
 processes (TokenizerManager, DetokenizerManager, Controller).
 """
 
+import multiprocessing
 import uuid
 import multiprocessing
 from dataclasses import dataclass
+from multiprocessing import Value
 from typing import Dict, List, Optional, Union
 from multiprocessing import Value
 
+import numpy as np
 import torch
 import numpy as np
 
 from sglang.srt.managers.schedule_batch import BaseFinishReason
 from sglang.srt.sampling_params import SamplingParams
 from sglang.utils import get_cache_info
+
 
 @dataclass
 class GenerateReqInput:
@@ -270,21 +274,21 @@ class DetokenizeReqInput:
 
 class ControllerInfo:
     def __init__(self, server_args, model_overide_args):
-        self.available_kv_cache  = []
+        self.available_kv_cache = []
         self.current_bs = []
         self.swap_in_queue = []
         for i in range(server_args.dp_size):
-            self.available_kv_cache.append(Value('i', 0))
-            self.current_bs.append(Value('i', 0))
+            self.available_kv_cache.append(Value("i", 0))
+            self.current_bs.append(Value("i", 0))
             self.swap_in_queue.append(multiprocessing.Queue())
         self.swap_out_queue = multiprocessing.Queue()
-        
+
         cache_shape = get_cache_info(server_args, model_overide_args)
-        
-        # TODO: Make it editable by user @kavioyu 
+
+        # TODO: Make it editable by user @kavioyu
         cpu_cache_num = 10240
         self.cache_shape = (10240,) + cache_shape
-        dtype_size = 2 # support float16 or bfloat16
+        dtype_size = 2  # support float16 or bfloat16
         cache_size = np.product(self.cache_shape) * dtype_size
 
         shm = multiprocessing.shared_memory.SharedMemory(create=True, size=cache_size)

@@ -18,6 +18,9 @@ import requests
 from sglang.srt.model_config import ModelConfig, AttentionArch
 from sglang.srt.server_args import ServerArgs
 
+from sglang.srt.model_config import AttentionArch, ModelConfig
+from sglang.srt.server_args import ServerArgs
+
 logger = logging.getLogger(__name__)
 
 
@@ -238,7 +241,9 @@ def get_cache_info(server_args: ServerArgs, model_overide_args):
         context_length=server_args.context_length,
         model_overide_args=model_overide_args,
     )
-    assert model_config.attention_arch == AttentionArch.MHA, 'FlexController Only Support MHA Currently'
+    assert (
+        model_config.attention_arch == AttentionArch.MHA
+    ), "FlexController Only Support MHA Currently"
     tp_size = server_args.tp_size
     shape = (model_config.get_num_kv_heads(tp_size), model_config.head_dim)
     return shape

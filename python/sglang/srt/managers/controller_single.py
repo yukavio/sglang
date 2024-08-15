@@ -19,9 +19,11 @@ import logging
 import multiprocessing
 import os
 from typing import List
+
 import numpy as np
 import zmq
 
+from sglang.srt.managers.io_struct import ControllerInfo
 from sglang.srt.managers.tp_worker import (
     ModelTpServer,
     broadcast_recv_input,
@@ -138,7 +140,7 @@ def start_controller_process(
     gpu_ids: List[int] = None,
     dp_worker_id: int = None,
     queue: multiprocessing.connection.Connection = None,
-    controller_info: ControllerInfo = None
+    controller_info: ControllerInfo = None,
 ):
     """Start a controller process."""
 
@@ -162,7 +164,7 @@ def start_controller_process(
             is_data_parallel_worker,
             dp_worker_id,
             queue,
-            controller_info
+            controller_info,
         )
     except Exception:
         pipe_writer.send(get_exception_traceback())

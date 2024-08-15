@@ -33,13 +33,13 @@ from sglang.srt.managers.controller_single import (
 )
 from sglang.srt.managers.io_struct import (
     AbortReq,
+    ControllerInfo,
     FlushCacheReq,
     TokenizedGenerateReqInput,
 )
 from sglang.srt.server_args import PortArgs, ServerArgs
 from sglang.srt.utils import kill_parent_process
-from sglang.utils import get_exception_traceback, get_cache_info
-from sglang.srt.managers.io_struct import ControllerInfo
+from sglang.utils import get_cache_info, get_exception_traceback
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,6 @@ class WorkerHandle:
 
     proc: multiprocessing.Process
     queue: multiprocessing.Queue
-
 
 
 # class FlexScheduler:
@@ -100,12 +99,7 @@ class ControllerMultiFlex:
         dispatch_lookup = {
             LoadBalanceMethod.ROUND_ROBIN: self.round_robin_scheduler,
             LoadBalanceMethod.SHORTEST_QUEUE: self.shortest_queue_scheduler,
-            LoadBalanceMethod.RESOURCES_AWARE :self.# The `resources_aware_scheduler` function in the
-            # `ControllerMultiFlex` class is a method used for
-            # scheduling input requests to data parallel
-            # workers based on the availability of resources.
-            # Here's a breakdown of what the function does:
-            resources_aware_scheduler
+            LoadBalanceMethod.RESOURCES_AWARE: self.resources_aware_scheduler,
         }
         self.dispatching = dispatch_lookup[self.load_balance_method]
 
@@ -135,7 +129,7 @@ class ControllerMultiFlex:
                 gpu_ids,
                 dp_worker_id,
                 queue,
-                self.controller_info
+                self.controller_info,
             ),
         )
         proc.start()
@@ -151,7 +145,7 @@ class ControllerMultiFlex:
                 queue=queue,
             )
         )
-        
+
     def resources_aware_scheduler(self, input_requests):
         if len(input_requests) == 0:
             return
@@ -160,7 +154,6 @@ class ControllerMultiFlex:
             index = remained_token.index(min(remained_token))
             self.workers[index].queue.put(r)
             remained_token[index] += len(r.input_ids)
-        
 
     def round_robin_scheduler(self, input_requests):
         for r in input_requests:
