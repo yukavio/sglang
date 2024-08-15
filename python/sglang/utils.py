@@ -312,7 +312,7 @@ def plot_usage_data(mem_data: list, batch_data: list, dp_size: int):
     ax2.legend(loc='upper right')
     plt.savefig(f'profile{dp_size}.png')
     
-    print(f"mem_data_len{len(mem_data)},batch_data{len(batch_data)}")
+    # print(f"mem_data_len{len(mem_data)},batch_data{len(batch_data)}")
     
     plt.close()
-    print("Memory use saved...")
+    # print("Memory use saved...")

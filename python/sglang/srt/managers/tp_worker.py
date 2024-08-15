@@ -255,6 +255,7 @@ class ModelTpServer:
     @torch.inference_mode()
     def forward_step(self):
         new_batch = self.get_new_prefill_batch()
+        logger.info(f"{self.}")
 
         if new_batch is not None:
             # Run a new prefill batch
@@ -387,6 +388,10 @@ class ModelTpServer:
             self.controller_info.current_bs[self.dp_rank].value += len(
                 req.origin_input_ids
             )
+            
+            logger.info(f"handle_generate_request=>{len(
+                req.origin_input_ids
+            )}")
 
         self.waiting_queue.append(req)
 
@@ -476,6 +481,8 @@ class ModelTpServer:
         if self.controller_info:
             self.controller_info.available_kv_cache[self.dp_rank] = self.token_to_kv_pool.available_size()
             self.controller_info.current_bs[self.dp_rank].value -= len(batch.input_ids)
+            
+            logger.info(f"forward_prefill_batch===>{len(batch.input_ids)}")
             
             # add mem and compute data
             self.mem_list.append(self.controller_info.available_kv_cache[self.dp_rank])
