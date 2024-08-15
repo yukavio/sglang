@@ -380,16 +380,6 @@ class ModelTpServer:
                 ),
                 self.max_req_input_len - 1 - len(req.origin_input_ids),
             )
-        if self.controller_info:
-            self.controller_info.available_kv_cache[self.dp_rank] = (
-                self.token_to_kv_pool.available_size()
-            )
-            self.controller_info.current_bs[self.dp_rank].value += len(
-                req.origin_input_ids
-            )
-            
-            logger.info(f"[{self.gpu_id}]: handle_generate_request=>{len(req.origin_input_ids)}")
-
         self.waiting_queue.append(req)
 
     def get_new_prefill_batch(self) -> Optional[ScheduleBatch]:
@@ -476,17 +466,13 @@ class ModelTpServer:
         )
 
         if self.controller_info:
-            self.controller_info.available_kv_cache[self.dp_rank] = self.token_to_kv_pool.available_size()
-            
             num = 0
             for r in batch.reqs:
                 num += len(r.origin_input_ids)
-            self.controller_info.current_bs[self.dp_rank].value -= num
-            
-            logger.info(f"[{self.gpu_id}]:forward_prefill_batch ===> {num}")
-            
+            with self.controller_info.lock:
+                self.controller_info.current_bs[self.dp_rank].value -= num
             # add mem and compute data
-            self.mem_list.append(self.controller_info.available_kv_cache[self.dp_rank])
+            # self.mem_list.append(self.controller_info.available_kv_cache[self.dp_rank])
             self.batch_list.append(self.controller_info.current_bs[self.dp_rank].value)
             
             usage_len = min(len(self.mem_list), len(self.batch_list))
