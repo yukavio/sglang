@@ -389,9 +389,7 @@ class ModelTpServer:
                 req.origin_input_ids
             )
             
-            logger.info(f"handle_generate_request=>{len(
-                req.origin_input_ids
-            )}")
+            logger.info(f"handle_generate_request=>{len(req.origin_input_ids)}")
 
         self.waiting_queue.append(req)
 
