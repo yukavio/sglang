@@ -175,6 +175,7 @@ class ControllerMultiFlex:
                 index = remained_token.index(min(remained_token))
                 self.workers[index].queue.put(r)
                 remained_token[index] += input_len
+                available_mem[index] -= input_len        
         with self.controller_info.lock:
             for i, v in enumerate(remained_token):
                 self.controller_info.current_bs[i].value = v
