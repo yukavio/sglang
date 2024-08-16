@@ -471,6 +471,7 @@ class ModelTpServer:
                 num += len(r.origin_input_ids)
             with self.controller_info.lock:
                 self.controller_info.current_bs[self.dp_rank].value -= num
+                self.controller_info.available_kv_cache[self.dp_rank] = (self.token_to_kv_pool.available_size())
             # add mem and compute data
             # self.mem_list.append(self.controller_info.available_kv_cache[self.dp_rank])
             self.batch_list.append(self.controller_info.current_bs[self.dp_rank].value)
