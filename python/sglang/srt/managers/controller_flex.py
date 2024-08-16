@@ -159,6 +159,7 @@ class ControllerMultiFlex:
             thresold = -900000
             
             for i in range (len(available_mem)):
+                print(f"{self.i}=>{available_mem[i] - remained_token[i]}")
                 if available_mem[i] - remained_token[i] > thresold:
                     available_gpu.append({
                         "id": i,
