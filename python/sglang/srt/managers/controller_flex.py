@@ -157,7 +157,7 @@ class ControllerMultiFlex:
                 # 说明有mem可以放，放在满足mem且未处理最少的那个机器上
                 
                 target_gpu = -1
-                min_remain_token_tmp = 1e9
+                min_remain_token_tmp = 1e20
                 for i, mem in enumerate(available_mem):
                     if mem >= input_len:
                         # 更新最小        
