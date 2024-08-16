@@ -157,6 +157,7 @@ class ControllerMultiFlex:
             input_len = len(r.input_ids)
             available_gpu = []
             thresold = int(os.getenv("THRESOLD", -1500000))
+            print(f"current thresold={thresold}")
             
             for i in range (len(available_mem)):
                 print(f"{self.i}=>{available_mem[i] - remained_token[i]}")
