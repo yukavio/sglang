@@ -153,7 +153,11 @@ class ControllerMultiFlex:
         available_mem = [k.value for k in self.controller_info.available_kv_cache]
         for r in input_requests:
             input_len = len(r.input_ids)
+            print(input_len)
             if input_len <= max(available_mem):
+                
+                dealt = available_mem - remained_token
+                
                 # 说明有mem可以放，放在满足mem且未处理最少的那个机器上
                 
                 target_gpu = -1
