@@ -1007,27 +1007,47 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     qps_result_dict = []
-    qps_list = [1, 5, 10, 20, 35, 50, 70, 100]
+    parser.add_argument(
+        "--request-rate-list",
+        type=json.loads,
+        default="[1, 5, 10, 20, 35, 50, 70, 100]",
+        help="request rate list",
+    )
+    
+    qps_list = args.request_rate_list
     for request_rate in qps_list:
         args.request_rate = request_rate
         result = run_benchmark(args)
         qps_result_dict.append({
             "request_rate": request_rate,
-            "mean_ttft_ms": float(result['mean_ttft_ms'])
+            "mean_ttft_ms": float(result['mean_ttft_ms']),
+            "request_throughput": float(result["request_throughput"])
         })
         time.sleep(10)
         
     import matplotlib.pyplot as plt
 
-    # Assuming qps_result_dict is already populated with the results
     request_rates = [result['request_rate'] for result in qps_result_dict]
     mean_ttft_ms = [result['mean_ttft_ms'] for result in qps_result_dict]
+    request_throughput = [result['request_throughput'] for result in qps_result_dict]
 
-    plt.plot(request_rates, mean_ttft_ms, marker='o')
-    plt.xlabel('Request Rate (QPS)')
-    plt.ylabel('Mean Time to First Byte (ms)')
+    fig, ax1 = plt.subplots()
+
+    color = 'tab:red'
+    ax1.set_xlabel('Request Rate (QPS)')
+    ax1.set_ylabel('Mean Time to First Byte (ms)', color=color)
+    ax1.plot(request_rates, mean_ttft_ms, marker='o', color=color)
+    ax1.tick_params(axis='y', labelcolor=color)
+
+    ax2 = ax1.twinx()  # instantiate a second axes that shares the same x-axis
+
+    color = 'tab:blue'
+    ax2.set_ylabel('Request Throughput', color=color)  # we already handled the x-label with ax1
+    ax2.plot(request_rates, request_throughput, marker='x', color=color)
+    ax2.tick_params(axis='y', labelcolor=color)
+
+    fig.tight_layout()  # otherwise the right y-label is slightly clipped
     plt.title('Benchmark Results')
-    plt.grid(True)
     plt.savefig("./QPS.png")
     plt.close()
         
