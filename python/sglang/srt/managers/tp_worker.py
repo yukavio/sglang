@@ -436,9 +436,13 @@ class ModelTpServer:
                 adder.log_input_tokens + adder.log_hit_tokens
             ) / 10**9
             self.tree_cache_metrics["hit"] += (adder.log_hit_tokens) / 10**9
-            tree_cache_hit_rate = (
-                self.tree_cache_metrics["hit"] / self.tree_cache_metrics["total"]
-            )
+
+            try:            
+                tree_cache_hit_rate = (
+                    self.tree_cache_metrics["hit"] / self.tree_cache_metrics["total"]
+                )
+            except ZeroDivisionError:
+                tree_cache_hit_rate = 1.0
             logger.info(
                 f"[gpu={self.gpu_id}] Prefill batch. "
                 f"#new-seq: {len(can_run_list)}, "
