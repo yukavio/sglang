@@ -155,26 +155,24 @@ class ControllerMultiFlex:
         # print(dealt)
         for r in input_requests:
             input_len = len(r.input_ids)
-            print(input_len)
-            if input_len <= max(available_mem):
-                available_gpu = []
-                thresold = 0
-                
-                for i in range (len(available_mem)):
-                    if available_mem[i] - remained_token[i] > thresold:
-                        available_gpu.append({
-                            "id": i,
-                            "id_remained_token": remained_token[i]
-                        })
-                
-                
+            available_gpu = []
+            thresold = -900000
+            
+            for i in range (len(available_mem)):
+                if available_mem[i] - remained_token[i] > thresold:
+                    available_gpu.append({
+                        "id": i,
+                        "id_remained_token": remained_token[i]
+                    })
+            
+            if len(available_gpu) > 0:
                 sorted_gpus = sorted(available_gpu, key=lambda x: x['id_remained_token'])
                 
                 target_gpu = sorted_gpus[0]["id"]
                 self.workers[target_gpu].queue.put(r)
                 remained_token[target_gpu] += input_len
                 available_mem[target_gpu] -= input_len        
-                    
+                
             else:
                 #这就说明没有合适的调度
                 index = remained_token.index(min(remained_token))
