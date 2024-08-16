@@ -151,7 +151,7 @@ class ControllerMultiFlex:
             return
         remained_token = [k.value for k in self.controller_info.current_bs]
         available_mem = [k.value for k in self.controller_info.available_kv_cache]
-        print(f"current_bs{remained_token} available mem: {self.controller_info.available_mem}")
+        print(f"current_bs{remained_token} available mem: {available_mem}")
         for r in input_requests:
             index = remained_token.index(min(remained_token))
             self.workers[index].queue.put(r)
