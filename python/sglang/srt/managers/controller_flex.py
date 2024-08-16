@@ -168,7 +168,7 @@ class ControllerMultiFlex:
                         })
                 
                 
-                sorted_gpus = sorted(available_gpu, key=lambda x: x['remained_token'])
+                sorted_gpus = sorted(available_gpu, key=lambda x: x['id_remained_token'])
                 
                 target_gpu = sorted_gpus[0]["id"]
                 self.workers[target_gpu].queue.put(r)
