@@ -1024,6 +1024,13 @@ if __name__ == "__main__":
             "mean_ttft_ms": float(result['mean_ttft_ms']),
             "request_throughput": float(result["request_throughput"])
         })
+        
+        import json
+        # 将字典列表以JSON格式写入文件
+        with open('qps_results.json', 'w', encoding='utf-8') as json_file:
+            json.dump(qps_result_dict, json_file, ensure_ascii=False, indent=4)
+
+        print(f"QPS结果列表已保存到'qps_results.json'")
         time.sleep(10)
         
     import matplotlib.pyplot as plt
@@ -1051,5 +1058,7 @@ if __name__ == "__main__":
     plt.title('Benchmark Results')
     plt.savefig("./QPS.png")
     plt.close()
+    
+
         
     
