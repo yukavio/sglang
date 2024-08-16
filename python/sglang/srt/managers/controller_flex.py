@@ -156,7 +156,7 @@ class ControllerMultiFlex:
             print(input_len)
             if input_len <= max(available_mem):
                 
-                dealt = available_mem - remained_token
+                # dealt = available_mem - remained_token
                 
                 # 说明有mem可以放，放在满足mem且未处理最少的那个机器上
                 
