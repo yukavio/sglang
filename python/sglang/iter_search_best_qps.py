@@ -1004,15 +1004,16 @@ if __name__ == "__main__":
         help="Append given JSON object to the request payload. You can use this to specify"
         "additional generate params like sampling params.",
     )
-    args = parser.parse_args()
-    
-    qps_result_dict = []
     parser.add_argument(
         "--request-rate-list",
         type=json.loads,
         default="[1, 5, 10, 20, 35, 50, 70, 100]",
         help="request rate list",
     )
+    
+    args = parser.parse_args()
+    qps_result_dict = []
+
     
     qps_list = args.request_rate_list
     for request_rate in qps_list:
