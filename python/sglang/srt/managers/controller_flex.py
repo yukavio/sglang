@@ -151,15 +151,35 @@ class ControllerMultiFlex:
             return
         remained_token = [k.value for k in self.controller_info.current_bs]
         available_mem = [k.value for k in self.controller_info.available_kv_cache]
-        print(f"current_bs{remained_token} available mem: {available_mem}")
         for r in input_requests:
-            print(r)
-            index = remained_token.index(min(remained_token))
-            self.workers[index].queue.put(r)
-            remained_token[index] += len(r.input_ids)
+            input_len = len(r.input_ids)
+            if input_len <= max(available_mem):
+                # 说明有mem可以放，放在满足mem且未处理最少的那个机器上
+                
+                target_gpu = -1
+                min_remain_token_tmp = 1e9
+                for i, mem in enumerate(available_mem):
+                    if mem >= input_len:
+                        # 更新最小        
+                        if min_remain_token_tmp > remained_token[i]:
+                            min_remain_token_tmp =  remained_token[i]
+                            target_gpu = i  
+                
+                if target_gpu != -1:
+                    self.workers[target_gpu].queue.put(r)
+                    remained_token[target_gpu] += input_len
+                    available_mem[target_gpu] -= input_len        
+                    
+            else:
+                #这就说明没有合适的调度
+                index = remained_token.index(min(remained_token))
+                self.workers[index].queue.put(r)
+                remained_token[index] += input_len
         with self.controller_info.lock:
             for i, v in enumerate(remained_token):
                 self.controller_info.current_bs[i].value = v
+            for i, v in enumerate(available_mem):
+                self.controller_info.available_kv_cache.value = v
 
     def round_robin_scheduler(self, input_requests):
         for r in input_requests:
