@@ -888,6 +888,40 @@ def set_ulimit(target_soft_limit=65535):
             print(f"Fail to set RLIMIT_NOFILE: {e}")
 
 
+import json
+
+def update_qps_json_file(data_list, file_path):
+    # 读取现有数据
+    try:
+        with open(file_path, 'r', encoding='utf-8') as json_file:
+            qps_result_list = json.load(json_file)
+    except FileNotFoundError:
+        qps_result_list = []
+
+    # 获取现有数据中所有的request_rate
+    existing_rates = {item['request_rate'] for item in qps_result_list}
+
+    # 添加新数据，如果request_rate不存在
+    new_entries_added = False
+    for new_data in data_list:
+        if new_data['request_rate'] not in existing_rates:
+            qps_result_list.append(new_data)
+            existing_rates.add(new_data['request_rate'])
+            new_entries_added = True
+        else:
+            print(f"数据已存在，request_rate为{new_data['request_rate']}的项将被跳过。")
+
+    # 如果有新数据被添加，则排序并写入文件
+    if new_entries_added:
+        # 按request_rate排序
+        qps_result_list.sort(key=lambda x: x['request_rate'])
+
+        # 写入更新后的数据
+        with open(file_path, 'w', encoding='utf-8') as json_file:
+            json.dump(qps_result_list, json_file, ensure_ascii=False, indent=4)
+        print("新数据已添加并排序。")
+
+
 if __name__ == "__main__":
     parser = ArgumentParser(description="Benchmark the online serving throughput.")
     parser.add_argument(
@@ -1025,12 +1059,12 @@ if __name__ == "__main__":
             "request_throughput": float(result["request_throughput"])
         })
         
-        import json
         # 将字典列表以JSON格式写入文件
-        with open('qps_results.json', 'w', encoding='utf-8') as json_file:
-            json.dump(qps_result_dict, json_file, ensure_ascii=False, indent=4)
+        update_qps_json_file(qps_result_dict, 'qps_results.json')
+        # with open('qps_results.json', 'w', encoding='utf-8') as json_file:
+        #     json.dump(qps_result_dict, json_file, ensure_ascii=False, indent=4)
 
-        print(f"QPS结果列表已保存到'qps_results.json'")
+        # print(f"QPS结果列表已保存到'qps_results.json'")
         time.sleep(10)
         
     import matplotlib.pyplot as plt
