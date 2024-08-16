@@ -165,10 +165,10 @@ class ControllerMultiFlex:
                             min_remain_token_tmp =  remained_token[i]
                             target_gpu = i  
                 
-                if target_gpu != -1:
-                    self.workers[target_gpu].queue.put(r)
-                    remained_token[target_gpu] += input_len
-                    available_mem[target_gpu] -= input_len        
+                assert target_gpu != -1, "Can not find target gpu, please check che code"
+                self.workers[target_gpu].queue.put(r)
+                remained_token[target_gpu] += input_len
+                available_mem[target_gpu] -= input_len        
                     
             else:
                 #这就说明没有合适的调度
@@ -179,7 +179,7 @@ class ControllerMultiFlex:
             for i, v in enumerate(remained_token):
                 self.controller_info.current_bs[i].value = v
             for i, v in enumerate(available_mem):
-                self.controller_info.available_kv_cache.value = v
+                self.controller_info.available_kv_cache[i].value = v
 
     def round_robin_scheduler(self, input_requests):
         for r in input_requests:
