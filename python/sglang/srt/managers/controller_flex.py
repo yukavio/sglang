@@ -150,6 +150,7 @@ class ControllerMultiFlex:
         if len(input_requests) == 0:
             return
         remained_token = [k.value for k in self.controller_info.current_bs]
+        print(f"current_bs{self.controller_info.current_bs}")
         for r in input_requests:
             index = remained_token.index(min(remained_token))
             self.workers[index].queue.put(r)
