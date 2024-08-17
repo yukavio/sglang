@@ -465,7 +465,19 @@ class ModelTpServer:
             for r in batch.reqs:
                 num += len(r.origin_input_ids)
             with self.controller_info.lock:
+                print(
+                    "rank {} minus before {}".format(
+                        self.dp_rank,
+                        self.controller_info.current_bs[self.dp_rank].value,
+                    )
+                )
                 self.controller_info.current_bs[self.dp_rank].value -= num
+                print(
+                    "rank {} minus after {}".format(
+                        self.dp_rank,
+                        self.controller_info.current_bs[self.dp_rank].value,
+                    )
+                )
                 self.controller_info.available_kv_cache[self.dp_rank].value = (
                     self.token_to_kv_pool.available_size()
                     + self.tree_cache.evictable_size()

@@ -279,7 +279,7 @@ class ControllerInfo:
         for i in range(server_args.dp_size):
             self.available_kv_cache.append(Value("i", 0))
             self.current_bs.append(Value("i", 0))
-            self.num_reqs.append("i", 0)
+            self.num_reqs.append(Value("i", 0))
             self.swap_in_queue.append(multiprocessing.Queue())
         self.swap_out_queue = multiprocessing.Queue()
         cache_shape = get_cache_info(server_args, model_overide_args)

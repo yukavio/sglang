@@ -183,9 +183,18 @@ class ControllerMultiFlex:
                 if available_mem[target_gpu] - remained_token[target_gpu] <= threshold:
                     available_gpu.pop(0)
 
-        with self.controller_info.lock:
-            for i, v in enumerate(remained_token):
-                self.controller_info.current_bs[i].value = v
+            with self.controller_info.lock:
+                print(
+                    "rank {} add before {}".format(
+                        target_gpu, self.controller_info.current_bs[target_gpu].value
+                    )
+                )
+                self.controller_info.current_bs[target_gpu].value += input_len
+                print(
+                    "rank {} add after {}".format(
+                        target_gpu, self.controller_info.current_bs[target_gpu].value
+                    )
+                )
 
     def round_robin_scheduler(self, input_requests):
         for r in input_requests:
