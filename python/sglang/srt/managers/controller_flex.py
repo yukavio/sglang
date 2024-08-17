@@ -152,16 +152,19 @@ class ControllerMultiFlex:
         remained_token = [k.value for k in self.controller_info.current_bs]
         available_mem = [k.value for k in self.controller_info.available_kv_cache]
         num_reqs = [k.value for k in self.controller_info.num_reqs]
-
+        threshold = int(os.getenv("THRESOLD", 100))
+        available_gpu = []
         for i in range(len(available_mem)):
-            if available_mem[i] - remained_token[i] > thresold:
+            if available_mem[i] - remained_token[i] > threshold:
                 available_gpu.append({"id": i, "id_remained_token": remained_token[i]})
+
+        print(remained_token)
+        print(available_mem)
+        print(num_reqs)
+        print(available_gpu)
 
         for r in input_requests:
             input_len = len(r.input_ids)
-            available_gpu = []
-            thresold = int(os.getenv("THRESOLD", -1500000))
-
             target_gpu = 0
             if len(available_gpu) > 0:
                 sorted_gpus = sorted(
@@ -175,6 +178,11 @@ class ControllerMultiFlex:
             num_reqs[target_gpu] += 1
             remained_token[target_gpu] += input_len
             available_mem[target_gpu] -= input_len
+
+            if len(available_gpu) > 0:
+                if available_mem[target_gpu] - remained_token[target_gpu] <= threshold:
+                    available_gpu.pop(0)
+
         with self.controller_info.lock:
             for i, v in enumerate(remained_token):
                 self.controller_info.current_bs[i].value = v

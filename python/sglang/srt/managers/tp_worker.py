@@ -470,8 +470,12 @@ class ModelTpServer:
                     self.token_to_kv_pool.available_size()
                     + self.tree_cache.evictable_size()
                 )
-                self.controller_info.num_reqs[self.dp_rank].value = (
-                    len(self.waiting_queue) + self.running_batch.batch_size()
+                self.controller_info.num_reqs[self.dp_rank].value = len(
+                    self.waiting_queue
+                ) + (
+                    self.running_batch.batch_size()
+                    if self.running_batch is not None
+                    else 0
                 )
 
         if self.model_runner.is_generation:
@@ -638,7 +642,7 @@ class ModelTpServer:
         if self.controller_info is not None and self.decode_forward_ct % 10 == 0:
             with self.controller_info.lock:
                 self.controller_info.num_reqs[self.dp_rank].value = (
-                    len(self.waiting_queue) + self.running_batch.batch_size()
+                    len(self.waiting_queue) + batch.batch_size()
                 )
                 self.controller_info.available_kv_cache[self.dp_rank].value = (
                     self.token_to_kv_pool.available_size()
