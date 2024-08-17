@@ -158,11 +158,6 @@ class ControllerMultiFlex:
             if available_mem[i] - remained_token[i] > threshold:
                 available_gpu.append({"id": i, "id_remained_token": remained_token[i]})
 
-        print(remained_token)
-        print(available_mem)
-        print(num_reqs)
-        print(available_gpu)
-
         for r in input_requests:
             input_len = len(r.input_ids)
             target_gpu = 0
