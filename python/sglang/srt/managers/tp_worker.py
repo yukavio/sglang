@@ -192,6 +192,7 @@ class ModelTpServer:
         self.running_batch: ScheduleBatch = None
         self.out_pyobjs = []
         self.decode_forward_ct = 0
+        self.forward_ct = 0
         self.stream_interval = server_args.stream_interval
         self.num_generated_tokens = 0
         self.last_stats_tic = time.time()
@@ -465,6 +466,13 @@ class ModelTpServer:
                 num += len(r.origin_input_ids)
             with self.controller_info.lock:
                 self.controller_info.current_bs[self.dp_rank].value -= num
+                self.controller_info.available_kv_cache[self.dp_rank].value = (
+                    self.token_to_kv_pool.available_size()
+                    + self.tree_cache.evictable_size()
+                )
+                self.controller_info.num_reqs[self.dp_rank].value = (
+                    len(self.waiting_queue) + self.running_batch.batch_size()
+                )
 
         if self.model_runner.is_generation:
             # Forward and sample the next tokens
@@ -626,6 +634,16 @@ class ModelTpServer:
         # Update batch tensors
         self.decode_forward_ct = (self.decode_forward_ct + 1) % (1 << 30)
         batch.prepare_for_decode()
+
+        if self.controller_info is not None and self.decode_forward_ct % 10 == 0:
+            with self.controller_info.lock:
+                self.controller_info.num_reqs[self.dp_rank].value = (
+                    len(self.waiting_queue) + self.running_batch.batch_size()
+                )
+                self.controller_info.available_kv_cache[self.dp_rank].value = (
+                    self.token_to_kv_pool.available_size()
+                    + self.tree_cache.evictable_size()
+                )
 
         # Forward and sample the next tokens
         output = self.model_runner.forward(batch, ForwardMode.DECODE)
