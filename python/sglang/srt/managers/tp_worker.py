@@ -464,9 +464,7 @@ class ModelTpServer:
         )
 
         if self.controller_info:
-            num = 0
-            for r in batch.reqs:
-                num += len(r.origin_input_ids)
+            num = batch.input_ids.numel()
             with self.controller_info.lock:
                 self.controller_info.current_bs[self.dp_rank].value -= num
                 self.controller_info.available_kv_cache[self.dp_rank].value = (
