@@ -249,8 +249,10 @@ class ModelTpServer:
     @torch.inference_mode()
     def forward_step(self):
         new_batch = self.get_new_prefill_batch()
+        if False:
+            self.forward_fused_batch(self.running_batch, new_batch)
 
-        if new_batch is not None:
+        elif new_batch is not None:
             # Run a new prefill batch
             self.forward_prefill_batch(new_batch)
 
@@ -268,7 +270,7 @@ class ModelTpServer:
                     self.forward_decode_batch(self.running_batch)
 
                     # Print stats
-                    if self.tp_rank == 0 and self.decode_forward_ct % 40 == 0:
+                    if self.tp_rank == 0 and self.decode_forward_ct % 1 == 0:
                         self.print_decode_stats()
 
                     if self.running_batch.is_empty():
@@ -397,7 +399,7 @@ class ModelTpServer:
             adder.remove_running_tokens(self.running_batch, self.new_token_ratio)
 
         has_inflight = self.current_inflight_req is not None
-        if self.current_inflight_req is not None:
+        if has_inflight:
             self.current_inflight_req.init_next_round_input(
                 None if prefix_computed else self.tree_cache
             )
@@ -625,6 +627,69 @@ class ModelTpServer:
 
         # Update batch tensors
         self.decode_forward_ct = (self.decode_forward_ct + 1) % (1 << 30)
+        batch.prepare_for_decode()
+
+        # Forward and sample the next tokens
+        output = self.model_runner.forward(batch, ForwardMode.DECODE)
+        next_token_ids = batch.sample(output.next_token_logits)
+
+        # Move logprobs to cpu
+        if output.next_token_logprobs is not None:
+            next_token_logprobs = output.next_token_logprobs[
+                torch.arange(len(next_token_ids), device=next_token_ids.device),
+                next_token_ids,
+            ].tolist()
+
+        next_token_ids = next_token_ids.tolist()
+
+        # Check finish condition
+        for i, (req, next_token_id) in enumerate(zip(batch.reqs, next_token_ids)):
+            req.completion_tokens_wo_jump_forward += 1
+            req.output_ids.append(next_token_id)
+            req.check_finished()
+
+            if req.finished():
+                self.tree_cache.cache_finished_req(req)
+
+            if req.return_logprob:
+                req.output_token_logprobs.append(
+                    (next_token_logprobs[i], next_token_id)
+                )
+                if req.top_logprobs_num > 0:
+                    req.output_top_logprobs.append(output.output_top_logprobs[i])
+
+        self.handle_finished_requests(batch)
+
+    def forward_fused_batch(self, batch: ScheduleBatch, extend_batch: ScheduleBatch):
+        # Check if decode out of memory
+        if not batch.check_decode_mem():
+            old_ratio = self.new_token_ratio
+
+            retracted_reqs, new_token_ratio = batch.retract_decode()
+            self.new_token_ratio = new_token_ratio
+
+            logger.info(
+                "decode out of memory happened, "
+                f"#retracted_reqs: {len(retracted_reqs)}, "
+                f"#new_token_ratio: {old_ratio:.4f} -> {self.new_token_ratio:.4f}"
+            )
+            self.waiting_queue.extend(retracted_reqs)
+        else:
+            self.new_token_ratio = max(
+                self.new_token_ratio - self.new_token_ratio_decay,
+                self.min_new_token_ratio,
+            )
+
+        if not self.disable_regex_jump_forward:
+            # Check for jump-forward
+            jump_forward_reqs = batch.check_for_jump_forward(self.model_runner)
+            self.waiting_queue.extend(jump_forward_reqs)
+            if batch.is_empty():
+                return
+
+        # Update batch tensors
+        self.decode_forward_ct = (self.decode_forward_ct + 1) % (1 << 30)
+        batch.prepare_for_extend()
         batch.prepare_for_decode()
 
         # Forward and sample the next tokens

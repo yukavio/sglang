@@ -437,13 +437,13 @@ def sample_random_requests(
         offsets = np.random.randint(0, tokenizer.vocab_size, size=num_prompts)
         input_requests = []
         for i in range(num_prompts):
-            prompt = tokenizer.decode(
-                [
-                    (offsets[i] + i + j) % tokenizer.vocab_size
-                    for j in range(input_lens[i])
-                ]
+            prompts = ["北京天气怎么样？", "西红柿炒蛋怎么做？"]
+            # prompt = tokenizer.decode(
+            #     [prompts[i%2]]
+            # )
+            input_requests.append(
+                (prompts[i % 2], int(input_lens[i]), int(output_lens[i]))
             )
-            input_requests.append((prompt, int(input_lens[i]), int(output_lens[i])))
 
     print(f"#Input tokens: {np.sum(input_lens)}")
     print(f"#Output tokens: {np.sum(output_lens)}")
@@ -485,6 +485,7 @@ def calculate_metrics(
     e2e_latencies: List[float] = []
     for i in range(len(outputs)):
         if outputs[i].success:
+            # print(outputs[i].generated_text)
             output_len = outputs[i].output_len
             output_lens.append(output_len)
             retokenized_output_len = len(

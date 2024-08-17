@@ -35,6 +35,8 @@ class ForwardMode(IntEnum):
     EXTEND = auto()
     # Decode one token.
     DECODE = auto()
+    # Fuse EXTEND and Decode
+    FUSED = auto()
 
 
 @dataclass

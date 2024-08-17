@@ -468,6 +468,49 @@ class ScheduleBatch:
 
         self.batch_sampling_params(vocab_size, int_token_logit_bias)
 
+    def prepare_for_fused(self, extend_batch: "ScheduleBatch"):
+        # extend
+        extend_reqs = extend_batch.reqs
+        extend_input_ids = [
+            r.fill_ids[len(r.prefix_indices) :] for r in extend_batch.reqs
+        ]
+        extend_num_tokens = sum(len(ids) for ids in extend_input_ids)
+
+        req_pool_indices_cpu = self.alloc_req_slots(len(extend_reqs))
+        pt = 0
+        seq_lens = []
+        for i, req in enumerate(extend_reqs):
+            req.req_pool_idx = req_pool_indices_cpu[i]
+            pre_len, seq_len = len(req.prefix_indices), len(req.fill_ids)
+            ext_len = seq_len - pre_len
+            seq_lens.append(seq_len)
+
+            if pre_len > 0:
+                self.req_to_token_pool.req_to_token[req.req_pool_idx][
+                    :pre_len
+                ] = req.prefix_indices
+
+            self.req_to_token_pool.req_to_token[req.req_pool_idx][pre_len:seq_len] = (
+                out_cache_loc[pt : pt + ext_len]
+            )
+            pt += ext_len
+
+        # deocode
+        decode_input_ids = [
+            r.output_ids[-1] if r.output_ids else r.origin_input_ids[-1]
+            for r in self.reqs
+        ]
+
+        input_ids = extend_input_ids + decode_input_ids
+        out_cache_loc = self.alloc_token_slots(len(input_ids))
+        self.input_ids = torch.tensor(input_ids, dtype=torch.int32, device="cuda")
+
+        self.seq_lens.add_(1)
+
+        self.req_to_token_pool.req_to_token[
+            self.req_pool_indices, self.seq_lens - 1
+        ] = self.out_cache_loc
+
     def check_decode_mem(self):
         bs = self.batch_size()
         if self.token_to_kv_pool.available_size() >= bs:

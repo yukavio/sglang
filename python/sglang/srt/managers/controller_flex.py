@@ -150,10 +150,38 @@ class ControllerMultiFlex:
         if len(input_requests) == 0:
             return
         remained_token = [k.value for k in self.controller_info.current_bs]
+        available_mem = [k.value for k in self.controller_info.available_kv_cache]
+
         for r in input_requests:
-            index = remained_token.index(min(remained_token))
-            self.workers[index].queue.put(r)
-            remained_token[index] += len(r.input_ids)
+            input_len = len(r.input_ids)
+
+            available_gpu = []
+            # thresold = int(os.getenv("THRESOLD", -1500000))
+            # print(f"current thresold={thresold}")
+
+            for i in range(len(available_mem)):
+                print(f"{i}=>{available_mem[i] - remained_token[i]}")
+                if available_mem[i] - remained_token[i] > thresold:
+                    available_gpu.append(
+                        {"id": i, "id_remained_token": remained_token[i]}
+                    )
+
+            if len(available_gpu) > 0:
+                sorted_gpus = sorted(
+                    available_gpu, key=lambda x: x["id_remained_token"]
+                )
+
+                target_gpu = sorted_gpus[0]["id"]
+                self.workers[target_gpu].queue.put(r)
+                remained_token[target_gpu] += input_len
+                available_mem[target_gpu] -= input_len
+
+            else:
+                # 这就说明没有合适的调度
+                index = remained_token.index(min(remained_token))
+                self.workers[index].queue.put(r)
+                remained_token[index] += input_len
+                available_mem[index] -= input_len
         with self.controller_info.lock:
             for i, v in enumerate(remained_token):
                 self.controller_info.current_bs[i].value = v

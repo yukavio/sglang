@@ -388,6 +388,15 @@ class ModelRunner:
             input_metadata.image_offsets,
         )
 
+    @torch.inference_mode()
+    def forward_fused(self, batch: ScheduleBatch):
+        input_metadata = InputMetadata.from_schedule_batch(
+            self, batch, forward_mode=ForwardMode.FUSED
+        )
+        return self.model.forward(
+            batch.input_ids, input_metadata.positions, input_metadata
+        )
+
     def forward(self, batch: ScheduleBatch, forward_mode: ForwardMode):
         if self.is_multimodal_model and forward_mode == ForwardMode.EXTEND:
             return self.forward_extend_multi_modal(batch)
@@ -395,6 +404,8 @@ class ModelRunner:
             return self.forward_decode(batch)
         elif forward_mode == ForwardMode.EXTEND:
             return self.forward_extend(batch)
+        elif forward_mode == ForwardMode.FUSED:
+            return self.forward_fused(batch)
         else:
             raise ValueError(f"Invaid forward mode: {forward_mode}")
 
