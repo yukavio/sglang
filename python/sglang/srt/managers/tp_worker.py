@@ -304,7 +304,7 @@ class ModelTpServer:
         )
         
         with open(f"token_usage_gpu_{self.gpu_id}.log", mode='a+', encoding='utf-8') as f:
-            f.write(f"{self.gpu_id}\t\t{num_used / self.max_total_num_tokens:.2f}\t\t{len(self.waiting_queue)}")
+            f.write(f"{self.gpu_id}\t\t{num_used / self.max_total_num_tokens:.2f}\t\t{len(self.waiting_queue)}\n")
 
     def check_memory(self):
         available_size = (
