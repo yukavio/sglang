@@ -178,8 +178,10 @@ class ControllerMultiFlex:
 
             if len(available_gpu) > 0:
                 if available_mem[target_gpu] - remained_token[target_gpu] <= threshold:
-                    sorted_gpus.pop(0)
-                    available_gpu = sorted_gpus
+                    for i, item in enumerate(available_gpu):
+                        if item["id"] == target_gpu:
+                            available_gpu.pop(i)
+                            break
 
             with self.controller_info.lock:
                 print(
