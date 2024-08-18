@@ -168,7 +168,6 @@ class ControllerMultiFlex:
                 target_gpu = available_gpu[0]["id"]
             else:
                 target_gpu = num_reqs.index(min(num_reqs))
-                self.workers[target_gpu].queue.put(r)
             self.workers[target_gpu].queue.put(r)
             num_reqs[target_gpu] += 1
             remained_token[target_gpu] += input_len
