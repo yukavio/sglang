@@ -274,7 +274,7 @@ class ModelTpServer:
                     self.forward_decode_batch(self.running_batch)
 
                     # Print stats
-                    if self.tp_rank == 0 and self.decode_forward_ct % 40 == 0:
+                    if self.tp_rank == 0 and self.decode_forward_ct % 1 == 0:
                         self.print_decode_stats()
 
                     if self.running_batch.is_empty():
@@ -626,7 +626,7 @@ class ModelTpServer:
             self.new_token_ratio = new_token_ratio
 
             logger.info(
-                "decode out of memory happened, "
+                f"[gpu{self.gpu_id}]decode out of memory happened, "
                 f"#retracted_reqs: {len(retracted_reqs)}, "
                 f"#new_token_ratio: {old_ratio:.4f} -> {self.new_token_ratio:.4f}"
             )
