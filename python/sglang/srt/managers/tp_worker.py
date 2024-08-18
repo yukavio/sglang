@@ -62,7 +62,7 @@ from sglang.srt.utils import (
     set_random_seed,
     suppress_other_loggers,
 )
-from sglang.utils import get_exception_traceback, plot_usage_data
+from sglang.utils import get_exception_traceback
 from sglang.srt.managers.io_struct import ControllerInfo
 
 logger = logging.getLogger(__name__)
@@ -225,10 +225,6 @@ class ModelTpServer:
         )
         self.new_token_ratio = self.min_new_token_ratio
         self.new_token_ratio_decay = global_config.new_token_ratio_decay
-
-        # add for plot usage of compute and memory
-        self.mem_list = []
-        self.batch_list = []
 
     def exposed_step(self, recv_reqs: List):
         try:

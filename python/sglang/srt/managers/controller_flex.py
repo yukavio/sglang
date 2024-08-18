@@ -174,10 +174,8 @@ class ControllerMultiFlex:
             available_mem[target_gpu] -= input_len
 
             if len(available_gpu) > 0:
-                print(f"before scheduled {available_gpu}")
                 if available_mem[target_gpu] - remained_token[target_gpu] <= threshold:
                     available_gpu.pop(0)
-                print(f"after pop: {available_gpu}")
             with self.controller_info.lock:
                 print(
                     "rank {} add before {}".format(
