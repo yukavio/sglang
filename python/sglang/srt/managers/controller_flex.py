@@ -156,7 +156,7 @@ class ControllerMultiFlex:
         for r in input_requests:
             index = available_mem.index(min(available_mem))
             self.workers[index].queue.put(r)
-            remained_token[index] -= len(r.input_ids)
+            available_mem[index] -= len(r.input_ids)
 
     def round_robin_scheduler(self, input_requests):
         for r in input_requests:
