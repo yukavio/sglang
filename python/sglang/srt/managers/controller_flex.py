@@ -151,31 +151,18 @@ class ControllerMultiFlex:
             return
         remained_token = [k.value for k in self.controller_info.waiting_prefill_compute]
         available_mem = [k.value for k in self.controller_info.available_kv_cache]
-        num_reqs = [k.value for k in self.controller_info.num_reqs]
+        num_reqs = [k.value for k in self.controller_info.running_reqs]
 
+        
+        # 只根据mem做调度
         for r in input_requests:
-            input_len = len(r.input_ids)
-            target_gpu = 0
-            if len(available_gpu) > 0:
-                available_gpu = sorted(
-                    available_gpu, key=lambda x: x["id_remained_token"]
-                )
-                target_gpu = available_gpu[0]["id"]
-            else:
-                target_gpu = num_reqs.index(min(num_reqs))
-            self.workers[target_gpu].queue.put(r)
-            num_reqs[target_gpu] += 1
-            remained_token[target_gpu] += input_len
-            available_mem[target_gpu] -= input_len
-
-            if len(available_gpu) > 0:
-                if available_mem[target_gpu] - remained_token[target_gpu] <= threshold:
-                    available_gpu.pop(0)
-
-            with self.controller_info.lock:
-                self.controller_info.waiting_prefill_compute[
-                    target_gpu
-                ].value += input_len
+            flag = [a / b for a, b in zip(available_mem, num_reqs)]
+            
+                
+            index = available_mem.index(max(flag))
+            self.workers[index].queue.put(r)
+            available_mem[index] -= len(r.input_ids)
+            num_reqs[index] += 1
 
     def round_robin_scheduler(self, input_requests):
         for r in input_requests:
