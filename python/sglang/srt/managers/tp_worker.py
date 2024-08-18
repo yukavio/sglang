@@ -464,7 +464,9 @@ class ModelTpServer:
         )
 
         if self.controller_info:
-            num = batch.input_ids.numel()
+            num = 0
+            for req in batch.reqs:
+                num += len(req.origin_input_ids)
             with self.controller_info.lock:
                 self.controller_info.current_bs[self.dp_rank].value -= num
                 self.controller_info.available_kv_cache[self.dp_rank].value = (
@@ -622,6 +624,12 @@ class ModelTpServer:
                 f"#retracted_reqs: {len(retracted_reqs)}, "
                 f"#new_token_ratio: {old_ratio:.4f} -> {self.new_token_ratio:.4f}"
             )
+
+            num = 0
+            for req in retracted_reqs:
+                num += len(req.fill_ids)
+            with self.controller_info.lock:
+                self.controller_info.current_bs[self.dp_rank].value += num
             self.waiting_queue.extend(retracted_reqs)
         else:
             self.new_token_ratio = max(
