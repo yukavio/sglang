@@ -151,41 +151,45 @@ class ControllerMultiFlex:
             return
         remained_token = [k.value for k in self.controller_info.current_bs]
         available_mem = [k.value for k in self.controller_info.available_kv_cache]
+        num_reqs = [k.value for k in self.controller_info.num_reqs]
+        threshold = int(os.getenv("THRESOLD", 100))
+        available_gpu = []
+        for i in range(len(available_mem)):
+            if available_mem[i] - remained_token[i] > threshold:
+                available_gpu.append({"id": i, "id_remained_token": remained_token[i]})
 
-        # print(dealt)
         for r in input_requests:
             input_len = len(r.input_ids)
-            available_gpu = []
-            thresold = int(os.getenv("THRESOLD", -1500000))
-            print(f"current thresold={thresold}")
-            
-            for i in range (len(available_mem)):
-                print(f"{i}=>{available_mem[i] - remained_token[i]}")
-                if available_mem[i] - remained_token[i] > thresold:
-                    available_gpu.append({
-                        "id": i,
-                        "id_remained_token": remained_token[i]
-                    })
-            
+            target_gpu = 0
             if len(available_gpu) > 0:
-                sorted_gpus = sorted(available_gpu, key=lambda x: x['id_remained_token'])
-                
+                sorted_gpus = sorted(
+                    available_gpu, key=lambda x: x["id_remained_token"]
+                )
                 target_gpu = sorted_gpus[0]["id"]
-                self.workers[target_gpu].queue.put(r)
-                remained_token[target_gpu] += input_len
-                available_mem[target_gpu] -= input_len        
-                
             else:
-                #这就说明没有合适的调度
-                index = remained_token.index(min(remained_token))
-                self.workers[index].queue.put(r)
-                remained_token[index] += input_len
-                available_mem[index] -= input_len        
-        with self.controller_info.lock:
-            for i, v in enumerate(remained_token):
-                self.controller_info.current_bs[i].value = v
-            for i, v in enumerate(available_mem):
-                self.controller_info.available_kv_cache[i].value = v
+                target_gpu = num_reqs.index(min(num_reqs))
+                self.workers[target_gpu].queue.put(r)
+            self.workers[target_gpu].queue.put(r)
+            num_reqs[target_gpu] += 1
+            remained_token[target_gpu] += input_len
+            available_mem[target_gpu] -= input_len
+
+            if len(available_gpu) > 0:
+                if available_mem[target_gpu] - remained_token[target_gpu] <= threshold:
+                    available_gpu.pop(0)
+
+            with self.controller_info.lock:
+                print(
+                    "rank {} add before {}".format(
+                        target_gpu, self.controller_info.current_bs[target_gpu].value
+                    )
+                )
+                self.controller_info.current_bs[target_gpu].value += input_len
+                print(
+                    "rank {} add after {}".format(
+                        target_gpu, self.controller_info.current_bs[target_gpu].value
+                    )
+                )
 
     def round_robin_scheduler(self, input_requests):
         for r in input_requests:
