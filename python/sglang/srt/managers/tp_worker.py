@@ -468,14 +468,14 @@ class ModelTpServer:
             for req in batch.reqs:
                 num += len(req.origin_input_ids)
             with self.controller_info.lock:
-                self.controller_info.current_bs[self.dp_rank].value -= num
+                self.controller_info.waiting_prefill_compute[self.dp_rank].value -= num
                 self.controller_info.available_kv_cache[self.dp_rank].value = (
                     self.token_to_kv_pool.available_size()
                     + self.tree_cache.evictable_size()
                 )
-                self.controller_info.num_reqs[self.dp_rank].value = len(
-                    self.waiting_queue
-                ) + (
+                self.controller_info.running_reqs[
+                    self.dp_rank
+                ].value = batch.batch_size() + (
                     self.running_batch.batch_size()
                     if self.running_batch is not None
                     else 0
@@ -629,7 +629,7 @@ class ModelTpServer:
             for req in retracted_reqs:
                 num += len(req.fill_ids)
             with self.controller_info.lock:
-                self.controller_info.current_bs[self.dp_rank].value += num
+                self.controller_info.waiting_prefill_compute[self.dp_rank].value += num
             self.waiting_queue.extend(retracted_reqs)
         else:
             self.new_token_ratio = max(
@@ -650,12 +650,12 @@ class ModelTpServer:
 
         if self.controller_info is not None and self.decode_forward_ct % 10 == 0:
             with self.controller_info.lock:
-                self.controller_info.num_reqs[self.dp_rank].value = (
-                    len(self.waiting_queue) + batch.batch_size()
-                )
                 self.controller_info.available_kv_cache[self.dp_rank].value = (
                     self.token_to_kv_pool.available_size()
                     + self.tree_cache.evictable_size()
+                )
+                self.controller_info.running_reqs[self.dp_rank].value = (
+                    batch.batch_size()
                 )
 
         # Forward and sample the next tokens

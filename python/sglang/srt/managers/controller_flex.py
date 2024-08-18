@@ -149,14 +149,9 @@ class ControllerMultiFlex:
     def resources_aware_scheduler(self, input_requests):
         if len(input_requests) == 0:
             return
-        remained_token = [k.value for k in self.controller_info.current_bs]
+        remained_token = [k.value for k in self.controller_info.waiting_prefill_compute]
         available_mem = [k.value for k in self.controller_info.available_kv_cache]
         num_reqs = [k.value for k in self.controller_info.num_reqs]
-        threshold = int(os.getenv("THRESOLD", 100))
-        available_gpu = []
-        for i in range(len(available_mem)):
-            if available_mem[i] - remained_token[i] > threshold:
-                available_gpu.append({"id": i, "id_remained_token": remained_token[i]})
 
         for r in input_requests:
             input_len = len(r.input_ids)
@@ -178,7 +173,9 @@ class ControllerMultiFlex:
                     available_gpu.pop(0)
 
             with self.controller_info.lock:
-                self.controller_info.current_bs[target_gpu].value += input_len
+                self.controller_info.waiting_prefill_compute[
+                    target_gpu
+                ].value += input_len
 
     def round_robin_scheduler(self, input_requests):
         for r in input_requests:
