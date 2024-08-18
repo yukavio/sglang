@@ -167,7 +167,7 @@ class ControllerMultiFlex:
                 )
                 target_gpu = sorted_gpus[0]["id"]
                 
-                print(f"can be scheduler gpus: {sorted_gpus}")
+                
                 
             else:
                 target_gpu = num_reqs.index(min(num_reqs))
@@ -177,9 +177,11 @@ class ControllerMultiFlex:
             available_mem[target_gpu] -= input_len
 
             if len(available_gpu) > 0:
+                print(f"schedule gpus: {sorted_gpus}")
                 if available_mem[target_gpu] - remained_token[target_gpu] <= threshold:
                     for i, item in enumerate(available_gpu):
                         if item["id"] == target_gpu:
+                            print(f"pop gpu:{item}")
                             available_gpu.pop(i)
                             break
 
