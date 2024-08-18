@@ -154,7 +154,7 @@ class ControllerMultiFlex:
         num_reqs = [k.value for k in self.controller_info.num_reqs]
         # 只根据mem做调度
         for r in input_requests:
-            index = available_mem.index(min(available_mem))
+            index = available_mem.index(max(available_mem))
             self.workers[index].queue.put(r)
             available_mem[index] -= len(r.input_ids)
 
