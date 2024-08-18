@@ -153,30 +153,32 @@ class ControllerMultiFlex:
         available_mem = [k.value for k in self.controller_info.available_kv_cache]
         num_reqs = [k.value for k in self.controller_info.num_reqs]
         threshold = int(os.getenv("THRESOLD", 100))
+        available_gpu = []
+        for i in range(len(available_mem)):
+            if available_mem[i] - remained_token[i] > threshold:
+                available_gpu.append({"id": i, "id_remained_token": remained_token[i]})
 
         for r in input_requests:
-            
-            available_gpu = []
-            for i in range(len(available_mem)):
-                if available_mem[i] - remained_token[i] > threshold:
-                    available_gpu.append({"id": i, "id_remained_token": remained_token[i]})
-
-            print(f"can be scheduled {available_gpu}")
             input_len = len(r.input_ids)
             target_gpu = 0
             if len(available_gpu) > 0:
-                sorted_gpus = sorted(
+                available_gpu = sorted(
                     available_gpu, key=lambda x: x["id_remained_token"]
                 )
-                target_gpu = sorted_gpus[0]["id"]
-                
+                target_gpu = available_gpu[0]["id"]
             else:
                 target_gpu = num_reqs.index(min(num_reqs))
+                self.workers[target_gpu].queue.put(r)
             self.workers[target_gpu].queue.put(r)
             num_reqs[target_gpu] += 1
             remained_token[target_gpu] += input_len
             available_mem[target_gpu] -= input_len
 
+            if len(available_gpu) > 0:
+                print(f"before scheduled {available_gpu}")
+                if available_mem[target_gpu] - remained_token[target_gpu] <= threshold:
+                    available_gpu.pop(0)
+                print(f"after pop: {available_gpu}")
             with self.controller_info.lock:
                 print(
                     "rank {} add before {}".format(
