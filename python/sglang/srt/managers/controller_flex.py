@@ -166,6 +166,9 @@ class ControllerMultiFlex:
                     available_gpu, key=lambda x: x["id_remained_token"]
                 )
                 target_gpu = sorted_gpus[0]["id"]
+                
+                print(f"can be scheduler gpus: {sorted_gpus}")
+                
             else:
                 target_gpu = num_reqs.index(min(num_reqs))
             self.workers[target_gpu].queue.put(r)
@@ -175,7 +178,8 @@ class ControllerMultiFlex:
 
             if len(available_gpu) > 0:
                 if available_mem[target_gpu] - remained_token[target_gpu] <= threshold:
-                    available_gpu.pop(0)
+                    sorted_gpus.pop(0)
+                    available_gpu = sorted_gpus
 
             with self.controller_info.lock:
                 print(
