@@ -162,13 +162,12 @@ class ControllerMultiFlex:
             input_len = len(r.input_ids)
             target_gpu = 0
             if len(available_gpu) > 0:
-                sorted_gpus = sorted(
+                available_gpu = sorted(
                     available_gpu, key=lambda x: x["id_remained_token"]
                 )
-                target_gpu = sorted_gpus[0]["id"]
+                target_gpu = available_gpu[0]["id"]
             else:
                 target_gpu = num_reqs.index(min(num_reqs))
-                self.workers[target_gpu].queue.put(r)
             self.workers[target_gpu].queue.put(r)
             num_reqs[target_gpu] += 1
             remained_token[target_gpu] += input_len
@@ -179,17 +178,7 @@ class ControllerMultiFlex:
                     available_gpu.pop(0)
 
             with self.controller_info.lock:
-                print(
-                    "rank {} add before {}".format(
-                        target_gpu, self.controller_info.current_bs[target_gpu].value
-                    )
-                )
                 self.controller_info.current_bs[target_gpu].value += input_len
-                print(
-                    "rank {} add after {}".format(
-                        target_gpu, self.controller_info.current_bs[target_gpu].value
-                    )
-                )
 
     def round_robin_scheduler(self, input_requests):
         for r in input_requests:
