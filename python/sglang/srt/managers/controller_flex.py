@@ -151,7 +151,7 @@ class ControllerMultiFlex:
             return
         remained_token = [k.value for k in self.controller_info.waiting_prefill_compute]
         available_mem = [k.value for k in self.controller_info.available_kv_cache]
-        num_reqs = [k.value for k in self.controller_info.running_reqs]
+        num_reqs = [k.value if k.value != 0 else 1 for k in self.controller_info.running_reqs]
 
         
         # 只根据mem做调度
@@ -159,7 +159,7 @@ class ControllerMultiFlex:
             flag = [a / b for a, b in zip(available_mem, num_reqs)]
             
                 
-            index = available_mem.index(max(flag))
+            index = flag.index(max(flag))
             self.workers[index].queue.put(r)
             available_mem[index] -= len(r.input_ids)
             num_reqs[index] += 1
