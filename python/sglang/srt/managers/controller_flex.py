@@ -24,7 +24,7 @@ import multiprocessing
 import multiprocessing.shared_memory
 import os
 from enum import Enum, auto
-
+import random
 import numpy as np
 import zmq
 
@@ -164,6 +164,36 @@ class ControllerMultiFlex:
             available_mem[index] -= len(r.input_ids)
             num_reqs[index] += 1
 
+    def power_of_2_choice(self, input_requests):
+        if len(input_requests) == 0:
+            return
+        num_reqs_waiting = [k.value for k in self.controller_info.waiting_reqs]
+        num_reqs_running = [k.value for k in self.controller_info.running_reqs]
+        available_mem = [k.value for k in self.controller_info.available_kv_cache]
+        
+        instances_len = len(self.workers)
+        
+
+        # 比较两个worker的指标
+        def compare_metrics(ins1, ins2):
+            if num_reqs_waiting[ins1] != num_reqs_waiting[ins2]:
+                return ins1 if num_reqs_waiting[ins1] < num_reqs_waiting[ins2] else ins2
+            if num_reqs_running[ins1] != num_reqs_running[ins2]:
+                return ins1 if num_reqs_running[ins1] < num_reqs_running[ins2] else ins2
+            if available_mem[ins1] != available_mem[ins2]:
+                return ins1 if available_mem[ins1] > available_mem[ins2] else ins2
+            return ins1
+
+        for r in input_requests:
+            # 随机选两个worker
+            ins1, ins2 = random.sample(range(0, instances_len), 2)
+            ins_end = compare_metrics(ins1, ins2)
+            self.workers[ins_end].queue.put(r)
+            # available_mem[ins_end] -= len(r.input_ids)
+            # num_reqs_running[ins_end] += 1
+            # num_reqs_waiting[ins_end] += 1
+            
+            
     def round_robin_scheduler(self, input_requests):
         for r in input_requests:
             self.workers[self.round_robin_counter].queue.put(r)

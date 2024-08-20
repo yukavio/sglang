@@ -489,7 +489,8 @@ class ModelTpServer:
                     if self.running_batch is not None
                     else 0
                 )
-
+                
+                self.controller_info.waiting_reqs[self.dp_rank].value = len(self.waiting_queue)
         if self.model_runner.is_generation:
             # Forward and sample the next tokens
             if batch.extend_num_tokens != 0:
@@ -665,6 +666,8 @@ class ModelTpServer:
                 self.controller_info.running_reqs[self.dp_rank].value = (
                     batch.batch_size()
                 )
+                
+                self.controller_info.waiting_reqs[self.dp_rank].value = len(self.waiting_queue)
 
         # Forward and sample the next tokens
         output = self.model_runner.forward(batch, ForwardMode.DECODE)
