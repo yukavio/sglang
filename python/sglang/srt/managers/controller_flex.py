@@ -50,6 +50,7 @@ class LoadBalanceMethod(Enum):
     ROUND_ROBIN = auto()
     SHORTEST_QUEUE = auto()
     RESOURCES_AWARE = auto()
+    POWER_OF_2_CHOICE = auto()
 
     @classmethod
     def from_str(cls, method: str):
@@ -100,6 +101,7 @@ class ControllerMultiFlex:
             LoadBalanceMethod.ROUND_ROBIN: self.round_robin_scheduler,
             LoadBalanceMethod.SHORTEST_QUEUE: self.shortest_queue_scheduler,
             LoadBalanceMethod.RESOURCES_AWARE: self.resources_aware_scheduler,
+            LoadBalanceMethod.POWER_OF_2_CHOICE: self.power_of_2_choice,
         }
         self.dispatching = dispatch_lookup[self.load_balance_method]
 
