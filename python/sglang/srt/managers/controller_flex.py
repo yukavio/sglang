@@ -41,6 +41,20 @@ from sglang.srt.server_args import PortArgs, ServerArgs
 from sglang.srt.utils import kill_parent_process
 from sglang.utils import get_cache_info, get_exception_traceback
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)  # 设置日志级别
+
+# 创建一个处理器，用于写入日志文件
+file_handler = logging.FileHandler('three_list.log', mode='a')
+file_handler.setLevel(logging.INFO)  # 设置处理器的日志级别
+
+# 创建一个格式化器，定义日志的格式
+formatter = logging.Formatter('%(message)s')
+file_handler.setFormatter(formatter)
+
+# 将处理器添加到日志记录器
+logger.addHandler(file_handler)
+
 
 class LoadBalanceMethod(Enum):
     """Load balance method."""
@@ -80,14 +94,6 @@ class ControllerMultiFlex:
         port_args: PortArgs,
         model_overide_args,
     ):
-        logging.basicConfig(
-        filename='three_list.log',  # 指定日志文件名
-        filemode='a',           # 写入模式，'w' 表示覆盖写入，'a' 表示追加写入
-        format='%(message)s',   # 日志格式
-        level=logging.INFO      # 日志级别
-        )
-        self.logger = logging.getLogger(__name__)
-
         # Parse args
         self.server_args = server_args
         self.port_args = port_args
@@ -164,7 +170,7 @@ class ControllerMultiFlex:
         num_reqs_waiting = [k.value for k in self.controller_info.waiting_reqs]
         num_reqs_running = [k.value if k.value != 0 else 1 for k in self.controller_info.running_reqs]
 
-        self.logger.info(f"available_mem={available_mem}\num_reqs_waiting={num_reqs_waiting}\nnum_reqs_running={num_reqs_running}")
+        logger.info(f"available_mem={available_mem}\num_reqs_waiting={num_reqs_waiting}\nnum_reqs_running={num_reqs_running}")
         
         waiting_main = True
         if max(num_reqs_waiting) == 0: # 没有排队，按照之前的策略调度
