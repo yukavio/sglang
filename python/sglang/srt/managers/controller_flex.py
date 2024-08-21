@@ -148,15 +148,22 @@ class ControllerMultiFlex:
             )
         )
 
+
     def resources_aware_scheduler(self, input_requests):
+        
         if len(input_requests) == 0:
             return
         remained_token = [k.value for k in self.controller_info.waiting_prefill_compute]
         available_mem = [k.value for k in self.controller_info.available_kv_cache]
         num_reqs_waiting = [k.value for k in self.controller_info.waiting_reqs]
         num_reqs_running = [k.value if k.value != 0 else 1 for k in self.controller_info.running_reqs]
-        
-        print(f"available_mem={available_mem}\num_reqs_waiting={num_reqs_waiting}\nnum_reqs_running={num_reqs_running}")
+        logging.basicConfig(
+        filename='three_list.log',  # 指定日志文件名
+        filemode='a',           # 写入模式，'w' 表示覆盖写入，'a' 表示追加写入
+        format='%(message)s',   # 日志格式
+        level=logging.INFO      # 日志级别
+        )
+        logging.info(f"available_mem={available_mem}\num_reqs_waiting={num_reqs_waiting}\nnum_reqs_running={num_reqs_running}")
         
         waiting_main = True
         if max(num_reqs_waiting) == 0: # 没有排队，按照之前的策略调度
