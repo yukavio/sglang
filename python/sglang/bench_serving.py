@@ -519,7 +519,7 @@ def calculate_metrics(
         )
         
     metric_data = [input_lens, output_lens, ttfts]
-    with open('metrics.json', 'w') as f:
+    with open(f'metrics_{time.time()}.json', 'w') as f:
         json.dump(metric_data, f)
     
     metrics = BenchmarkMetrics(
