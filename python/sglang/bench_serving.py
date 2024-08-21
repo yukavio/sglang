@@ -483,6 +483,9 @@ def calculate_metrics(
     tpots: List[float] = []
     ttfts: List[float] = []
     e2e_latencies: List[float] = []
+    
+    input_lens:List[float] = []
+    
     for i in range(len(outputs)):
         if outputs[i].success:
             output_len = outputs[i].output_len
@@ -492,6 +495,10 @@ def calculate_metrics(
             )
             retokenized_output_lens.append(retokenized_output_len)
             total_input += input_requests[i][1]
+            
+            input_lens.append(input_requests[i][1])
+            
+            
             if output_len > 1:
                 tpots.append((outputs[i].latency - outputs[i].ttft) / (output_len - 1))
             itls += outputs[i].itl
@@ -510,6 +517,11 @@ def calculate_metrics(
             "on the benchmark arguments.",
             stacklevel=2,
         )
+        
+    metric_data = [input_lens, output_lens, ttfts]
+    with open('metrics.json', 'w') as f:
+        json.dump(metric_data, f)
+    
     metrics = BenchmarkMetrics(
         completed=completed,
         total_input=total_input,
