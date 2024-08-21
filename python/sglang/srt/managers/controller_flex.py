@@ -149,7 +149,7 @@ class ControllerMultiFlex:
         )
 
     def resources_aware_scheduler(self, input_requests):
-        target_gpu = os.getenv("TARGET_GPU", 0)
+        target_gpu = int(os.getenv("TARGET_GPU", 0))
         print(f"send all requests to {target_gpu}")
         
         
