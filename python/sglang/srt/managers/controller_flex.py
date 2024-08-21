@@ -149,6 +149,10 @@ class ControllerMultiFlex:
         )
 
     def resources_aware_scheduler(self, input_requests):
+        target_gpu = os.getenv("TARGET_GPU", 0)
+        print(f"send all requests to {target_gpu}")
+        
+        
         if len(input_requests) == 0:
             return
         remained_token = [k.value for k in self.controller_info.waiting_prefill_compute]
@@ -158,13 +162,14 @@ class ControllerMultiFlex:
         
         # 只根据mem做调度
         for r in input_requests:
-            flag = [a / b for a, b in zip(available_mem, num_reqs)]
+            self.workers[target_gpu].queue.put(r)
+            # flag = [a / b for a, b in zip(available_mem, num_reqs)]
             
                 
-            index = flag.index(max(flag))
-            self.workers[index].queue.put(r)
-            available_mem[index] -= len(r.input_ids)
-            num_reqs[index] += 1
+            # index = flag.index(max(flag))
+            # self.workers[index].queue.put(r)
+            # available_mem[index] -= len(r.input_ids)
+            # num_reqs[index] += 1
 
     def power_of_2_choice(self, input_requests):
         if len(input_requests) == 0:
