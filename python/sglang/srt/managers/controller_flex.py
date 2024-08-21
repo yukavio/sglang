@@ -149,10 +149,15 @@ class ControllerMultiFlex:
         )
 
     def resources_aware_scheduler(self, input_requests):
-        target_gpu = int(os.getenv("TARGET_GPU", 0))
-        # print(f"send {len(input_requests)} requests to {target_gpu}")
-        
-        
+        import os
+        target_gpu = 0
+        try:
+            with open('./target_gpu.txt', 'r') as file:
+                line = file.readline().strip()
+                target_gpu = int(line)  # 转换为整数
+        except (ValueError, FileNotFoundError) as e:
+            target_gpu = 0  # 默认值
+
         if len(input_requests) == 0:
             return
         remained_token = [k.value for k in self.controller_info.waiting_prefill_compute]
