@@ -156,6 +156,8 @@ class ControllerMultiFlex:
         num_reqs_waiting = [k.value for k in self.controller_info.waiting_reqs]
         num_reqs_running = [k.value if k.value != 0 else 1 for k in self.controller_info.running_reqs]
         
+        print(f"available_mem={available_mem}\num_reqs_waiting={num_reqs_waiting}\nnum_reqs_running={num_reqs_running}")
+        
         waiting_main = True
         if max(num_reqs_waiting) == 0: # 没有排队，按照之前的策略调度
             waiting_main = False
