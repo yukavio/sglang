@@ -149,33 +149,30 @@ class ControllerMultiFlex:
         )
 
     def resources_aware_scheduler(self, input_requests):
-        import os
-        target_gpu = 0
-        try:
-            with open('./target_gpu.txt', 'r') as file:
-                line = file.readline().strip()
-                target_gpu = int(line)  # 转换为整数
-        except (ValueError, FileNotFoundError) as e:
-            target_gpu = 0  # 默认值
-
         if len(input_requests) == 0:
             return
         remained_token = [k.value for k in self.controller_info.waiting_prefill_compute]
         available_mem = [k.value for k in self.controller_info.available_kv_cache]
-        num_reqs = [k.value if k.value != 0 else 1 for k in self.controller_info.running_reqs]
-
+        num_reqs_waiting = [k.value for k in self.controller_info.waiting_reqs]
+        num_reqs_running = [k.value if k.value != 0 else 1 for k in self.controller_info.running_reqs]
         
-        # 只根据mem做调度
+        waiting_main = True
+        if max(num_reqs_waiting) == 0: # 没有排队，按照之前的策略调度
+            waiting_main = False
         for r in input_requests:
-        
-            self.workers[target_gpu].queue.put(r)
-            # flag = [a / b for a, b in zip(available_mem, num_reqs)]
-            
+            if waiting_main: # 说明全部都是0
+                # 选择最少的排队的gpu
+                index = num_reqs_waiting.index(min(num_reqs_waiting))
+                self.workers[index].queue.put(r)
+                num_reqs_waiting[index] += 1
+            else:
+                flag = [a / b for a, b in zip(available_mem, num_reqs_running)]
+                index = flag.index(max(flag))
+                self.workers[index].queue.put(r)
+                available_mem[index] -= len(r.input_ids)
+                num_reqs_running[index] += 1
                 
-            # index = flag.index(max(flag))
-            # self.workers[index].queue.put(r)
-            # available_mem[index] -= len(r.input_ids)
-            # num_reqs[index] += 1
+                
 
     def power_of_2_choice(self, input_requests):
         if len(input_requests) == 0:
