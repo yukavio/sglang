@@ -150,7 +150,7 @@ class ControllerMultiFlex:
 
     def resources_aware_scheduler(self, input_requests):
         target_gpu = int(os.getenv("TARGET_GPU", 0))
-        print(f"send {len(input_requests)} requests to {target_gpu}")
+        # print(f"send {len(input_requests)} requests to {target_gpu}")
         
         
         if len(input_requests) == 0:
@@ -162,6 +162,7 @@ class ControllerMultiFlex:
         
         # 只根据mem做调度
         for r in input_requests:
+        
             self.workers[target_gpu].queue.put(r)
             # flag = [a / b for a, b in zip(available_mem, num_reqs)]
             
