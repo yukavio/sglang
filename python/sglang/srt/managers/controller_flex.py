@@ -40,7 +40,12 @@ from sglang.srt.managers.io_struct import (
 from sglang.srt.server_args import PortArgs, ServerArgs
 from sglang.srt.utils import kill_parent_process
 from sglang.utils import get_cache_info, get_exception_traceback
-
+logging.basicConfig(
+filename='three_list.log',  # 指定日志文件名
+filemode='a',           # 写入模式，'w' 表示覆盖写入，'a' 表示追加写入
+format='%(message)s',   # 日志格式
+level=logging.INFO      # 日志级别
+)
 logger = logging.getLogger(__name__)
 
 
@@ -157,13 +162,8 @@ class ControllerMultiFlex:
         available_mem = [k.value for k in self.controller_info.available_kv_cache]
         num_reqs_waiting = [k.value for k in self.controller_info.waiting_reqs]
         num_reqs_running = [k.value if k.value != 0 else 1 for k in self.controller_info.running_reqs]
-        logging.basicConfig(
-        filename='three_list.log',  # 指定日志文件名
-        filemode='a',           # 写入模式，'w' 表示覆盖写入，'a' 表示追加写入
-        format='%(message)s',   # 日志格式
-        level=logging.INFO      # 日志级别
-        )
-        logging.info(f"available_mem={available_mem}\num_reqs_waiting={num_reqs_waiting}\nnum_reqs_running={num_reqs_running}")
+
+        logger.info(f"available_mem={available_mem}\num_reqs_waiting={num_reqs_waiting}\nnum_reqs_running={num_reqs_running}")
         
         waiting_main = True
         if max(num_reqs_waiting) == 0: # 没有排队，按照之前的策略调度
