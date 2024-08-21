@@ -42,18 +42,6 @@ from sglang.srt.utils import kill_parent_process
 from sglang.utils import get_cache_info, get_exception_traceback
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)  # 设置日志级别
-
-# 创建一个处理器，用于写入日志文件
-file_handler = logging.FileHandler('three_list.log', mode='a')
-file_handler.setLevel(logging.INFO)  # 设置处理器的日志级别
-
-# 创建一个格式化器，定义日志的格式
-formatter = logging.Formatter('%(message)s')
-file_handler.setFormatter(formatter)
-
-# 将处理器添加到日志记录器
-logger.addHandler(file_handler)
 
 
 class LoadBalanceMethod(Enum):
@@ -160,17 +148,15 @@ class ControllerMultiFlex:
             )
         )
 
-
     def resources_aware_scheduler(self, input_requests):
-        
         if len(input_requests) == 0:
             return
         remained_token = [k.value for k in self.controller_info.waiting_prefill_compute]
         available_mem = [k.value for k in self.controller_info.available_kv_cache]
         num_reqs_waiting = [k.value for k in self.controller_info.waiting_reqs]
         num_reqs_running = [k.value if k.value != 0 else 1 for k in self.controller_info.running_reqs]
-
-        logger.info(f"available_mem={available_mem}\num_reqs_waiting={num_reqs_waiting}\nnum_reqs_running={num_reqs_running}")
+        with open('three_list.txt', 'a') as file:  # 'a' 模式表示追加到文件末尾
+            file.write(f"available_mem={available_mem}\num_reqs_waiting={num_reqs_waiting}\nnum_reqs_running={num_reqs_running}")
         
         waiting_main = True
         if max(num_reqs_waiting) == 0: # 没有排队，按照之前的策略调度
