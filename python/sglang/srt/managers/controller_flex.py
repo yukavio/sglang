@@ -154,7 +154,7 @@ class ControllerMultiFlex:
         remained_token = [k.value for k in self.controller_info.waiting_prefill_compute]
         available_mem = [k.value for k in self.controller_info.available_kv_cache]
         num_reqs_waiting = [k.value for k in self.controller_info.waiting_reqs]
-        num_reqs_running = [k.value if k.value != 0 else 1 for k in self.controller_info.running_reqs]
+        num_reqs_running = [k.value if k.value != 0 else 1e-6 for k in self.controller_info.running_reqs]
         # with open('three_list.txt', 'a') as file:  # 'a' 模式表示追加到文件末尾
             # file.write(f"available_mem={available_mem}\num_reqs_waiting={num_reqs_waiting}\nnum_reqs_running={num_reqs_running}\n")
 
@@ -181,6 +181,7 @@ class ControllerMultiFlex:
             else: 
                 # 选出不waiting的且available mem最大的
                 # no_waiting 和available做乘法，找最大
+                
                 filter_result = [a * b / c for a, b, c in zip(no_waiting, available_mem, num_reqs_running)]
                 index = filter_result.index(max(filter_result))
                 self.workers[index].queue.put(r)
