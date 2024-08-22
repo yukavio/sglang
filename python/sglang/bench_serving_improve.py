@@ -435,11 +435,11 @@ def sample_random_requests(
         return (prompt, int(input_lens[i]), int(output_lens[i]))
     input_requests = []
     # Filter out sequences that are too long or too short
+    t1 = time.time()
     with ThreadPoolExecutor(max_workers=os.cpu_count() * 5) as executor:
         # 提交所有任务
         futures = [executor.submit(process_prompt, i) for i in range(num_prompts)]
         
-        t1 = time.time()
         # 等待所有任务完成，并收集结果
         for future in as_completed(futures):
             try:
@@ -447,12 +447,12 @@ def sample_random_requests(
                 input_requests.append(result)
             except Exception as e:
                 print(f"Task generated an exception: {e}")
-        t2 = time.time()
-        print(f"It takes {t2 - t1} seconds to prepare prompts....")
+    t2 = time.time()
+    print(f"It takes {t2 - t1} seconds to prepare prompts....")
     # 保存 input_requests 到缓存文件
     with open(cache_path, 'wb') as f:
         pickle.dump(input_requests, f)
-        print(f"Saved input_requests{num_prompts} to cache.")
+        print(f"Saved input_requests_{num_prompts} to cache.")
     print(f"#Input tokens: {np.sum(input_lens)}")
     print(f"#Output tokens: {np.sum(output_lens)}")
     return input_requests
