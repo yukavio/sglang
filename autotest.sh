@@ -9,7 +9,7 @@ echo "====================== $(date) ======================" >> "$LOG_FILE"
 # 启动服务并将其放到后台，重定向输出到日志文件
 /workspace/bin/micromamba run -n sglang python3 -m sglang.launch_server --model-path Qwen/Qwen2-7B \
     --host 0.0.0.0 --port 8080 --mem-fraction-static 0.8 \
-    dp-size 8 --load-balance-method resources_aware \
+    --dp-size 8 --load-balance-method resources_aware \
     --chunked-prefill-size 2048 --disable-radix-cache >> "$LOG_FILE" 2>&1 &
 # 获取服务的进程ID
 SERVICE_PID=$!
@@ -34,7 +34,7 @@ sleep 300
 
 /workspace/bin/micromamba run -n sglang python3 -m sglang.launch_server --model-path Qwen/Qwen2-7B \
     --host 0.0.0.0 --port 8080 --mem-fraction-static 0.8 \
-    dp-size 8 --load-balance-method power_of_2_choice \
+    --dp-size 8 --load-balance-method power_of_2_choice \
     --chunked-prefill-size 2048 --disable-radix-cache >> "$LOG_FILE" 2>&1 &
 # 获取服务的进程ID
 SERVICE_PID=$!
