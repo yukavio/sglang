@@ -429,7 +429,7 @@ def sample_random_requests(
         return (prompt, int(input_lens[i]), int(output_lens[i]))
     input_requests = []
     # Filter out sequences that are too long or too short
-    with ThreadPoolExecutor() as executor:
+    with ThreadPoolExecutor(max_workers=os.cpu_count() * 5) as executor:
         # 提交所有任务
         futures = [executor.submit(process_prompt, i) for i in range(num_prompts)]
         
