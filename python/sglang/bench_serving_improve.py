@@ -25,7 +25,7 @@ from argparse import ArgumentParser
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import aiohttp
 import numpy as np
 import requests
@@ -427,10 +427,19 @@ def sample_random_requests(
         prompt = tokenizer.decode(input_ids)
         print(f"sample {i} has been processed...")
         return (prompt, int(input_lens[i]), int(output_lens[i]))
-    
+    input_requests = []
     # Filter out sequences that are too long or too short
-    with ThreadPoolExecutor() as execuotr:
-        input_requests = list(execuotr.map(process_prompt, range(num_prompts)))
+    with ThreadPoolExecutor() as executor:
+        # 提交所有任务
+        futures = [executor.submit(process_prompt, i) for i in range(num_prompts)]
+        
+        # 等待所有任务完成，并收集结果
+        for future in as_completed(futures):
+            try:
+                result = future.result()
+                input_requests.append(result)
+            except Exception as e:
+                print(f"Task generated an exception: {e}")
 
     print(f"#Input tokens: {np.sum(input_lens)}")
     print(f"#Output tokens: {np.sum(output_lens)}")
