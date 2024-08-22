@@ -26,11 +26,12 @@ sleep 300
         --random-range-ratio 0.5 --seed 1234 \
         --num-prompts 2 --request-rate 16.0 >> "$LOG_FILE" 2>&1
 
-mkdir resources_aware_0822
+mkdir -p resources_aware_0822
 mv token_usage* ./resources_aware_0822
 
-kill -9 SERVICE_PID
+kill -9 $SERVICE_PID
 sleep 300
+
 /workspace/bin/micromamba run -n sglang python3 -m sglang.launch_server --model-path Qwen/Qwen2-7B \
     --host 0.0.0.0 --port 8080 --mem-fraction-static 0.8 \
     dp-size 8 --load-balance-method power_of_2_choice \
@@ -48,5 +49,5 @@ sleep 300
         --random-range-ratio 0.5 --seed 1234 \
         --num-prompts 2 --request-rate 16.0 >> "$LOG_FILE" 2>&1
 
-mkdir power_of_2_choice_0822
+mkdir -p power_of_2_choice_0822
 mv token_usage* ./power_of_2_choice
