@@ -425,7 +425,7 @@ def sample_random_requests(
             ratio = (input_lens[i] + prompt_len - 1) // prompt_len
             input_ids = (prompt_token_ids * ratio)[: input_lens[i]]
         prompt = tokenizer.decode(input_ids)
-        print(f"sample {i} has been processed...")
+        # print(f"sample {i} has been processed...")
         return (prompt, int(input_lens[i]), int(output_lens[i]))
     input_requests = []
     # Filter out sequences that are too long or too short
@@ -433,6 +433,7 @@ def sample_random_requests(
         # 提交所有任务
         futures = [executor.submit(process_prompt, i) for i in range(num_prompts)]
         
+        t1 = time.time()
         # 等待所有任务完成，并收集结果
         for future in as_completed(futures):
             try:
@@ -440,6 +441,8 @@ def sample_random_requests(
                 input_requests.append(result)
             except Exception as e:
                 print(f"Task generated an exception: {e}")
+        t2 = time.time()
+        print(f"It takes {t2 - t1} seconds to prepare prompts....")
 
     print(f"#Input tokens: {np.sum(input_lens)}")
     print(f"#Output tokens: {np.sum(output_lens)}")
