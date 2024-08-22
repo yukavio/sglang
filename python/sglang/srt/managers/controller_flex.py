@@ -182,7 +182,7 @@ class ControllerMultiFlex:
                 # 选出不waiting的且available mem最大的
                 # no_waiting 和available做乘法，找最大
                 
-                filter_result = [a * b for a, b, c in zip(no_waiting, available_mem)]
+                filter_result = [a * b for a, b in zip(no_waiting, available_mem)]
                 index = filter_result.index(max(filter_result))
                 self.workers[index].queue.put(r)
                 
