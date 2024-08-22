@@ -368,7 +368,7 @@ def sample_sharegpt_requests(
 
     return filtered_dataset
 
-
+import pickle
 def sample_random_requests(
     input_len: int,
     output_len: int,
@@ -377,7 +377,13 @@ def sample_random_requests(
     tokenizer: PreTrainedTokenizerBase,
     dataset_path: str,
 ) -> List[Tuple[str, int, int]]:
-
+    cache_path = f'./input_cache_{num_prompts}'
+    # 尝试加载缓存的 input_requests
+    if os.path.isfile(cache_path):
+        with open(cache_path, 'rb') as f:
+            input_requests = pickle.load(f)
+        print("Loaded input_requests from cache.")
+        return input_requests
     input_lens = np.random.randint(
         max(int(input_len * range_ratio), 1),
         input_len + 1,
@@ -444,7 +450,9 @@ def sample_random_requests(
                 ]
             )
             input_requests.append((prompt, int(input_lens[i]), int(output_lens[i])))
-
+    with open(cache_path, 'wb') as f:
+        pickle.dump(input_requests, f)
+        print(f"Saved input_requests_{num_prompts} to cache.")
     print(f"#Input tokens: {np.sum(input_lens)}")
     print(f"#Output tokens: {np.sum(output_lens)}")
     return input_requests
