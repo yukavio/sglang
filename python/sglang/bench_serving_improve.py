@@ -425,6 +425,7 @@ def sample_random_requests(
             ratio = (input_lens[i] + prompt_len - 1) // prompt_len
             input_ids = (prompt_token_ids * ratio)[: input_lens[i]]
         prompt = tokenizer.decode(input_ids)
+        print(f"sample {i} has been processed...")
         return (prompt, int(input_lens[i]), int(output_lens[i]))
     
     # Filter out sequences that are too long or too short
