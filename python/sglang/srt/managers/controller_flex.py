@@ -171,7 +171,11 @@ class ControllerMultiFlex:
         for r in input_requests:
             if all_waitting:
                 # 全部waiting，选最小的
-                index = num_reqs_waiting.index(min(num_reqs_waiting))
+                min_value = min(num_reqs_waiting)
+                # 找到所有最小值的索引
+                min_indices = [i for i, x in enumerate(num_reqs_waiting) if x == min_value]
+                # 从这些索引中随机选择一个
+                index = random.choice(min_indices)
                 self.workers[index].queue.put(r)
                 num_reqs_waiting[index] += 1
             else: 
