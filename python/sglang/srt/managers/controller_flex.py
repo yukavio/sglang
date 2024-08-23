@@ -156,39 +156,63 @@ class ControllerMultiFlex:
         num_reqs_waiting = [k.value for k in self.controller_info.waiting_reqs]
         num_reqs_running = [k.value for  k in self.controller_info.running_reqs]
         # with open('three_list.txt', 'a') as file:  # 'a' 模式表示追加到文件末尾
-        print(f"available_mem={available_mem}\nnum_reqs_waiting={num_reqs_waiting}\num_reqs_running={num_reqs_running}\n")
-
-        # 判断是否是全部waiting
-        all_waitting = False
-        if min(num_reqs_waiting) > 0:
-            # 最小值都大于0，全部waiting
-            all_waitting = True
-        else:
-            # 最小值都是0， 则全部waiting
-            all_waitting = False
-        # 选出不waiting
-        no_waiting = [1 if waiting == 0 else 0 for waiting in num_reqs_waiting ]
+        print(f"available_mem={available_mem}\nnum_reqs_waiting={num_reqs_waiting}\nnum_reqs_running={num_reqs_running}\n")
+        
+        ava_resource = available_mem.copy()
+        # =======================method2=======================
+        # 认为available + waiting为可用资源
+        for i in range(len(self.workers)):
+            for req in self.workers[i].queue:
+                ava_resource[i] += len(req.input_ids)
+        
+        # 选择ava最大的调度
         for r in input_requests:
-            if all_waitting:
-                # 全部waiting，选最小的
-                min_value = min(num_reqs_waiting)
-                # 找到所有最小值的索引
-                min_indices = [i for i, x in enumerate(num_reqs_waiting) if x == min_value]
-                # 从这些索引中随机选择一个
-                index = random.choice(min_indices)
-                self.workers[index].queue.put(r)
-                num_reqs_waiting[index] += 1
-            else: 
-                # 选出不waiting的且available mem最大的
-                # no_waiting 和available做乘法，找最大
+            index = ava_resource.index(max(ava_resource))
+            self.workers[index].queue.put(r)
+            ava_resource -= len(r.input_ids)
+        
+        # =======================method2=======================
+        
+        
+        
+        
+        
+        
+        
+        # =======================method1=======================
+        
+        # 判断是否是全部waiting
+        # all_waitting = False
+        # if min(num_reqs_waiting) > 0:
+        #     # 最小值都大于0，全部waiting
+        #     all_waitting = True
+        # else:
+        #     # 最小值都是0， 则全部waiting
+        #     all_waitting = False
+        # # 选出不waiting
+        # no_waiting = [1 if waiting == 0 else 0 for waiting in num_reqs_waiting ]
+        # for r in input_requests:
+        #     if all_waitting:
+        #         # 全部waiting，选最小的
+        #         min_value = min(num_reqs_waiting)
+        #         # 找到所有最小值的索引
+        #         min_indices = [i for i, x in enumerate(num_reqs_waiting) if x == min_value]
+        #         # 从这些索引中随机选择一个
+        #         index = random.choice(min_indices)
+        #         self.workers[index].queue.put(r)
+        #         num_reqs_waiting[index] += 1
+        #     else: 
+        #         # 选出不waiting的且available mem最大的
+        #         # no_waiting 和available做乘法，找最大
                 
-                filter_result = [a * b for a, b in zip(no_waiting, available_mem)]
-                index = filter_result.index(max(filter_result))
-                self.workers[index].queue.put(r)
+        #         filter_result = [a * b for a, b in zip(no_waiting, available_mem)]
+        #         index = filter_result.index(max(filter_result))
+        #         self.workers[index].queue.put(r)
                 
-                # num_reqs_running[index] += 1
-                available_mem[index] -= len(r.input_ids)
-                
+        #         # num_reqs_running[index] += 1
+        #         available_mem[index] -= len(r.input_ids)
+        
+        # =======================method1=======================
                 
                 
                 
