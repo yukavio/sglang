@@ -80,15 +80,18 @@ class ModelTpServer:
         server_args: ServerArgs,
         nccl_port: int,
         model_overide_args: dict,
-        controller_info: ControllerInfo,
-        dp_worker_id: int,
+        controller_info: Optional[ControllerInfo]=None,
+        dp_worker_id: Optional[int]=None,
     ):
+        
         suppress_other_loggers()
 
         # Copy arguments
         self.gpu_id = gpu_id
         self.tp_rank = tp_rank
-        self.dp_rank = dp_worker_id
+        
+        if tp_rank == 0:
+            self.dp_rank = dp_worker_id
         self.tp_size = server_args.tp_size
         self.dp_size = server_args.dp_size
         self.schedule_policy = server_args.schedule_policy
