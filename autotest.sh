@@ -24,10 +24,10 @@ sleep 300
         --tokenizer Qwen/Qwen2-7B --model Qwen/Qwen2-7B \
         --random-output-len 1024 --random-input-len 4096 \
         --random-range-ratio 0.5 --seed 1234 \
-        --num-prompts 2 --request-rate 16.0 >> "$LOG_FILE" 2>&1
+        --num-prompts 20000 --request-rate 16.0 >> "$LOG_FILE" 2>&1
 
-mkdir -p resources_aware_0822
-mv token_usage* ./resources_aware_0822
+mkdir -p resources_aware_0823
+mv token_usage* ./resources_aware_0823
 
 kill -9 $SERVICE_PID
 sleep 300
@@ -47,7 +47,7 @@ sleep 300
         --tokenizer Qwen/Qwen2-7B --model Qwen/Qwen2-7B \
         --random-output-len 1024 --random-input-len 4096 \
         --random-range-ratio 0.5 --seed 1234 \
-        --num-prompts 2 --request-rate 16.0 >> "$LOG_FILE" 2>&1
+        --num-prompts 20000 --request-rate 16.0 >> "$LOG_FILE" 2>&1
 
-mkdir -p power_of_2_choice_0822
-mv token_usage* ./power_of_2_choice
+mkdir -p power_of_2_choice_0823
+mv token_usage* ./power_of_2_choice_0823
