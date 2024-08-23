@@ -275,7 +275,8 @@ class ModelTpServer:
 
                     # Print stats
                     if self.tp_rank == 0 and self.decode_forward_ct % 1 == 0:
-                        self.print_decode_stats()
+                        # self.print_decode_stats()
+                        pass
 
                     if self.running_batch.is_empty():
                         self.running_batch = None

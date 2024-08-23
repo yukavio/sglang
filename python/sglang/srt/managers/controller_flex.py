@@ -156,7 +156,7 @@ class ControllerMultiFlex:
         num_reqs_waiting = [k.value for k in self.controller_info.waiting_reqs]
         # num_reqs_running = [k.value if k.value != 0 else 1e-6 for k in self.controller_info.running_reqs]
         # with open('three_list.txt', 'a') as file:  # 'a' 模式表示追加到文件末尾
-            # file.write(f"available_mem={available_mem}\num_reqs_waiting={num_reqs_waiting}\nnum_reqs_running={num_reqs_running}\n")
+        print(f"available_mem={available_mem}\nnum_reqs_waiting={num_reqs_waiting}\nremained_token={remained_token}\n")
 
         # 判断是否是全部waiting
         all_waitting = False
