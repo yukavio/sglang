@@ -173,7 +173,7 @@ class ControllerMultiFlex:
         for r in input_requests:
             index = ava_resource.index(max(ava_resource))
             self.workers[index].queue.put(r)
-            ava_resource -= len(r.input_ids)
+            ava_resource[index] -= len(r.input_ids)
         
         # =======================method2=======================
         
