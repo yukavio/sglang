@@ -160,20 +160,20 @@ class ControllerMultiFlex:
         
         ava_resource = available_mem.copy()
         # =======================method2=======================
-        # 认为available + waiting为可用资源
-        for i in range(len(self.workers)):
-            q = self.workers[i].queue
-            qsize = q.qsize()
-            for _ in range(qsize):
-                req = q.get()
-                ava_resource[i] += len(req.input_ids)
-                q.put(req)  # 将元素重新放回原队列
+        # # 认为available + waiting为可用资源
+        # for i in range(len(self.workers)):
+        #     q = self.workers[i].queue
+        #     qsize = q.qsize()
+        #     for _ in range(qsize):
+        #         req = q.get()
+        #         ava_resource[i] += len(req.input_ids)
+        #         q.put(req)  # 将元素重新放回原队列
         
-        # 选择ava最大的调度
-        for r in input_requests:
-            index = ava_resource.index(max(ava_resource))
-            self.workers[index].queue.put(r)
-            ava_resource[index] -= len(r.input_ids)
+        # # 选择ava最大的调度
+        # for r in input_requests:
+        #     index = ava_resource.index(max(ava_resource))
+        #     self.workers[index].queue.put(r)
+        #     ava_resource[index] -= len(r.input_ids)
         
         # =======================method2=======================
         
@@ -186,35 +186,37 @@ class ControllerMultiFlex:
         # =======================method1=======================
         
         # 判断是否是全部waiting
-        # all_waitting = False
-        # if min(num_reqs_waiting) > 0:
-        #     # 最小值都大于0，全部waiting
-        #     all_waitting = True
-        # else:
-        #     # 最小值都是0， 则全部waiting
-        #     all_waitting = False
-        # # 选出不waiting
-        # no_waiting = [1 if waiting == 0 else 0 for waiting in num_reqs_waiting ]
-        # for r in input_requests:
-        #     if all_waitting:
-        #         # 全部waiting，选最小的
-        #         min_value = min(num_reqs_waiting)
-        #         # 找到所有最小值的索引
-        #         min_indices = [i for i, x in enumerate(num_reqs_waiting) if x == min_value]
-        #         # 从这些索引中随机选择一个
-        #         index = random.choice(min_indices)
-        #         self.workers[index].queue.put(r)
-        #         num_reqs_waiting[index] += 1
-        #     else: 
-        #         # 选出不waiting的且available mem最大的
-        #         # no_waiting 和available做乘法，找最大
+        all_waitting = False
+        if min(num_reqs_waiting) > 0:
+            # 最小值都大于0，全部waiting
+            all_waitting = True
+        else:
+            # 最小值都是0， 则全部waiting
+            all_waitting = False
+        # 选出不waiting
+        no_waiting = [1 if waiting == 0 else 0 for waiting in num_reqs_waiting ]
+        for r in input_requests:
+            if all_waitting:
+                # 全部waiting，选最小的
+                min_value = min(num_reqs_waiting)
+                # 找到所有最小值的索引
+                min_indices = [i for i, x in enumerate(num_reqs_waiting) if x == min_value]
+                # 从这些索引中随机选择一个
+                # index = random.choice(min_indices)
+                # 从waitting最小的找到available最大的
+                index = max(min_indices, key=lambda i: available_mem[i])
+                self.workers[index].queue.put(r)
+                num_reqs_waiting[index] += 1
+            else: 
+                # 选出不waiting的且available mem最大的
+                # no_waiting 和available做乘法，找最大
                 
-        #         filter_result = [a * b for a, b in zip(no_waiting, available_mem)]
-        #         index = filter_result.index(max(filter_result))
-        #         self.workers[index].queue.put(r)
+                filter_result = [a * b for a, b in zip(no_waiting, available_mem)]
+                index = filter_result.index(max(filter_result))
+                self.workers[index].queue.put(r)
                 
-        #         # num_reqs_running[index] += 1
-        #         available_mem[index] -= len(r.input_ids)
+                # num_reqs_running[index] += 1
+                available_mem[index] -= len(r.input_ids)
         
         # =======================method1=======================
                 
