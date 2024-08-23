@@ -90,8 +90,7 @@ class ModelTpServer:
         self.gpu_id = gpu_id
         self.tp_rank = tp_rank
         
-        if tp_rank == 0:
-            self.dp_rank = dp_worker_id
+        self.dp_rank = dp_worker_id
         self.tp_size = server_args.tp_size
         self.dp_size = server_args.dp_size
         self.schedule_policy = server_args.schedule_policy
