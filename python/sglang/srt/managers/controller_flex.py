@@ -207,6 +207,7 @@ class ControllerMultiFlex:
                 index = max(min_indices, key=lambda i: available_mem[i])
                 self.workers[index].queue.put(r)
                 num_reqs_waiting[index] += 1
+                available_mem[index] -= len(r.input_ids)
             else: 
                 # 选出不waiting的且available mem最大的
                 # no_waiting 和available做乘法，找最大
