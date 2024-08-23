@@ -162,8 +162,12 @@ class ControllerMultiFlex:
         # =======================method2=======================
         # 认为available + waiting为可用资源
         for i in range(len(self.workers)):
-            for req in self.workers[i].queue:
+            q = self.workers[i].queue
+            qsize = q.qsize()
+            for _ in range(qsize):
+                req = q.get()
                 ava_resource[i] += len(req.input_ids)
+                q.put(req)  # 将元素重新放回原队列
         
         # 选择ava最大的调度
         for r in input_requests:
