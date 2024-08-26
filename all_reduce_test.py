@@ -1,45 +1,59 @@
+#!/usr/bin/env python
+
+import os
+import sys
 import torch
 import torch.distributed as dist
-import os
-import subprocess
-import torch.multiprocessing as mp
+from torch.multiprocessing import Process
+import time
 
-def setup(rank, world_size):
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12355'
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+# Values are 4 bytes each, so 2 * 1000 * 1000 * 32 * 4 = 256 MB = 2048 Mbit
+MODEL_SIZE_VALUES = 2 * 1000 * 1000 * 32
+BIT_PER_VALUE = 4 * 8
+BITS_PER_MBIT = 1000 * 1000
 
-def cleanup():
-    dist.destroy_process_group()
 
-def test_nccl_bandwidth(rank, world_size, tensor_size):
-    setup(rank, world_size)
-    tensor = torch.rand(tensor_size).cuda(rank)
-    # Warm-up
-    for _ in range(10):
-        dist.all_reduce(tensor)
-    torch.cuda.synchronize()
-    
-    # Benchmark
-    start_event = torch.cuda.Event(enable_timing=True)
-    end_event = torch.cuda.Event(enable_timing=True)
-    
-    start_event.record()
-    for _ in range(100):
-        dist.all_reduce(tensor)
-    end_event.record()
-    torch.cuda.synchronize()
-    
-    elapsed_time_ms = start_event.elapsed_time(end_event)
-    data_transferred = tensor_size * 100 * 4 * 2  # size * iterations * bytes/element * all_reduce factor
-    bandwidth = data_transferred / elapsed_time_ms / 1e6  # GB/s
-    
-    if rank == 0:
-        print(f"Bandwidth: {bandwidth} GB/s")
-    
-    cleanup()
+def current_time_in_ms():
+    return int(round(time.time() * 1000))
+
+
+def run(rank, size):
+    group = dist.new_group(list(range(size)))
+    tensor = torch.ones(MODEL_SIZE_VALUES, dtype=torch.float32)
+    print("Performing allreduce...")
+    print("   > Data to send: %d Mbit" % ((MODEL_SIZE_VALUES * BIT_PER_VALUE) / float(BITS_PER_MBIT)))
+    start = current_time_in_ms()
+    dist.all_reduce(tensor, op=dist.ReduceOp.SUM, group=group)
+    elapsed_ms = current_time_in_ms() - start
+    print("   > Finished.")
+    print("   > Time: %.2f s" % (elapsed_ms / 1000.0))
+    print("   > Speed: %.2f Mbit/s" % ((MODEL_SIZE_VALUES * BIT_PER_VALUE / BITS_PER_MBIT) / float(elapsed_ms / 1000.0)))
+    print('   > Result: Rank ', rank, ' has data ', str(tensor), '.\n')
+
+
+def init_process(my_rank, size, master_address, master_port, fn, backend='gloo'):
+    # Initialize the distributed environment
+    os.environ['MASTER_ADDR'] = master_address
+    os.environ['MASTER_PORT'] = master_port
+
+    # Initialize process group
+    print("Initializing process group...")
+    dist.init_process_group(backend, rank=my_rank, world_size=size)
+    print("   > Initialized.")
+    print("")
+    fn(my_rank, size)
+
+
+def main(my_rank, size, master_address, master_port):
+    p = Process(target=init_process, args=(my_rank, size, master_address, master_port, run))
+    p.start()
+    p.join()
+
 
 if __name__ == "__main__":
-    world_size = torch.cuda.device_count()
-    tensor_size = 1024 * 1024 * 256  # 256 MB
-    mp.spawn(test_nccl_bandwidth, args=(world_size, tensor_size), nprocs=world_size)
+    args = sys.argv[1:]
+    if len(args) != 4:
+        print("Usage: python allreduce.py <my rank> <size> <master address> <master port>")
+        exit(1)
+    else:
+        main(int(args[0]), int(args[1]), str(args[2]), str(args[3]))
