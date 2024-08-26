@@ -297,14 +297,14 @@ class ModelTpServer:
         throughput = self.num_generated_tokens / (time.time() - self.last_stats_tic)
         self.num_generated_tokens = 0
         self.last_stats_tic = time.time()
-        # logger.info(
-        #     f"[gpu={self.gpu_id}] Decode batch. "
-        #     f"#running-req: {len(self.running_batch.reqs)}, "
-        #     f"#token: {num_used}, "
-        #     f"token usage: {num_used / self.max_total_num_tokens:.2f}, "
-        #     f"gen throughput (token/s): {throughput:.2f}, "
-        #     f"#queue-req: {len(self.waiting_queue)}"
-        # )
+        logger.info(
+            f"[gpu={self.gpu_id}] Decode batch. "
+            f"#running-req: {len(self.running_batch.reqs)}, "
+            f"#token: {num_used}, "
+            f"token usage: {num_used / self.max_total_num_tokens:.2f}, "
+            f"gen throughput (token/s): {throughput:.2f}, "
+            f"#queue-req: {len(self.waiting_queue)}"
+        )
         
         with open(f"token_usage_gpu_{self.gpu_id}.log", mode='a+', encoding='utf-8') as f:
             f.write(f"{self.gpu_id}\t\t{num_used / self.max_total_num_tokens:.2f}\t\t{len(self.waiting_queue)}\n")
