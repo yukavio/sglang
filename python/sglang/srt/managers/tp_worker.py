@@ -641,6 +641,9 @@ class ModelTpServer:
             num = 0
             for req in retracted_reqs:
                 num += len(req.fill_ids)
+                
+            if self.controller_info is None:
+                print(f"tp rank={self.tp_rank}, dp rank={self.dp_rank}")
             with self.controller_info.lock:
                 self.controller_info.waiting_prefill_compute[self.dp_rank].value += num
             self.waiting_queue.extend(retracted_reqs)
