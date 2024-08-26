@@ -56,8 +56,8 @@ def main(size, master_address, master_port):
 
 if __name__ == "__main__":
     args = sys.argv[1:]
-    if len(args) != 4:
+    if len(args) != 3:
         print("Usage: python allreduce.py <my rank> <size> <master address> <master port>")
         exit(1)
     else:
-        main(int(args[0]), int(args[1]), str(args[2]), str(args[3]))
+        main(int(args[0]), int(args[1]), str(args[2]))
