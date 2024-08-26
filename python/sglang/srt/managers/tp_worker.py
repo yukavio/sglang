@@ -277,8 +277,8 @@ class ModelTpServer:
 
                     # Print stats
                     if self.tp_rank == 0 and self.decode_forward_ct % 1 == 0:
-                        # self.print_decode_stats()
-                        pass
+                        self.print_decode_stats()
+                        # pass
 
                     if self.running_batch.is_empty():
                         self.running_batch = None
@@ -641,11 +641,10 @@ class ModelTpServer:
             num = 0
             for req in retracted_reqs:
                 num += len(req.fill_ids)
-                
-            if self.controller_info is None:
-                print(f"tp rank={self.tp_rank}, dp rank={self.dp_rank}")
-            with self.controller_info.lock:
-                self.controller_info.waiting_prefill_compute[self.dp_rank].value += num
+            
+            if self.controller_info is not None:
+                with self.controller_info.lock:
+                    self.controller_info.waiting_prefill_compute[self.dp_rank].value += num
             self.waiting_queue.extend(retracted_reqs)
         else:
             self.new_token_ratio = max(
