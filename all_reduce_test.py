@@ -44,10 +44,14 @@ def init_process(my_rank, size, master_address, master_port, fn, backend='nccl')
     fn(my_rank, size)
 
 
-def main(my_rank, size, master_address, master_port):
-    p = Process(target=init_process, args=(my_rank, size, master_address, master_port, run))
-    p.start()
-    p.join()
+def main(size, master_address, master_port):
+    process = []
+    for i in range(size):
+        p = Process(target=init_process, args=(i, size, master_address, master_port, run))
+        process.append(p)
+        p.start()
+    for i in range(size):
+        p.join()
 
 
 if __name__ == "__main__":
