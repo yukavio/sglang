@@ -31,7 +31,7 @@ def run(rank, size):
     print('   > Result: Rank ', rank, ' has data ', str(tensor), '.\n')
 
 
-def init_process(my_rank, size, master_address, master_port, fn, backend='gloo'):
+def init_process(my_rank, size, master_address, master_port, fn, backend='nccl'):
     # Initialize the distributed environment
     os.environ['MASTER_ADDR'] = master_address
     os.environ['MASTER_PORT'] = master_port
