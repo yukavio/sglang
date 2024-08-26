@@ -7,7 +7,7 @@ LOG_FILE="service_benchmark.log"
 echo "====================== $(date) ======================" >> "$LOG_FILE"
 
 # 启动服务并将其放到后台，重定向输出到日志文件
-echo "Running with setting: dp=8 tp=1 ======================================================"
+echo "Running with setting: dp=8 tp=1 ======================================================" >> "$LOG_FILE"
 /home/qspace/workspace/josephyou/bin/micromamba run -n sglang python3 -m sglang.launch_server --model-path Qwen/Qwen2-7B \
     --host 0.0.0.0 --port 8080 --mem-fraction-static 0.8 \
     --dp-size 8 --load-balance-method resources_aware \
@@ -35,7 +35,7 @@ sleep 100
 
 
 # 启动服务并将其放到后台，重定向输出到日志文件
-echo "Running with setting: dp=4 tp=2 ======================================================"
+echo "Running with setting: dp=4 tp=2 ======================================================" >> "$LOG_FILE"
 /home/qspace/workspace/josephyou/bin/micromamba run -n sglang python3 -m sglang.launch_server --model-path Qwen/Qwen2-7B \
     --host 0.0.0.0 --port 8080 --mem-fraction-static 0.8 \
     --dp-size 4 --tp-size 2 --load-balance-method resources_aware \
@@ -57,7 +57,7 @@ sleep 100
 #=============================================================================================================================================================
 
 # 启动服务并将其放到后台，重定向输出到日志文件
-echo "Running with setting: dp=2 tp=4 ======================================================"
+echo "Running with setting: dp=2 tp=4 ======================================================" >> "$LOG_FILE"
 
 /home/qspace/workspace/josephyou/bin/micromamba run -n sglang python3 -m sglang.launch_server --model-path Qwen/Qwen2-7B \
     --host 0.0.0.0 --port 8080 --mem-fraction-static 0.8 \
@@ -80,7 +80,7 @@ sleep 100
 #=============================================================================================================================================================
 
 
-echo "Running with setting: dp=1 tp=8 ======================================================"
+echo "Running with setting: dp=1 tp=8 ======================================================" >> "$LOG_FILE"
 
 /home/qspace/workspace/josephyou/bin/micromamba run -n sglang python3 -m sglang.launch_server --model-path Qwen/Qwen2-7B \
     --host 0.0.0.0 --port 8080 --mem-fraction-static 0.8 \
