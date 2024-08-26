@@ -19,7 +19,7 @@ def current_time_in_ms():
 
 def run(rank, size):
     group = dist.new_group(list(range(size)))
-    tensor = torch.ones(MODEL_SIZE_VALUES, dtype=torch.float32)
+    tensor = torch.ones(MODEL_SIZE_VALUES, dtype=torch.float32).cuda(rank)
     print("Performing allreduce...")
     print("   > Data to send: %d Mbit" % ((MODEL_SIZE_VALUES * BIT_PER_VALUE) / float(BITS_PER_MBIT)))
     start = current_time_in_ms()
