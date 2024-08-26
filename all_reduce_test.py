@@ -22,9 +22,14 @@ def run(rank, size):
     tensor = torch.ones(MODEL_SIZE_VALUES, dtype=torch.float32).cuda(rank)
     print("Performing allreduce...")
     print("   > Data to send: %d Mbit" % ((MODEL_SIZE_VALUES * BIT_PER_VALUE) / float(BITS_PER_MBIT)))
+    for i in range(10):
+        dist.all_reduce(tensor, op=dist.ReduceOp.SUM, group=group)
     start = current_time_in_ms()
-    dist.all_reduce(tensor, op=dist.ReduceOp.SUM, group=group)
-    elapsed_ms = current_time_in_ms() - start
+    repeats = 10
+    for i in range(repeats):
+        dist.all_reduce(tensor, op=dist.ReduceOp.SUM, group=group)
+    elapsed_ms = (current_time_in_ms() - start)/repeats
+    
     print("   > Finished.")
     print("   > Time: %.2f s" % (elapsed_ms / 1000.0))
     print("   > Speed: %.2f Mbit/s" % ((MODEL_SIZE_VALUES * BIT_PER_VALUE / BITS_PER_MBIT) / float(elapsed_ms / 1000.0)))
