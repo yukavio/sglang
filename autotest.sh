@@ -28,6 +28,7 @@ for rate in $(seq 7 0.5 12); do
             --random-range-ratio 0.5 --seed 1234 \
             --num-prompts 10000 --request-rate $rate >> "$LOG_FILE" 2>&1
     sleep 100
+done
 ps -elf | grep python  | awk '{print $4}' | xargs  kill -s 9
 sleep 100
 
@@ -51,6 +52,7 @@ for rate in $(seq 7 0.5 12); do
             --random-range-ratio 0.5 --seed 1234 \
             --num-prompts 10000 --request-rate $rate >> "$LOG_FILE" 2>&1
     sleep 100
+done
 ps -elf | grep python  | awk '{print $4}' | xargs  kill -s 9
 sleep 100
 
@@ -73,6 +75,7 @@ for rate in $(seq 7 0.5 12); do
                     --random-range-ratio 0.5 --seed 1234 \
                     --num-prompts 10000 --request-rate $rate >> "$LOG_FILE" 2>&1
     sleep 100
+done
 ps -elf | grep python  | awk '{print $4}' | xargs  kill -s 9
 sleep 100
 
@@ -96,6 +99,7 @@ for rate in $(seq 7 0.5 12); do
                     --random-range-ratio 0.5 --seed 1234 \
                     --num-prompts 10000 --request-rate $rate >> "$LOG_FILE" 2>&1
     sleep 100
+done
 ps -elf | grep python  | awk '{print $4}' | xargs  kill -s 9
 sleep 100
 #=============================================================================================================================================================
