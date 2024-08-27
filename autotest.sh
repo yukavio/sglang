@@ -2,7 +2,7 @@
 
 # 日志文件
 LOG_FILE="service_benchmark.log"
-
+export CUDA_VISIBLE_DEVICES=0,1,2,3
 # 在日志文件中写入分隔符和当前时间
 echo "====================== $(date) ======================" >> "$LOG_FILE"
 
