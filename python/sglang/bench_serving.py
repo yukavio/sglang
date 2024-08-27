@@ -526,9 +526,9 @@ def calculate_metrics(
             stacklevel=2,
         )
         
-    metric_data = [input_lens, output_lens, ttfts]
-    with open(f'metrics_{time.time()}.json', 'w') as f:
-        json.dump(metric_data, f)
+    # metric_data = [input_lens, output_lens, ttfts]
+    # with open(f'metrics_{time.time()}.json', 'w') as f:
+    #     json.dump(metric_data, f)
     
     metrics = BenchmarkMetrics(
         completed=completed,
