@@ -118,10 +118,6 @@ class ModelTpServer:
         # Flex DP inference
         if controller_info:
             self.controller_info = controller_info
-            shm = shared_memory.SharedMemory(self.controller_info.cpu_kv_cache)
-            self.swap_cache = torch.frombuffer(
-                buffer=shm.buf, dtype=self.model_runner.dtype
-            ).reshape(self.controller_info.cache_shape)
             self.controller_info.available_kv_cache[self.dp_rank].value = (
                 self.model_runner.token_to_kv_pool.available_size()
             )
