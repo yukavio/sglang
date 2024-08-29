@@ -283,15 +283,4 @@ class ControllerInfo:
             self.running_reqs.append(Value("i", 0))
             self.waiting_reqs.append(Value("i", 0))
             self.swap_in_queue.append(multiprocessing.Queue())
-        self.swap_out_queue = multiprocessing.Queue()
-        cache_shape = get_cache_info(server_args, model_overide_args)
-
-        # TODO: Make it editable by user @kavioyu
-        cpu_cache_num = 10240
-        self.cache_shape = (10240,) + cache_shape
-        dtype_size = 2  # support float16 or bfloat16
-        cache_size = np.product(self.cache_shape) * dtype_size
-
-        shm = multiprocessing.shared_memory.SharedMemory(create=True, size=cache_size)
-        self.cpu_kv_cache = shm.name
         del shm

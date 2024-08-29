@@ -195,7 +195,6 @@ class ModelTpServer:
         self.running_batch: ScheduleBatch = None
         self.out_pyobjs = []
         self.decode_forward_ct = 0
-        self.forward_ct = 0
         self.stream_interval = server_args.stream_interval
         self.num_generated_tokens = 0
         self.last_stats_tic = time.time()
@@ -625,11 +624,14 @@ class ModelTpServer:
                 f"#new_token_ratio: {old_ratio:.4f} -> {self.new_token_ratio:.4f}"
             )
 
-            num = 0
-            for req in retracted_reqs:
-                num += len(req.fill_ids)
-            with self.controller_info.lock:
-                self.controller_info.waiting_prefill_compute[self.dp_rank].value += num
+            if self.controller_info:
+                num = 0
+                for req in retracted_reqs:
+                    num += len(req.fill_ids)
+                with self.controller_info.lock:
+                    self.controller_info.waiting_prefill_compute[
+                        self.dp_rank
+                    ].value += num
             self.waiting_queue.extend(retracted_reqs)
         else:
             self.new_token_ratio = max(
@@ -688,12 +690,6 @@ class ModelTpServer:
                     req.output_top_logprobs.append(output.output_top_logprobs[i])
 
         self.handle_finished_requests(batch)
-
-    def swap_in_decode_request(self, req: Req):
-        pass
-
-    def swap_out_decode_request(self, req: Req):
-        pass
 
     def handle_finished_requests(self, batch: ScheduleBatch):
         output_rids = []
