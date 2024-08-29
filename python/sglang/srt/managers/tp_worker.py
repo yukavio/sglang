@@ -487,9 +487,6 @@ class ModelTpServer:
                     else 0
                 )
 
-                self.controller_info.waiting_reqs[self.dp_rank].value = len(
-                    self.waiting_queue
-                )
         if self.model_runner.is_generation:
             # Forward and sample the next tokens
             if batch.extend_num_tokens != 0:
@@ -634,11 +631,10 @@ class ModelTpServer:
                 f"#new_token_ratio: {old_ratio:.4f} -> {self.new_token_ratio:.4f}"
             )
 
-            num = 0
-            for req in retracted_reqs:
-                num += len(req.fill_ids)
-
-            if self.controller_info is not None:
+            if self.controller_info:
+                num = 0
+                for req in retracted_reqs:
+                    num += len(req.fill_ids)
                 with self.controller_info.lock:
                     self.controller_info.waiting_prefill_compute[
                         self.dp_rank
@@ -668,10 +664,6 @@ class ModelTpServer:
                 )
                 self.controller_info.running_reqs[self.dp_rank].value = (
                     batch.batch_size()
-                )
-
-                self.controller_info.waiting_reqs[self.dp_rank].value = len(
-                    self.waiting_queue
                 )
 
         # Forward and sample the next tokens
@@ -704,12 +696,6 @@ class ModelTpServer:
                     req.output_top_logprobs.append(output.output_top_logprobs[i])
 
         self.handle_finished_requests(batch)
-
-    def swap_in_decode_request(self, req: Req):
-        pass
-
-    def swap_out_decode_request(self, req: Req):
-        pass
 
     def handle_finished_requests(self, batch: ScheduleBatch):
         output_rids = []
