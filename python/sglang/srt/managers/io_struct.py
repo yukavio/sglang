@@ -283,4 +283,3 @@ class ControllerInfo:
             self.running_reqs.append(Value("i", 0))
             self.waiting_reqs.append(Value("i", 0))
             self.swap_in_queue.append(multiprocessing.Queue())
-        del shm
