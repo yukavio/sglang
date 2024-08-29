@@ -78,14 +78,16 @@ class ModelTpServer:
         server_args: ServerArgs,
         nccl_port: int,
         model_overide_args: dict,
-        controller_info: ControllerInfo,
-        dp_worker_id: int,
+        controller_info: Optional[ControllerInfo] = None,
+        dp_worker_id: Optional[int] = None,
     ):
+
         suppress_other_loggers()
 
         # Copy arguments
         self.gpu_id = gpu_id
         self.tp_rank = tp_rank
+
         self.dp_rank = dp_worker_id
         self.tp_size = server_args.tp_size
         self.dp_size = server_args.dp_size
@@ -116,10 +118,6 @@ class ModelTpServer:
         # Flex DP inference
         if controller_info:
             self.controller_info = controller_info
-            shm = shared_memory.SharedMemory(self.controller_info.cpu_kv_cache)
-            self.swap_cache = torch.frombuffer(
-                buffer=shm.buf, dtype=self.model_runner.dtype
-            ).reshape(self.controller_info.cache_shape)
             self.controller_info.available_kv_cache[self.dp_rank].value = (
                 self.model_runner.token_to_kv_pool.available_size()
             )
@@ -195,6 +193,7 @@ class ModelTpServer:
         self.running_batch: ScheduleBatch = None
         self.out_pyobjs = []
         self.decode_forward_ct = 0
+        self.forward_ct = 0
         self.stream_interval = server_args.stream_interval
         self.num_generated_tokens = 0
         self.last_stats_tic = time.time()
@@ -433,9 +432,13 @@ class ModelTpServer:
                 adder.log_input_tokens + adder.log_hit_tokens
             ) / 10**9
             self.tree_cache_metrics["hit"] += (adder.log_hit_tokens) / 10**9
-            tree_cache_hit_rate = (
-                self.tree_cache_metrics["hit"] / self.tree_cache_metrics["total"]
-            )
+
+            try:
+                tree_cache_hit_rate = (
+                    self.tree_cache_metrics["hit"] / self.tree_cache_metrics["total"]
+                )
+            except ZeroDivisionError:
+                tree_cache_hit_rate = 1.0
             logger.info(
                 f"[gpu={self.gpu_id}] Prefill batch. "
                 f"#new-seq: {len(can_run_list)}, "
@@ -619,7 +622,7 @@ class ModelTpServer:
             self.new_token_ratio = new_token_ratio
 
             logger.info(
-                "decode out of memory happened, "
+                f"[gpu{self.gpu_id}]decode out of memory happened, "
                 f"#retracted_reqs: {len(retracted_reqs)}, "
                 f"#new_token_ratio: {old_ratio:.4f} -> {self.new_token_ratio:.4f}"
             )
@@ -638,7 +641,6 @@ class ModelTpServer:
                 self.new_token_ratio - self.new_token_ratio_decay,
                 self.min_new_token_ratio,
             )
-
         if not self.disable_regex_jump_forward:
             # Check for jump-forward
             jump_forward_reqs = batch.check_for_jump_forward(self.model_runner)

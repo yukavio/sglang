@@ -149,19 +149,37 @@ class ControllerMultiFlex:
     def resources_aware_scheduler(self, input_requests):
         if len(input_requests) == 0:
             return
-        remained_token = [k.value for k in self.controller_info.waiting_prefill_compute]
         available_mem = [k.value for k in self.controller_info.available_kv_cache]
-        num_reqs = [
-            k.value if k.value != 0 else 1 for k in self.controller_info.running_reqs
-        ]
+        num_reqs_waiting = [k.value for k in self.controller_info.waiting_reqs]
+        # print(f"available_mem={available_mem}\nnum_reqs_waiting={num_reqs_waiting}\nnum_reqs_running={num_reqs_running}\n")
 
+        # check if all waitting
+        all_waitting = False
+        if min(num_reqs_waiting) > 0:
+            all_waitting = True
+        else:
+            all_waitting = False
+
+        #  select the no waitting nodes.
+        no_waiting = [1 if waiting == 0 else 0 for waiting in num_reqs_waiting]
         for r in input_requests:
-            flag = [a / b for a, b in zip(available_mem, num_reqs)]
+            if all_waitting:
+                min_value = min(num_reqs_waiting)
+                min_indices = [
+                    i for i, x in enumerate(num_reqs_waiting) if x == min_value
+                ]
 
-            index = flag.index(max(flag))
-            self.workers[index].queue.put(r)
-            available_mem[index] -= len(r.input_ids)
-            num_reqs[index] += 1
+                # find max available mem from waiting queue
+                index = max(min_indices, key=lambda i: available_mem[i])
+                self.workers[index].queue.put(r)
+                num_reqs_waiting[index] += 1
+                available_mem[index] -= len(r.input_ids)
+            else:
+                # find no waitting and max available mem node
+                filter_result = [a * b for a, b in zip(no_waiting, available_mem)]
+                index = filter_result.index(max(filter_result))
+                self.workers[index].queue.put(r)
+                available_mem[index] -= len(r.input_ids)
 
     def round_robin_scheduler(self, input_requests):
         for r in input_requests:
