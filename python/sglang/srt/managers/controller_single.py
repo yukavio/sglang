@@ -17,7 +17,6 @@ limitations under the License.
 
 import logging
 import multiprocessing
-import os
 from typing import List
 
 import numpy as np
@@ -30,7 +29,7 @@ from sglang.srt.managers.tp_worker import (
     launch_tp_servers,
 )
 from sglang.srt.server_args import PortArgs, ServerArgs
-from sglang.srt.utils import kill_parent_process
+from sglang.srt.utils import configure_logger, kill_parent_process
 from sglang.utils import get_exception_traceback
 
 logger = logging.getLogger(__name__)
@@ -58,7 +57,7 @@ class ControllerSingle:
         # Need by multi flex infer
         self.controller_info = controller_info
 
-        # Init communication
+        # Init inter-process communication
         context = zmq.Context(2)
 
         if not self.is_dp_worker:
@@ -142,11 +141,11 @@ def start_controller_process(
     controller_info: ControllerInfo = None,
 ):
     """Start a controller process."""
-
-    logging.basicConfig(
-        level=getattr(logging, server_args.log_level.upper()),
-        format="%(message)s",
-    )
+    if is_data_parallel_worker:
+        logger_prefix = f" DP{dp_worker_id} TP0"
+    else:
+        logger_prefix = " TP0"
+    configure_logger(server_args, prefix=logger_prefix)
 
     if not is_data_parallel_worker:
         tp_size_local = server_args.tp_size // server_args.nnodes
@@ -176,6 +175,4 @@ def start_controller_process(
     except Exception:
         logger.error("Exception in ControllerSingle:\n" + get_exception_traceback())
     finally:
-        for t in controller.tp_procs:
-            os.kill(t.pid, 9)
         kill_parent_process()

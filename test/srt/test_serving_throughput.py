@@ -1,13 +1,19 @@
+import os
 import unittest
 from types import SimpleNamespace
 
 from sglang.bench_serving import run_benchmark
+from sglang.srt.server_args import ServerArgs
 from sglang.srt.utils import kill_child_process
-from sglang.test.test_utils import DEFAULT_MODEL_NAME_FOR_TEST, popen_launch_server
+from sglang.test.test_utils import (
+    DEFAULT_MODEL_NAME_FOR_TEST,
+    DEFAULT_TIMEOUT_FOR_SERVER_LAUNCH,
+    DEFAULT_URL_FOR_TEST,
+    popen_launch_server,
+)
 
 
 class TestServingThroughput(unittest.TestCase):
-
     def run_test(self, disable_radix_cache, disable_flashinfer, chunked_prefill_size):
         # Launch the server
         other_args = []
@@ -18,9 +24,12 @@ class TestServingThroughput(unittest.TestCase):
         other_args.extend(["--chunked-prefill-size", str(chunked_prefill_size)])
 
         model = DEFAULT_MODEL_NAME_FOR_TEST
-        base_url = "http://127.0.0.1:9157"
+        base_url = DEFAULT_URL_FOR_TEST
         process = popen_launch_server(
-            model, base_url, timeout=300, other_args=other_args
+            model,
+            base_url,
+            timeout=DEFAULT_TIMEOUT_FOR_SERVER_LAUNCH,
+            other_args=other_args,
         )
 
         # Run benchmark
@@ -55,27 +64,40 @@ class TestServingThroughput(unittest.TestCase):
             kill_child_process(process.pid)
 
         assert res["completed"] == num_prompts
+        return res
 
     def test_default(self):
-        self.run_test(
-            disable_radix_cache=False,
-            disable_flashinfer=False,
-            chunked_prefill_size=-1,
+        res = self.run_test(
+            disable_radix_cache=ServerArgs.disable_radix_cache,
+            disable_flashinfer=ServerArgs.disable_flashinfer,
+            chunked_prefill_size=ServerArgs.chunked_prefill_size,
         )
+
+        if os.getenv("SGLANG_IS_IN_CI", "false") == "true":
+            # A100 (PCIE): 1450, H100 (SMX): 2550
+            assert res["output_throughput"] > 2500
 
     def test_default_without_radix_cache(self):
-        self.run_test(
+        res = self.run_test(
             disable_radix_cache=True,
-            disable_flashinfer=False,
+            disable_flashinfer=ServerArgs.disable_flashinfer,
+            chunked_prefill_size=ServerArgs.chunked_prefill_size,
+        )
+
+        if os.getenv("SGLANG_IS_IN_CI", "false") == "true":
+            # A100 (PCIE): 1500, H100 (SMX): 2850
+            assert res["output_throughput"] > 2800
+
+    def test_default_without_chunked_prefill(self):
+        res = self.run_test(
+            disable_radix_cache=ServerArgs.disable_radix_cache,
+            disable_flashinfer=ServerArgs.disable_flashinfer,
             chunked_prefill_size=-1,
         )
 
-    def test_default_without_flashinfer(self):
-        self.run_test(
-            disable_radix_cache=False,
-            disable_flashinfer=True,
-            chunked_prefill_size=-1,
-        )
+        if os.getenv("SGLANG_IS_IN_CI", "false") == "true":
+            # A100 (PCIE): 1450, H100 (SMX): 2550
+            assert res["output_throughput"] > 2500
 
     def test_all_cases(self):
         for disable_radix_cache in [False, True]:
