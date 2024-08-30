@@ -2,11 +2,10 @@
 
 import argparse
 import asyncio
-import multiprocessing
+import os
 import subprocess
 import threading
 import time
-import unittest
 from functools import partial
 from typing import Callable, List, Optional
 
@@ -18,10 +17,19 @@ import torch.nn.functional as F
 from sglang.global_config import global_config
 from sglang.lang.backend.openai import OpenAI
 from sglang.lang.backend.runtime_endpoint import RuntimeEndpoint
+from sglang.srt.utils import kill_child_process
 from sglang.utils import get_exception_traceback
 
 DEFAULT_MODEL_NAME_FOR_TEST = "meta-llama/Meta-Llama-3.1-8B-Instruct"
-DEFAULT_URL_FOR_TEST = "http://127.0.0.1:8157"
+DEFAULT_MOE_MODEL_NAME_FOR_TEST = "mistralai/Mixtral-8x7B-Instruct-v0.1"
+DEFAULT_TIMEOUT_FOR_SERVER_LAUNCH = 600
+
+if os.getenv("SGLANG_IS_IN_CI", "false") == "true":
+    DEFAULT_PORT_FOR_SRT_TEST_RUNNER = 5157
+    DEFAULT_URL_FOR_TEST = "http://127.0.0.1:6157"
+else:
+    DEFAULT_PORT_FOR_SRT_TEST_RUNNER = 1157
+    DEFAULT_URL_FOR_TEST = "http://127.0.0.1:2157"
 
 
 def call_generate_lightllm(prompt, temperature, max_tokens, stop=None, url=None):
@@ -100,31 +108,8 @@ def call_generate_srt_raw(prompt, temperature, max_tokens, stop=None, url=None):
     return pred
 
 
-def call_generate_ginfer(prompt, temperature, max_tokens, stop=None, url=None):
-    import grpc
-    from ginfer import sampler_pb2, sampler_pb2_grpc
-
-    sampler_channel = grpc.insecure_channel(url.replace("http://", ""))
-    sampler = sampler_pb2_grpc.SamplerStub(sampler_channel)
-
-    if stop is None:
-        stop_strings = None
-    else:
-        stop_strings = [stop]
-
-    sample_request = sampler_pb2.SampleTextRequest(
-        prompt=prompt,
-        settings=sampler_pb2.SampleSettings(
-            max_len=max_tokens,
-            rng_seed=0,
-            temperature=max(temperature, 1e-7),
-            nucleus_p=1,
-            stop_strings=stop_strings,
-        ),
-    )
-    stream = sampler.SampleText(sample_request)
-    response = "".join([x.text for x in stream])
-    return response
+def call_generate_gserver(prompt, temperature, max_tokens, stop=None, url=None):
+    raise NotImplementedError()
 
 
 def call_generate_guidance(
@@ -267,7 +252,7 @@ def add_common_other_args_and_parse(parser: argparse.ArgumentParser):
             "vllm",
             "outlines",
             "lightllm",
-            "ginfer",
+            "gserver",
             "guidance",
             "lmql",
             "srt-raw",
@@ -288,7 +273,7 @@ def add_common_other_args_and_parse(parser: argparse.ArgumentParser):
             "lightllm": 22000,
             "lmql": 23000,
             "srt-raw": 30000,
-            "ginfer": 9988,
+            "gserver": 9988,
         }
         args.port = default_port.get(args.backend, None)
     return args
@@ -324,8 +309,8 @@ def _get_call_generate(args: argparse.Namespace):
         return partial(call_generate_vllm, url=f"{args.host}:{args.port}/generate")
     elif args.backend == "srt-raw":
         return partial(call_generate_srt_raw, url=f"{args.host}:{args.port}/generate")
-    elif args.backend == "ginfer":
-        return partial(call_generate_ginfer, url=f"{args.host}:{args.port}")
+    elif args.backend == "gserver":
+        return partial(call_generate_gserver, url=f"{args.host}:{args.port}")
     elif args.backend == "outlines":
         return partial(call_generate_outlines, url=f"{args.host}:{args.port}/generate")
     elif args.backend == "guidance":
@@ -476,34 +461,36 @@ def run_unittest_files(files: List[str], timeout_per_file: float):
     success = True
 
     for filename in files:
+        global process
 
-        def func():
-            print(f"\n\nRun {filename}\n\n")
-            ret = unittest.main(module=None, argv=["", "-vb"] + [filename])
-
-        p = multiprocessing.Process(target=func)
-
-        def run_one_file():
-            p.start()
-            p.join()
+        def run_one_file(filename):
+            filename = os.path.join(os.getcwd(), filename)
+            print(f"\n\nRun:\npython3 {filename}\n\n", flush=True)
+            process = subprocess.Popen(
+                ["python3", filename], stdout=None, stderr=None, env=os.environ
+            )
+            process.wait()
+            return process.returncode
 
         try:
-            run_with_timeout(run_one_file, timeout=timeout_per_file)
-            if p.exitcode != 0:
-                success = False
-                break
+            ret_code = run_with_timeout(
+                run_one_file, args=(filename,), timeout=timeout_per_file
+            )
+            assert ret_code == 0
         except TimeoutError:
-            p.terminate()
+            kill_child_process(process.pid)
             time.sleep(5)
             print(
-                f"\nTimeout after {timeout_per_file} seconds when running {filename}\n"
+                f"\nTimeout after {timeout_per_file} seconds when running {filename}\n",
+                flush=True,
             )
-            return False
+            success = False
+            break
 
     if success:
-        print(f"Success. Time elapsed: {time.time() - tic:.2f}s")
+        print(f"Success. Time elapsed: {time.time() - tic:.2f}s", flush=True)
     else:
-        print(f"Fail. Time elapsed: {time.time() - tic:.2f}s")
+        print(f"Fail. Time elapsed: {time.time() - tic:.2f}s", flush=True)
 
     return 0 if success else -1
 

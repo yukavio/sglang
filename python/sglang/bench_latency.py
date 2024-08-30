@@ -54,7 +54,7 @@ from sglang.srt.managers.schedule_batch import Req, ScheduleBatch
 from sglang.srt.model_config import ModelConfig
 from sglang.srt.model_executor.forward_batch_info import ForwardMode
 from sglang.srt.model_executor.model_runner import ModelRunner
-from sglang.srt.sampling_params import SamplingParams
+from sglang.srt.sampling.sampling_params import SamplingParams
 from sglang.srt.server_args import ServerArgs
 from sglang.srt.utils import suppress_other_loggers
 
@@ -64,7 +64,7 @@ class BenchArgs:
     run_name: str = "before"
     batch_size: Tuple[int] = (1,)
     input_len: Tuple[int] = (1024,)
-    output_len: Tuple[int] = (4,)
+    output_len: Tuple[int] = (16,)
     result_filename: str = ""
     correctness_test: bool = False
     # This is only used for correctness test
@@ -111,7 +111,11 @@ def load_model(server_args, tp_rank):
     suppress_other_loggers()
     rank_print = print if tp_rank == 0 else lambda *args, **kwargs: None
 
-    model_config = ModelConfig(path=server_args.model_path)
+    model_config = ModelConfig(
+        server_args.model_path,
+        server_args.trust_remote_code,
+        context_length=server_args.context_length,
+    )
     model_runner = ModelRunner(
         model_config=model_config,
         mem_fraction_static=server_args.mem_fraction_static,
@@ -195,17 +199,17 @@ def extend(reqs, model_runner):
         token_to_kv_pool=model_runner.token_to_kv_pool,
         tree_cache=None,
     )
-    batch.prepare_for_extend(model_runner.model_config.vocab_size, None)
-    output = model_runner.forward(batch, ForwardMode.EXTEND)
-    next_token_ids = batch.sample(output.next_token_logits)
-    return next_token_ids, output.next_token_logits, batch
+    batch.prepare_for_extend(model_runner.model_config.vocab_size)
+    sample_output, logits_output = model_runner.forward(batch, ForwardMode.EXTEND)
+    next_token_ids = sample_output.batch_next_token_ids.tolist()
+    return next_token_ids, logits_output.next_token_logits, batch
 
 
 def decode(input_token_ids, batch, model_runner):
-    batch.prepare_for_decode(input_token_ids.cpu().numpy())
-    output = model_runner.forward(batch, ForwardMode.DECODE)
-    next_token_ids = batch.sample(output.next_token_logits)
-    return next_token_ids, output.next_token_logits
+    batch.prepare_for_decode(input_token_ids)
+    sample_output, logits_output = model_runner.forward(batch, ForwardMode.DECODE)
+    next_token_ids = sample_output.batch_next_token_ids.tolist()
+    return next_token_ids, logits_output.next_token_logits
 
 
 @torch.inference_mode()
@@ -221,6 +225,7 @@ def correctness_test(
 
     # Prepare inputs
     input_ids, reqs = prepare_inputs_for_correctness_test(bench_args, tokenizer)
+    rank_print(f"{input_ids=}")
 
     if bench_args.cut_len > 0:
         # Prefill
@@ -349,7 +354,7 @@ def latency_test(
     for bs, il, ol in itertools.product(
         bench_args.batch_size, bench_args.input_len, bench_args.output_len
     ):
-        req = prepare_synthetic_inputs_for_latency_test(bs, il)
+        reqs = prepare_synthetic_inputs_for_latency_test(bs, il)
         ret = latency_test_run_once(
             bench_args.run_name, model_runner, rank_print, reqs, bs, il, ol
         )

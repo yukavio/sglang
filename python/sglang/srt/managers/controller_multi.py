@@ -40,6 +40,8 @@ from sglang.srt.managers.io_struct import (
 from sglang.srt.server_args import PortArgs, ServerArgs
 from sglang.srt.utils import kill_parent_process
 from sglang.utils import get_cache_info, get_exception_traceback
+from sglang.srt.utils import configure_logger, kill_parent_process
+from sglang.utils import get_exception_traceback
 
 logger = logging.getLogger(__name__)
 
@@ -239,10 +241,7 @@ def start_controller_process(
 ):
     """Start a controller process."""
 
-    logging.basicConfig(
-        level=getattr(logging, server_args.log_level.upper()),
-        format="%(message)s",
-    )
+    configure_logger(server_args)
 
     try:
         controller = ControllerMultiFlex(server_args, port_args, model_overide_args)
@@ -257,6 +256,4 @@ def start_controller_process(
     except Exception:
         logger.error("Exception in ControllerMultiFlex:\n" + get_exception_traceback())
     finally:
-        for w in controller.workers:
-            os.kill(w.proc.pid, 9)
         kill_parent_process()
