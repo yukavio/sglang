@@ -73,7 +73,7 @@ sleep 300
         --tokenizer Qwen/Qwen1.5-14B --model Qwen/Qwen1.5-14B \
         --random-output-len 1024 --random-input-len 4096 \
         --random-range-ratio 0.5 --seed 1234 \
-        --num-prompts 1000 --request-rate-list "[1.0]" >> "$LOG_FILE" 2>&1
+        --num-prompts 1000 --request-rate-list "[0.61, 0.63, 0.65, 0.66, 0.68, 0.69]" >> "$LOG_FILE" 2>&1
     sleep 100
 # done
 ps -elf | grep python  | awk '{print $4}' | xargs  kill -s 9
