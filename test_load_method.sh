@@ -22,7 +22,7 @@ sleep 300
 
 # 启动 benchmark 脚本，重定向输出到日志文件
 # 循环从 16 到 20，步进为 0.1
-for rate in $(seq 16 20 0.1); do
+for rate in $(seq 16 0.1 20); do
     echo "Running with request-rate: $rate" | tee -a "$LOG_FILE"  # 输出当前的 request-rate 值并追加到日志文件
     /workspace/bin/micromamba run -n sglang python3 -m sglang.bench_serving --backend sglang \
             --host 127.0.0.1 --port 8080 --dataset-name random \
@@ -50,7 +50,7 @@ sleep 300
 
 # 启动 benchmark 脚本，重定向输出到日志文件
 # 循环从 16 到 20，步进为 0.1
-for rate in $(seq 16 20 0.1); do
+for rate in $(seq 16 0.1 20); do
     echo "Running with request-rate: $rate" | tee -a "$LOG_FILE"  # 输出当前的 request-rate 值并追加到日志文件
     /workspace/bin/micromamba run -n sglang python3 -m sglang.bench_serving --backend sglang \
             --host 127.0.0.1 --port 8080 --dataset-name random \
@@ -77,7 +77,7 @@ sleep 300
 
 # 启动 benchmark 脚本，重定向输出到日志文件
 # 循环从 16 到 20，步进为 0.1
-for rate in $(seq 16 20 0.1); do
+for rate in $(seq 16 0.1 20); do
     echo "Running with request-rate: $rate" | tee -a "$LOG_FILE"  # 输出当前的 request-rate 值并追加到日志文件
     /workspace/bin/micromamba run -n sglang python3 -m sglang.bench_serving --backend sglang \
             --host 127.0.0.1 --port 8080 --dataset-name random \
