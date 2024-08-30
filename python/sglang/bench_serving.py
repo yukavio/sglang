@@ -368,7 +368,10 @@ def sample_sharegpt_requests(
 
     return filtered_dataset
 
+
 import pickle
+
+
 def sample_random_requests(
     input_len: int,
     output_len: int,
@@ -377,10 +380,10 @@ def sample_random_requests(
     tokenizer: PreTrainedTokenizerBase,
     dataset_path: str,
 ) -> List[Tuple[str, int, int]]:
-    cache_path = f'./input_cache_{num_prompts}'
+    cache_path = f"./input_cache_{num_prompts}"
     # 尝试加载缓存的 input_requests
     if os.path.isfile(cache_path):
-        with open(cache_path, 'rb') as f:
+        with open(cache_path, "rb") as f:
             input_requests = pickle.load(f)
         print("Loaded input_requests from cache.")
         return input_requests
@@ -450,7 +453,7 @@ def sample_random_requests(
                 ]
             )
             input_requests.append((prompt, int(input_lens[i]), int(output_lens[i])))
-    with open(cache_path, 'wb') as f:
+    with open(cache_path, "wb") as f:
         pickle.dump(input_requests, f)
         print(f"Saved input_requests_{num_prompts} to cache.")
     print(f"#Input tokens: {np.sum(input_lens)}")
@@ -491,9 +494,9 @@ def calculate_metrics(
     tpots: List[float] = []
     ttfts: List[float] = []
     e2e_latencies: List[float] = []
-    
-    input_lens:List[float] = []
-    
+
+    input_lens: List[float] = []
+
     for i in range(len(outputs)):
         if outputs[i].success:
             output_len = outputs[i].output_len
@@ -503,10 +506,9 @@ def calculate_metrics(
             )
             retokenized_output_lens.append(retokenized_output_len)
             total_input += input_requests[i][1]
-            
+
             input_lens.append(input_requests[i][1])
-            
-            
+
             if output_len > 1:
                 tpots.append((outputs[i].latency - outputs[i].ttft) / (output_len - 1))
             itls += outputs[i].itl
@@ -525,11 +527,11 @@ def calculate_metrics(
             "on the benchmark arguments.",
             stacklevel=2,
         )
-        
+
     # metric_data = [input_lens, output_lens, ttfts]
     # with open(f'metrics_{time.time()}.json', 'w') as f:
     #     json.dump(metric_data, f)
-    
+
     metrics = BenchmarkMetrics(
         completed=completed,
         total_input=total_input,
@@ -577,16 +579,15 @@ async def benchmark(
 
     print("Starting initial single prompt test run...")
     test_prompt, test_prompt_len, test_output_len = input_requests[0]
-    
+
     words = test_prompt.split()
 
     # 使用random.shuffle打乱单词列表
     random.shuffle(words)
 
     # 将打乱后的单词列表合并回文本
-    test_prompt = ' '.join(words)
+    test_prompt = " ".join(words)
 
-    
     test_input = RequestFuncInput(
         model=model_id,
         prompt=test_prompt,
@@ -753,6 +754,31 @@ async def benchmark(
         "mean_e2e_latency_ms": metrics.mean_e2e_latency_ms,
         "median_e2e_latency_ms": metrics.median_e2e_latency_ms,
     }
+
+    balance_method = os.getenv("LOAD_BALANCE_METHOD")
+    new_item = {
+        "method": balance_method,
+        "mean_ttft": metrics.mean_ttft_ms,
+        "request_rate": request_rate,
+        "request_throughput": metrics.request_throughput,
+        "p99_ttft_ms": metrics.p99_ttft_ms,
+        "mean_e2e_latency_ms": metrics.mean_e2e_latency_ms,
+        "time": datetime.now().isoformat(),
+    }
+    file_name = f"{balance_method}_result.json"
+    if not os.path.exists(file_name):
+        with open(file_name, "w") as f:
+            json.dump([], f)
+
+    with open(file_name, "r") as f:
+        tmp_data = json.load(f)
+
+    tmp_data.append(new_item)
+
+    with open(file_name, "w") as f:
+        json.dump(tmp_data, f, indent=4)
+
+    print(f"add new item to {file_name}: {new_item}")
     return result
 
 

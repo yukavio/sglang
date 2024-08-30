@@ -1,7 +1,11 @@
 #!/bin/bash
 
-# 日志文件
-LOG_FILE="service_benchmark.log"
+
+# 获取当前时间并格式化为所需的文件名格式
+current_time=$(date +"%Y%m%d_%H%M%S")
+
+# 根据当前时间生成日志文件名
+LOG_FILE="test_load_method_${current_time}.log"
 export CUDA_VISIBLE_DEVICES=0,1,2,3
 # 在日志文件中写入分隔符和当前时间
 echo "====================== $(date) ======================" >> "$LOG_FILE"
@@ -53,7 +57,7 @@ sleep 300
         --num-prompts 1000 --request-rate-list "[0.51, 0.53, 0.55, 0.56, 0.58, 0.59]" >> "$LOG_FILE" 2>&1
 sleep 100
 # done
-ps -elf | grep python  | awk '{print $4}' | xargs  kill -s 9
+kill -9 $(lsof -t -i :8080)
 sleep 100
 
 #=============================================================================================================================================================
@@ -76,7 +80,7 @@ sleep 300
         --num-prompts 1000 --request-rate-list "[0.61, 0.63, 0.65, 0.66, 0.68, 0.69]" >> "$LOG_FILE" 2>&1
     sleep 100
 # done
-ps -elf | grep python  | awk '{print $4}' | xargs  kill -s 9
+kill -9 $(lsof -t -i :8080)
 sleep 100
 
 
