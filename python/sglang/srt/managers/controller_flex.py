@@ -193,16 +193,20 @@ class ControllerMultiFlex:
         for r in input_requests:
             if all_waitting:
                 # 全部waiting，选最小的
-                min_value = min(num_reqs_waiting)
-                # 找到所有最小值的索引
-                min_indices = [
-                    i for i, x in enumerate(num_reqs_waiting) if x == min_value
+
+                ratio = [
+                    run / wait for run, wait in zip(num_reqs_running, num_reqs_waiting)
                 ]
+
+                # run越大 认为后续释放的可能性越多，wait越少，说明后续计算能力更强
+                min_value = max(ratio)
+                # 找到所有最小值的索引
+                min_indices = [i for i, x in enumerate(ratio) if x == min_value]
                 # 从这些索引中随机选择一个
-                # index = random.choice(min_indices)
+                index = random.choice(min_indices)
                 # 从waitting最小的找到available最大的
                 # index = max(min_indices, key=lambda i: available_mem[i])
-                index = min(min_indices, key=lambda i: num_reqs_running[i])
+                # index = min(min_indices, key=lambda i: num_reqs_running[i])
                 self.workers[index].queue.put(r)
                 num_reqs_waiting[index] += 1
                 available_mem[index] -= len(r.input_ids)
