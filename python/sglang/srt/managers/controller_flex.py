@@ -155,7 +155,7 @@ class ControllerMultiFlex:
         # remained_token = [k.value for k in self.controller_info.waiting_prefill_compute]
         available_mem = [k.value for k in self.controller_info.available_kv_cache]
         num_reqs_waiting = [k.value for k in self.controller_info.waiting_reqs]
-        # num_reqs_running = [k.value for  k in self.controller_info.running_reqs]
+        num_reqs_running = [k.value for k in self.controller_info.running_reqs]
         # with open('three_list.txt', 'a') as file:  # 'a' 模式表示追加到文件末尾
         # print(f"available_mem={available_mem"""  """}\nnum_reqs_waiting={num_reqs_waiting}\nnum_reqs_running={num_reqs_running}\n")
 
@@ -201,7 +201,8 @@ class ControllerMultiFlex:
                 # 从这些索引中随机选择一个
                 # index = random.choice(min_indices)
                 # 从waitting最小的找到available最大的
-                index = max(min_indices, key=lambda i: available_mem[i])
+                # index = max(min_indices, key=lambda i: available_mem[i])
+                index = min(min_indices, key=lambda i: num_reqs_running[i])
                 self.workers[index].queue.put(r)
                 num_reqs_waiting[index] += 1
                 available_mem[index] -= len(r.input_ids)

@@ -11,7 +11,7 @@
 
 # # 启动服务并将其放到后台，重定向输出到日志文件
 # echo "Running with setting: dp8 resources_aware ======================================================" >> "$LOG_FILE"
-# /workspace/bin/micromamba run -n sglang python3 -m sglang.launch_server --model-path Qwen/Qwen2-7B \
+# /workspace/bin/micromamba run -n sglang python3 -m sglang.launch_server --model-path Meta-llama/Meta-Llama-3.1-8B \
 #     --host 0.0.0.0 --port 8080 --mem-fraction-static 0.8 \
 #     --dp-size 8 --load-balance-method resources_aware \
 #     --chunked-prefill-size 2048 --disable-radix-cache >> "$LOG_FILE" 2>&1 &
@@ -26,7 +26,7 @@
 #     echo "Running with request-rate: $rate" | tee -a "$LOG_FILE"  # 输出当前的 request-rate 值并追加到日志文件
 #     /workspace/bin/micromamba run -n sglang python3 -m sglang.bench_serving --backend sglang \
 #             --host 127.0.0.1 --port 8080 --dataset-name random \
-#             --tokenizer Qwen/Qwen2-7B --model Qwen/Qwen2-7B \
+#             --tokenizer Meta-llama/Meta-Llama-3.1-8B --model Meta-llama/Meta-Llama-3.1-8B \
 #             --random-output-len 1024 --random-input-len 4096 \
 #             --random-range-ratio 0.5 --seed 1234 \
 #             --num-prompts 20000 --request-rate $rate >> "$LOG_FILE" 2>&1
@@ -40,7 +40,7 @@
 
 # # 启动服务并将其放到后台，重定向输出到日志文件
 # echo "Running with setting: dp8 power_of_2_choice ======================================================" >> "$LOG_FILE"
-# /workspace/bin/micromamba run -n sglang python3 -m sglang.launch_server --model-path Qwen/Qwen2-7B \
+# /workspace/bin/micromamba run -n sglang python3 -m sglang.launch_server --model-path Meta-llama/Meta-Llama-3.1-8B \
 #     --host 0.0.0.0 --port 8080 --mem-fraction-static 0.8 \
 #     --dp-size 8 --load-balance-method power_of_2_choice \
 #     --chunked-prefill-size 2048 --disable-radix-cache >> "$LOG_FILE" 2>&1 &
@@ -54,7 +54,7 @@
 #     echo "Running with request-rate: $rate" | tee -a "$LOG_FILE"  # 输出当前的 request-rate 值并追加到日志文件
 #     /workspace/bin/micromamba run -n sglang python3 -m sglang.bench_serving --backend sglang \
 #             --host 127.0.0.1 --port 8080 --dataset-name random \
-#             --tokenizer Qwen/Qwen2-7B --model Qwen/Qwen2-7B \
+#             --tokenizer Meta-llama/Meta-Llama-3.1-8B --model Meta-llama/Meta-Llama-3.1-8B \
 #             --random-output-len 1024 --random-input-len 4096 \
 #             --random-range-ratio 0.5 --seed 1234 \
 #             --num-prompts 20000 --request-rate $rate >> "$LOG_FILE" 2>&1
@@ -67,7 +67,7 @@
 
 # # 启动服务并将其放到后台，重定向输出到日志文件
 # echo "Running with setting: dp8 round_robin ======================================================" >> "$LOG_FILE"
-# /workspace/bin/micromamba run -n sglang python3 -m sglang.launch_server --model-path Qwen/Qwen2-7B \
+# /workspace/bin/micromamba run -n sglang python3 -m sglang.launch_server --model-path Meta-llama/Meta-Llama-3.1-8B \
 #     --host 0.0.0.0 --port 8080 --mem-fraction-static 0.8 \
 #     --dp-size 8 --load-balance-method round_robin \
 #     --chunked-prefill-size 2048 --disable-radix-cache >> "$LOG_FILE" 2>&1 &
@@ -81,7 +81,7 @@
 #     echo "Running with request-rate: $rate" | tee -a "$LOG_FILE"  # 输出当前的 request-rate 值并追加到日志文件
 #     /workspace/bin/micromamba run -n sglang python3 -m sglang.bench_serving --backend sglang \
 #             --host 127.0.0.1 --port 8080 --dataset-name random \
-#             --tokenizer Qwen/Qwen2-7B --model Qwen/Qwen2-7B \
+#             --tokenizer Meta-llama/Meta-Llama-3.1-8B --model Meta-llama/Meta-Llama-3.1-8B \
 #             --random-output-len 1024 --random-input-len 4096 \
 #             --random-range-ratio 0.5 --seed 1234 \
 #             --num-prompts 20000 --request-rate $rate >> "$LOG_FILE" 2>&1
@@ -96,7 +96,7 @@
 
 # # echo "Running with setting: dp=1 tp=8 ======================================================" >> "$LOG_FILE"
 
-# # /workspace/bin/micromamba run -n sglang python3 -m sglang.launch_server --model-path Qwen/Qwen2-7B \
+# # /workspace/bin/micromamba run -n sglang python3 -m sglang.launch_server --model-path Meta-llama/Meta-Llama-3.1-8B \
 # #     --host 0.0.0.0 --port 8080 --mem-fraction-static 0.8 \
 # #     --dp-size 1 --tp-size 8 --load-balance-method resources_aware \
 # #     --chunked-prefill-size 2048 --disable-radix-cache >> "$LOG_FILE" 2>&1 &
@@ -105,7 +105,7 @@
 # #     echo "Running with request-rate: $rate" | tee -a "$LOG_FILE"  # 输出当前的 request-rate 值并追加到日志文件
 # #     /workspace/bin/micromamba run -n sglang python3 -m sglang.bench_serving --backend sglang \
 # #                     --host 127.0.0.1 --port 8080 --dataset-name random \
-# #                     --tokenizer Qwen/Qwen2-7B --model Qwen/Qwen2-7B \
+# #                     --tokenizer Meta-llama/Meta-Llama-3.1-8B --model Meta-llama/Meta-Llama-3.1-8B \
 # #                     --random-output-len 1024 --random-input-len 4096 \
 # #                     --random-range-ratio 0.5 --seed 1234 \
 # #                     --num-prompts 5000 --request-rate $rate >> "$LOG_FILE" 2>&1
@@ -143,10 +143,11 @@ for rate in 16.0 16.0 16.0; do
         echo "Running with setting: $setting ======================================================" >> "$LOG_FILE"
         
         # 启动服务并将其放到后台，重定向输出到日志文件
-        /workspace/bin/micromamba run -n sglang python3 -m sglang.launch_server --model-path Qwen/Qwen2-7B \
+        /workspace/bin/micromamba run -n sglang python3 -m sglang.launch_server --model-path Meta-llama/Meta-Llama-3.1-8B \
             --host 0.0.0.0 --port 8080 --mem-fraction-static 0.8 \
-            --dp-size 8 --load-balance-method $method \
-            --chunked-prefill-size 2048 --disable-radix-cache --random-seed 418729308 >> "$LOG_FILE" 2>&1 &
+            --dp-size 8 --chunked-prefill-size 2048 \
+            --disable-radix-cache --random-seed 418729308 \
+            --load-balance-method $method >> "$LOG_FILE" 2>&1 &
         export LOAD_BALANCE_METHOD=$method
 
         # 等待一段时间以确保服务启动
@@ -158,7 +159,7 @@ for rate in 16.0 16.0 16.0; do
         echo "Running with request-rate: $rate" | tee -a "$LOG_FILE"  # 输出当前的 request-rate 值并追加到日志文件
         /workspace/bin/micromamba run -n sglang python3 -m sglang.bench_serving --backend sglang \
                 --host 127.0.0.1 --port 8080 --dataset-name random \
-                --tokenizer Qwen/Qwen2-7B --model Qwen/Qwen2-7B \
+                --tokenizer Meta-llama/Meta-Llama-3.1-8B --model Meta-llama/Meta-Llama-3.1-8B \
                 --random-output-len 1024 --random-input-len 4096 \
                 --random-range-ratio 0.5 --seed 1234 \
                 --num-prompts 20000 --request-rate $rate >> "$LOG_FILE" 2>&1
