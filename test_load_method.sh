@@ -136,7 +136,7 @@ settings["round_robin"]="dp8 round_robin"
 settings["resources_aware"]="dp8 resources_aware"
 
 # for rate in $(seq 16 0.1 16.2); do
-for rate in 16.0, 16.0, 16.0; do
+for rate in 16.0 16.0 16.0; do
     # 循环处理每个设置
     for method in "${!settings[@]}"; do
         setting=${settings[$method]}
