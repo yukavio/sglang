@@ -365,6 +365,14 @@ def sample_sharegpt_requests(
     sampled_prompts_lens = [prompt_lens[idx] for idx in sampled_ids]
     sampled_response_lens = [response_lens[idx] for idx in sampled_ids]
 
+    for i, (prompt_len, gen_len) in enumerate(
+        zip(sampled_prompts_lens, sampled_response_lens)
+    ):
+        total = prompt_len + gen_len
+        if total > max_seqlen:
+            print(f"truncating long prompt+gen_len {prompt_len=} {gen_len=}")
+            gen_len = max_seqlen - prompt_len
+        sampled_response_lens[i] = gen_len
     input_requests = list(
         zip(sampled_prompts, sampled_prompts_lens, sampled_response_lens)
     )
@@ -914,6 +922,7 @@ def run_benchmark(args_: argparse.Namespace):
                 )
             )
     else:
+
         return asyncio.run(
             benchmark(
                 backend=backend,
