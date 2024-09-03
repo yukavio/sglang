@@ -132,11 +132,11 @@ echo "====================== $(date) ======================" >> "$LOG_FILE"
 # 定义不同的设置
 declare -A settings
 # settings["power_of_2_choice"]="dp8 power_of_2_choice"
-# settings["resources_aware"]="dp8 resources_aware"
+settings["resources_aware"]="dp8 resources_aware"
 settings["round_robin"]="dp8 round_robin"
 
 # for rate in $(seq 16 0.1 16.2); do
-for rate in 9.1 9.2 9.3 9.4 9.58 9.6 9.65 9.7 10.0; do
+for rate in 70 71 72 73 74 75 76 77 78 79 80; do
     # 循环处理每个设置
     for method in "${!settings[@]}"; do
         setting=${settings[$method]}
