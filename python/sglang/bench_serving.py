@@ -341,8 +341,8 @@ def sample_sharegpt_requests(
 
     # Load the dataset.
     with open(dataset_path) as f:
-        for line in f:
-            data = json.load(line)
+        dataset = json.load(f)
+        for data in dataset:
             if len(data["conversations"]) >= 2:
                 prompt = data["conversations"][0]["value"]
                 res = data["conversations"][1]["value"]
