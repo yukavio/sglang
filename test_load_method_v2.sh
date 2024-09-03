@@ -161,7 +161,7 @@ for rate in 70 71 72 73 74 75 76 77 78 79 80; do
                 --host 127.0.0.1 --port 8080 --dataset-name sharegpt \
                 --tokenizer Meta-llama/Meta-Llama-3.1-8B --model Meta-llama/Meta-Llama-3.1-8B \
                 --sharegpt-max-seqlen 8192 \
-                --seed 1234 \
+                --seed 684178105 \
                 --num-prompts 40000 --request-rate $rate >> "$LOG_FILE" 2>&1
         sleep 100
         # done
