@@ -341,8 +341,8 @@ def sample_sharegpt_requests(
 
     # Load the dataset.
     with open(dataset_path) as f:
-        dataset = json.load(f)
-        for data in dataset:
+        datasets = json.load(f)
+        for data in datasets:
             if len(data["conversations"]) >= 2:
                 prompt = data["conversations"][0]["value"]
                 res = data["conversations"][1]["value"]
@@ -365,7 +365,7 @@ def sample_sharegpt_requests(
     sampled_prompts_lens = [prompt_lens[idx] for idx in sampled_ids]
     sampled_response_lens = [response_lens[idx] for idx in sampled_ids]
 
-    input_requests = list(
+    input_request = list(
         zip(sampled_prompts, sampled_prompts_lens, sampled_response_lens)
     )
     with open(cache_path, "wb") as f:
@@ -373,7 +373,7 @@ def sample_sharegpt_requests(
         print(f"Saved input_requests_{num_requests} to cache.")
     print(f"#Input tokens: {np.sum(sampled_prompts_lens)}")
     print(f"#Output tokens: {np.sum(sampled_response_lens)}")
-    return input_requests
+    return input_request
 
 
 import pickle
