@@ -311,15 +311,25 @@ def download_sharegpt_dataset(path):
         raise Exception(f"Failed to download dataset: {e}")
 
 
+import pickle
+
+
 def sample_sharegpt_requests(
     dataset_path: str,
     num_requests: int,
     tokenizer: PreTrainedTokenizerBase,
-    fixed_output_len: Optional[int] = None,
+    max_seqlen: int,
 ) -> List[Tuple[str, int, int]]:
-    if fixed_output_len is not None and fixed_output_len < 4:
-        raise ValueError("output_len too small")
-
+    cache_path = f"./input_cache_v2_{num_requests}"
+    # 尝试加载缓存的 input_requests
+    if os.path.isfile(cache_path):
+        with open(cache_path, "rb") as f:
+            input_requests = pickle.load(f)
+        print("Loaded input_requests from cache.")
+        return input_requests
+    prompts = []
+    prompt_lens = []
+    response_lens = []
     # Download sharegpt if necessary
     if not os.path.isfile(dataset_path) and not os.path.isfile(default_sharegpt_path):
         download_sharegpt_dataset(default_sharegpt_path)
@@ -331,42 +341,39 @@ def sample_sharegpt_requests(
 
     # Load the dataset.
     with open(dataset_path) as f:
-        dataset = json.load(f)
-    # Filter out the conversations with less than 2 turns.
-    dataset = [data for data in dataset if len(data["conversations"]) >= 2]
-    # Only keep the first two turns of each conversation.
-    dataset = [
-        (data["conversations"][0]["value"], data["conversations"][1]["value"])
-        for data in dataset
-    ]
+        for line in f:
+            data = json.load(line)
+            if len(data["conversations"]) >= 2:
+                prompt = data["conversations"][0]["value"]
+                res = data["conversations"][1]["value"]
+                prompt_token_ids = tokenizer(prompt).input_ids
+                completion_token_ids = tokenizer(res).input_ids
 
-    # Shuffle the dataset.
-    random.shuffle(dataset)
+                if (
+                    len(prompt_token_ids) + len(completion_token_ids) < max_seqlen
+                    and len(prompt_token_ids) > 0
+                    and len(completion_token_ids) > 0
+                ):
+                    prompts.append(prompt)
+                    prompt_lens.append(len(prompt_token_ids))
+                    response_lens.append(len(completion_token_ids))
+            if len(prompts) > num_requests:
+                break
 
-    # Filter out sequences that are too long or too short
-    filtered_dataset: List[Tuple[str, int, int]] = []
-    for i in range(len(dataset)):
-        if len(filtered_dataset) == num_requests:
-            break
+    sampled_ids = [random.randint(0, len(prompts) - 1) for _ in range(num_requests)]
+    sampled_prompts = [prompts[idx] for idx in sampled_ids]
+    sampled_prompts_lens = [prompt_lens[idx] for idx in sampled_ids]
+    sampled_response_lens = [response_lens[idx] for idx in sampled_ids]
 
-        # Tokenize the prompts and completions.
-        prompt = dataset[i][0]
-        prompt_token_ids = tokenizer(prompt).input_ids
-        completion = dataset[i][1]
-        completion_token_ids = tokenizer(completion).input_ids
-        prompt_len = len(prompt_token_ids)
-        output_len = (
-            len(completion_token_ids) if fixed_output_len is None else fixed_output_len
-        )
-        if prompt_len < 4 or output_len < 4:
-            # Prune too short sequences.
-            continue
-        if prompt_len > 1024 or prompt_len + output_len > 2048:
-            # Prune too long sequences.
-            continue
-        filtered_dataset.append((prompt, prompt_len, output_len))
-
-    return filtered_dataset
+    inputs_request = list(
+        zip(sampled_prompts, sampled_prompts_lens, sampled_response_lens)
+    )
+    with open(cache_path, "wb") as f:
+        pickle.dump(input_requests, f)
+        print(f"Saved input_requests_{num_requests} to cache.")
+    print(f"#Input tokens: {np.sum(sampled_prompts_lens)}")
+    print(f"#Output tokens: {np.sum(sampled_response_lens)}")
+    return inputs_request
 
 
 import pickle
@@ -875,7 +882,7 @@ def run_benchmark(args_: argparse.Namespace):
             dataset_path=args.dataset_path,
             num_requests=args.num_prompts,
             tokenizer=tokenizer,
-            fixed_output_len=args.sharegpt_output_len,
+            max_seqlen=args.sharegpt_max_seqlen,
         )
     elif args.dataset_name == "random":
         input_requests = sample_random_requests(
@@ -982,6 +989,12 @@ if __name__ == "__main__":
         type=int,
         default=1000,
         help="Number of prompts to process. Default is 1000.",
+    )
+    parser.add_argument(
+        "--sharegpt-max-seqlen",
+        type=int,
+        default=8192,
+        help="Number of max request len. Default is 8192.",
     )
     parser.add_argument(
         "--sharegpt-output-len",
