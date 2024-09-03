@@ -365,7 +365,7 @@ def sample_sharegpt_requests(
     sampled_prompts_lens = [prompt_lens[idx] for idx in sampled_ids]
     sampled_response_lens = [response_lens[idx] for idx in sampled_ids]
 
-    inputs_request = list(
+    input_requests = list(
         zip(sampled_prompts, sampled_prompts_lens, sampled_response_lens)
     )
     with open(cache_path, "wb") as f:
@@ -373,7 +373,7 @@ def sample_sharegpt_requests(
         print(f"Saved input_requests_{num_requests} to cache.")
     print(f"#Input tokens: {np.sum(sampled_prompts_lens)}")
     print(f"#Output tokens: {np.sum(sampled_response_lens)}")
-    return inputs_request
+    return input_requests
 
 
 import pickle
