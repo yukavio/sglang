@@ -357,6 +357,8 @@ def sample_sharegpt_requests(
                     prompts.append(prompt)
                     prompt_lens.append(len(prompt_token_ids))
                     response_lens.append(len(completion_token_ids))
+                    
+                    print(f"prompt lens: {prompt_lens}, response lens: {response_lens}, prompt + gen_len: {len(prompt_token_ids) + len(completion_token_ids)}")
             if len(prompts) > num_requests:
                 break
 
@@ -376,6 +378,8 @@ def sample_sharegpt_requests(
     input_requests = list(
         zip(sampled_prompts, sampled_prompts_lens, sampled_response_lens)
     )
+    
+    
     with open(cache_path, "wb") as f:
         pickle.dump(input_requests, f)
         print(f"Saved input_requests_{num_requests} to cache.")
