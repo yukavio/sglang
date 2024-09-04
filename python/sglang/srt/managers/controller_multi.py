@@ -25,13 +25,14 @@ from enum import Enum, auto
 
 import numpy as np
 import zmq
-
+import random
 from sglang.srt.managers.controller_single import (
     start_controller_process as start_controller_process_single,
 )
 from sglang.srt.managers.io_struct import (
     AbortReq,
     FlushCacheReq,
+    ControllerInfo,
     TokenizedGenerateReqInput,
 )
 from sglang.srt.server_args import PortArgs, ServerArgs
@@ -91,11 +92,13 @@ class ControllerMulti:
         dispatch_lookup = {
             LoadBalanceMethod.ROUND_ROBIN: self.round_robin_scheduler,
             LoadBalanceMethod.SHORTEST_QUEUE: self.shortest_queue_scheduler,
+            LoadBalanceMethod.RESOURCES_AWARE: self.resources_aware_scheduler,
         }
         self.dispatching = dispatch_lookup[self.load_balance_method]
 
         # Start data parallel workers
         self.workers = []
+        self.controller_info = ControllerInfo(server_args, model_override_args)
         for i in range(server_args.dp_size):
             self.start_dp_worker(i)
 
@@ -119,6 +122,7 @@ class ControllerMulti:
                 gpu_ids,
                 dp_worker_id,
                 queue,
+                self.controller_info,
             ),
         )
         proc.start()
@@ -134,6 +138,40 @@ class ControllerMulti:
                 queue=queue,
             )
         )
+
+    def resources_aware_scheduler(self, input_requests):
+        if len(input_requests) == 0:
+            return
+        available_mem = [k.value for k in self.controller_info.available_kv_cache]
+        num_reqs_waiting = [k.value for k in self.controller_info.waiting_reqs]
+        num_reqs_running = [k.value for k in self.controller_info.running_reqs]
+
+        all_waitting = False
+        if min(num_reqs_waiting) > 0:
+            all_waitting = True
+        else:
+            all_waitting = False
+        no_waiting = [1 if waiting == 0 else 0 for waiting in num_reqs_waiting]
+        for r in input_requests:
+            if all_waitting:
+
+                ratio = [
+                    run / wait for run, wait in zip(num_reqs_running, num_reqs_waiting)
+                ]
+
+                min_value = max(ratio)
+                min_indices = [i for i, x in enumerate(ratio) if x == min_value]
+                index = random.choice(min_indices)
+                self.workers[index].queue.put(r)
+                num_reqs_waiting[index] += 1
+            else:
+                filter_result = [a * b for a, b in zip(no_waiting, available_mem)]
+                index = filter_result.index(max(filter_result))
+                self.workers[index].queue.put(r)
+
+                available_mem[index] -= len(r.input_ids)
+
+        # =======================method1=======================
 
     def round_robin_scheduler(self, input_requests):
         for r in input_requests:

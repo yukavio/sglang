@@ -62,9 +62,9 @@ from sglang.srt.utils import (
     suppress_other_loggers,
 )
 from sglang.utils import get_exception_traceback
+from sglang.srt.managers.io_struct import ControllerInfo
 
 logger = logging.getLogger(__name__)
-
 
 crash_on_warning = os.getenv("SGLANG_IS_IN_CI", "false") == "true"
 
@@ -77,6 +77,8 @@ class ModelTpServer:
         server_args: ServerArgs,
         nccl_port: int,
         model_override_args: dict,
+        controller_info: Optional[ControllerInfo]=None,
+        dp_worker_id: Optional[int]=None,
     ):
         suppress_other_loggers()
 
@@ -105,6 +107,17 @@ class ModelTpServer:
             nccl_port=nccl_port,
             server_args=server_args,
         )
+        
+        # Flex DP inference
+        if controller_info:
+            self.controller_info = controller_info
+            self.controller_info.available_kv_cache[self.dp_rank].value = (
+                self.model_runner.token_to_kv_pool.available_size()
+            )
+        else:
+            self.controller_info = None
+
+        
         if server_args.skip_tokenizer_init:
             self.tokenizer = self.processor = None
         else:
@@ -494,6 +507,24 @@ class ModelTpServer:
         # Build batch tensors
         batch.prepare_for_extend(self.model_config.vocab_size)
 
+        if self.controller_info:
+            num = 0
+            for req in batch.reqs:
+                num += len(req.origin_input_ids)
+            with self.controller_info.lock:
+                self.controller_info.available_kv_cache[self.dp_rank].value = (
+                    self.token_to_kv_pool.available_size()
+                    + self.tree_cache.evictable_size()
+                )
+                self.controller_info.running_reqs[
+                    self.dp_rank
+                ].value = batch.batch_size() + (
+                    self.running_batch.batch_size()
+                    if self.running_batch is not None
+                    else 0
+                )
+                self.controller_info.waiting_reqs[self.dp_rank].value = len(self.waiting_queue)
+
         decoding_reqs = []
         if self.is_mixed_chunk and self.running_batch is not None:
             self.running_batch.prepare_for_decode()
@@ -663,6 +694,7 @@ class ModelTpServer:
                 f"#retracted_reqs: {len(retracted_reqs)}, "
                 f"#new_token_ratio: {old_ratio:.4f} -> {self.new_token_ratio:.4f}"
             )
+            
             self.waiting_queue.extend(retracted_reqs)
         else:
             self.new_token_ratio = max(
@@ -680,6 +712,18 @@ class ModelTpServer:
         # Update batch tensors
         self.decode_forward_ct = (self.decode_forward_ct + 1) % (1 << 30)
         batch.prepare_for_decode()
+        
+        if self.controller_info is not None and self.decode_forward_ct % 10 == 0:
+            with self.controller_info.lock:
+                self.controller_info.available_kv_cache[self.dp_rank].value = (
+                    self.token_to_kv_pool.available_size()
+                    + self.tree_cache.evictable_size()
+                )
+                self.controller_info.running_reqs[self.dp_rank].value = (
+                    batch.batch_size()
+                )
+                
+                self.controller_info.waiting_reqs[self.dp_rank].value = len(self.waiting_queue)
 
         # Forward and sample the next tokens
         sample_output, logits_output = self.model_runner.forward(
