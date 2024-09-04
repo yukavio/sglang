@@ -85,6 +85,9 @@ class ModelTpServer:
         # Copy arguments
         self.gpu_id = gpu_id
         self.tp_rank = tp_rank
+        
+        self.dp_rank = dp_worker_id
+        
         self.tp_size = server_args.tp_size
         self.dp_size = server_args.dp_size
         self.schedule_policy = server_args.schedule_policy
