@@ -47,6 +47,7 @@ class LoadBalanceMethod(Enum):
 
     ROUND_ROBIN = auto()
     SHORTEST_QUEUE = auto()
+    RESOURCES_AWARE = auto()
 
     @classmethod
     def from_str(cls, method: str):
