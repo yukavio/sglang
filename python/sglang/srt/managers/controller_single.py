@@ -17,7 +17,8 @@ limitations under the License.
 
 import logging
 import multiprocessing
-from typing import List
+import multiprocessing.connection
+from typing import Any, List
 
 import zmq
 

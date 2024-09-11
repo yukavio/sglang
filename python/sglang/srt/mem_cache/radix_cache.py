@@ -55,19 +55,51 @@ def _key_match(key0: List, key1: List):
     return i
 
 
+from dataclasses import dataclass
+
+import zmq
+
+
+@dataclass
+class RadixCacheSend:
+    gpu_id: int
+    root_node: TreeNode
+    time: time
+
+
 class RadixCache(BasePrefixCache):
     def __init__(
         self,
         req_to_token_pool: ReqToTokenPool,
         token_to_kv_pool: BaseTokenToKVPool,
         disable: bool = False,
+        gpu_id: int = 0,
     ):
         self.req_to_token_pool = req_to_token_pool
         self.token_to_kv_pool = token_to_kv_pool
         self.disable = disable
+
+        context = zmq.Context()
+        self.send_radix_tree = context.socket(zmq.PUSH)
+        self.send_radix_tree.setsockopt(zmq.SNDHWM, 8)
+        self.send_radix_tree.connect(f"tcp://127.0.0.1:10000")
+        self.gpu_id = gpu_id
+
         self.reset()
 
     ##### Public API #####
+    def send_prefix_tree(self):
+        try:
+            self.send_radix_tree.send_pyobj(
+                RadixCacheSend(
+                    gpu_id=self.gpu_id, root_node=self.root_node, time=time.time()
+                ),
+                zmq.NOBLOCK,
+            )
+        except zmq.Again as e:
+            print(
+                "=======================================Radix Cache Queue is full, drop out new radix cache tree======================================="
+            )
 
     def reset(self):
         self.root_node = TreeNode()
@@ -75,6 +107,8 @@ class RadixCache(BasePrefixCache):
         self.root_node.value = []
         self.root_node.lock_ref = 1
         self.evictable_size_ = 0
+
+        self.send_prefix_tree()
 
     def match_prefix(self, key: List, **kwargs):
         if self.disable:
@@ -95,7 +129,12 @@ class RadixCache(BasePrefixCache):
 
         if value is None:
             value = [x for x in key]
-        return self._insert_helper(self.root_node, key, value)
+        res = self._insert_helper(self.root_node, key, value)
+
+        # insert会改变树的结构
+        self.send_prefix_tree()
+
+        return res
 
     def cache_finished_req(self, req: Req, token_ids: Optional[List[int]] = None):
         """Cache request when it finishes."""
@@ -175,6 +214,9 @@ class RadixCache(BasePrefixCache):
 
             if len(x.parent.children) == 0:
                 heapq.heappush(leaves, x.parent)
+
+        # 会改变树的结构
+        self.send_prefix_tree()
 
     def inc_lock_ref(self, node: TreeNode):
         if self.disable:
