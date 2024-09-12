@@ -97,7 +97,7 @@ class ControllerMulti:
 
         # Start data parallel workers
         self.workers = []
-        self.controller_info = ControllerInfo(server_args, model_override_args)
+        self.controller_info = ControllerInfo(server_args)
         for i in range(server_args.dp_size):
             self.start_dp_worker(i)
 

@@ -311,7 +311,7 @@ class AbortReq:
     # The request id
     rid: str
 class ControllerInfo:
-    def __init__(self, server_args, model_overide_args):
+    def __init__(self, server_args):
         self.available_kv_cache = []
         self.running_reqs = []
         self.waiting_reqs = []
