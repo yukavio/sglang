@@ -40,7 +40,6 @@ class ControllerSingle:
         self,
         server_args: ServerArgs,
         port_args: PortArgs,
-        model_override_args: dict,
         gpu_ids: List[int],
         is_data_parallel_worker: bool,
         dp_worker_id: int,
@@ -79,7 +78,6 @@ class ControllerSingle:
                 tp_rank_range,
                 server_args,
                 port_args.nccl_ports[dp_worker_id],
-                model_override_args,
             )
 
         # Launch tp rank 0
@@ -88,7 +86,6 @@ class ControllerSingle:
             0,
             server_args,
             port_args.nccl_ports[dp_worker_id],
-            model_override_args,
             controller_info,
             dp_worker_id,
         )
@@ -131,7 +128,6 @@ def start_controller_process(
     server_args: ServerArgs,
     port_args: PortArgs,
     pipe_writer: multiprocessing.connection.Connection,
-    model_override_args: dict,
     is_data_parallel_worker: bool = False,
     gpu_ids: List[int] = None,
     dp_worker_id: int = None,
@@ -155,7 +151,6 @@ def start_controller_process(
         controller = ControllerSingle(
             server_args,
             port_args,
-            model_override_args,
             gpu_ids,
             is_data_parallel_worker,
             dp_worker_id,
