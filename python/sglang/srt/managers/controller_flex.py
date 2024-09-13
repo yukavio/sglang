@@ -29,6 +29,32 @@ from enum import Enum, auto
 import numpy as np
 import zmq
 
+
+def _key_match(key0, key1):
+    i = 0
+    for k0, k1 in zip(key0, key1):
+        if k0 != k1:
+            break
+        i += 1
+    return i
+
+
+def get_match_len(node, key, match_length: int) -> int:
+    if len(key) == 0:
+        return match_length
+
+    if key[0] in node.children.keys():
+        child = node.children[key[0]]
+        prefix_len = _key_match(child.key, key)
+        match_length += prefix_len
+        if prefix_len < len(child.key):
+            return match_length
+        else:
+            return get_match_len(child, key[prefix_len:], match_length)
+    else:
+        return match_length
+
+
 from sglang.srt.managers.controller_single import (
     start_controller_process as start_controller_process_single,
 )
@@ -160,6 +186,13 @@ class ControllerMultiFlex:
     def pre_radix_scheduler(self, input_requests):
         if len(input_requests) == 0:
             return
+        for r in input_requests:
+            prefix_lens = []
+            for gpu_id, radix_cache in self.newest_tree_cache:
+                pre_len = get_match_len(radix_cache.root_node, r.input_ids, 0)
+                prefix_lens.append(pre_len)
+
+            print(f"{r.rid}=>{prefix_lens}")
 
         self.round_robin_scheduler(input_requests=input_requests)
 
@@ -303,8 +336,8 @@ class ControllerMultiFlex:
 
         # 使用日志记录器记录信息
         if flag:
-            # logger.info(f"latest_cache={len(self.newest_tree_cache)}")
-            pass
+            logger.info(f"latest_cache={len(self.newest_tree_cache)}")
+            # pass
 
     def recv_requests(self):
         recv_reqs = []
