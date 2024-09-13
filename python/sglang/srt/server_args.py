@@ -406,6 +406,7 @@ class ServerArgs:
             choices=[
                 "round_robin",
                 "shortest_queue",
+                "pre_radix",
             ],
         )
 

@@ -46,6 +46,7 @@ class LoadBalanceMethod(Enum):
 
     ROUND_ROBIN = auto()
     SHORTEST_QUEUE = auto()
+    PRE_RADIX = auto()
 
     @classmethod
     def from_str(cls, method: str):
@@ -84,20 +85,31 @@ class ControllerMulti:
         self.recv_from_tokenizer = context.socket(zmq.PULL)
         self.recv_from_tokenizer.bind(f"tcp://127.0.0.1:{port_args.controller_port}")
 
+        self.recv_from_tree_cache = context.socket(zmq.PULL)
+        self.recv_from_tree_cache.setsockopt(zmq.RCVHWM, 8)
+        self.recv_from_tree_cache.bind(f"tcp://127.0.0.1:10000")
+
         # Dispatch method
         self.round_robin_counter = 0
         dispatch_lookup = {
             LoadBalanceMethod.ROUND_ROBIN: self.round_robin_scheduler,
             LoadBalanceMethod.SHORTEST_QUEUE: self.shortest_queue_scheduler,
+            LoadBalanceMethod.PRE_RADIX: self.pre_radix_scheduler,
         }
         self.dispatching = dispatch_lookup[self.load_balance_method]
 
         # Start data parallel workers
         self.workers = []
+
+        self.newest_tree_cache = {}
+
         for i in range(server_args.dp_size):
             self.start_dp_worker(i)
 
-    def start_dp_worker(self, dp_worker_id: int):
+    def start_dp_worker(
+        self,
+        dp_worker_id: int,
+    ):
         tp_size = self.server_args.tp_size
 
         pipe_controller_reader, pipe_controller_writer = multiprocessing.Pipe(
@@ -132,6 +144,13 @@ class ControllerMulti:
             )
         )
 
+    # TODO 找到哪些操作会改变树
+    def pre_radix_scheduler(self, input_requests):
+        if len(input_requests) == 0:
+            return
+
+        self.round_robin_scheduler(input_requests=input_requests)
+
     def round_robin_scheduler(self, input_requests):
         for r in input_requests:
             self.workers[self.round_robin_counter].queue.put(r)
@@ -148,7 +167,33 @@ class ControllerMulti:
     def loop_for_forward(self):
         while True:
             recv_reqs = self.recv_requests()
+
+            if len(recv_reqs) == 0:
+                continue
+
+            self.recv_tree_cache()
             self.dispatching(recv_reqs)
+
+    def recv_tree_cache(self):
+        flag = False
+        while True:
+            try:
+                recv_radix_cache = self.recv_from_tree_cache.recv_pyobj(zmq.NOBLOCK)
+            except zmq.ZMQError:
+                break
+
+            gpu_id = recv_radix_cache.gpu_id
+            if (
+                gpu_id not in self.newest_tree_cache
+                or recv_radix_cache.time > self.newest_tree_cache[gpu_id].time
+            ):
+                self.newest_tree_cache[gpu_id] = recv_radix_cache
+                flag = True
+
+        # 使用日志记录器记录信息
+        if flag:
+            # logger.info(f"latest_cache={len(self.newest_tree_cache)}")
+            pass
 
     def recv_requests(self):
         recv_reqs = []
