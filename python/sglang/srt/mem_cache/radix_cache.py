@@ -131,7 +131,6 @@ class RadixCache(BasePrefixCache):
         if value is None:
             value = [x for x in key]
         res = self._insert_helper(self.root_node, key, value)
-        self.send_prefix_tree()
         return res
 
     def cache_finished_req(self, req: Req, token_ids: Optional[List[int]] = None):
@@ -154,6 +153,8 @@ class RadixCache(BasePrefixCache):
         # Remove req slot release the cache lock
         self.req_to_token_pool.free(req.req_pool_idx)
         self.dec_lock_ref(req.last_node)
+
+        self.send_prefix_tree()
 
     def cache_unfinished_req(self, req: Req, token_ids: Optional[List[int]] = None):
         """Cache request when it is unfinished."""
@@ -182,6 +183,8 @@ class RadixCache(BasePrefixCache):
         self.inc_lock_ref(new_last_node)
         req.prefix_indices = new_indices
         req.last_node = new_last_node
+
+        self.send_prefix_tree()
 
     def pretty_print(self):
         self._print_helper(self.root_node, 0)
