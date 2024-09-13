@@ -55,6 +55,7 @@ def _key_match(key0: List, key1: List):
     return i
 
 
+from copy import deepcopy
 from dataclasses import dataclass
 
 import zmq
@@ -93,14 +94,15 @@ class RadixCache(BasePrefixCache):
     def send_prefix_tree(self):
         self.send_cnt += 1
         try:
+            node = deepcopy(self.root_node)
             self.send_radix_tree.send_pyobj(
-                RadixCacheSend(
-                    gpu_id=self.gpu_id, root_node=self.root_node, time=time.time()
-                ),
+                RadixCacheSend(gpu_id=self.gpu_id, root_node=node, time=time.time()),
                 zmq.NOBLOCK,
             )
             if self.send_cnt % 10 == 0:
                 print(f"[{self.gpu_id}] has send [{self.send_cnt}] caches")
+            del node
+            torch.cuda.empty_cache()
         except zmq.Again as e:
             print(
                 "=======================================Radix Cache Queue is full, drop out new radix cache tree======================================="
