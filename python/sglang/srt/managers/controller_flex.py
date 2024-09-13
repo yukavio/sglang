@@ -127,6 +127,8 @@ class ControllerMultiFlex:
         self.recv_from_tree_cache.setsockopt(zmq.RCVHWM, 1000)
         self.recv_from_tree_cache.bind(f"tcp://127.0.0.1:41935")
 
+        self.dp_size = server_args.dp_size
+
         # Dispatch method
         self.round_robin_counter = 0
         dispatch_lookup = {
@@ -184,17 +186,32 @@ class ControllerMultiFlex:
         )
 
     def pre_radix_scheduler(self, input_requests):
+        num_reqs_waiting = [k.value for k in self.controller_info.waiting_reqs]
+
         if len(input_requests) == 0:
             return
         for r in input_requests:
-            prefix_lens = []
+            prefix_lens = [0] * self.dp_size
             for gpu_id, radix_cache in self.newest_tree_cache.items():
                 pre_len = get_match_len(radix_cache.root_node, r.input_ids, 0)
-                prefix_lens.append(pre_len)
+                prefix_lens[gpu_id] = pre_len
 
-            print(f"{r.rid}=>{prefix_lens}")
+            # 找到max_len的索引
+            max_len = max(prefix_lens)
+            max_len_indices = [i for i, x in enumerate(prefix_lens) if x == max_len]
 
-        self.round_robin_scheduler(input_requests=input_requests)
+            if len(max_len_indices) == 1:
+                selected_worker_index = max_len_indices[0]
+            else:
+                # 同样大的选择waiiting少的
+                min_waiitting = min(num_reqs_waiting[i] for i in max_len_indices)
+                min_waitting_idx = [
+                    i for i in max_len_indices if num_reqs_waiting[i] == min_waiitting
+                ]
+                selected_worker_index = min_waitting_idx[0]
+
+            self.workers[selected_worker_index].queue.put(r)
+            num_reqs_waiting[selected_worker_index] += 1
 
     def resources_aware_scheduler(self, input_requests):
         if len(input_requests) == 0:
@@ -336,8 +353,8 @@ class ControllerMultiFlex:
 
         # 使用日志记录器记录信息
         if flag:
-            logger.info(f"latest_cache={len(self.newest_tree_cache)}")
-            # pass
+            # logger.info(f"latest_cache={len(self.newest_tree_cache)}")
+            pass
 
     def recv_requests(self):
         recv_reqs = []
