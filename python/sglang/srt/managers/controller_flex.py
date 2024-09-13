@@ -337,12 +337,16 @@ class ControllerMultiFlex:
         while True:
             recv_reqs = self.recv_requests()
 
-            if self.pre_radix:
-                self.recv_tree_cache()
-            t1 = time.time()
-            self.dispatching(recv_reqs)
-            t2 = time.time()
-            print(f"spend [{t2 - t1}] seconds to scheduler requests")
+            if len(recv_reqs) != 0:
+
+                if self.pre_radix:
+                    self.recv_tree_cache()
+
+                t1 = time.time()
+                self.dispatching(recv_reqs)
+                t2 = time.time()
+
+                print(f"spend [{t2 - t1}] seconds to scheduler requests")
 
     def recv_tree_cache(self):
         flag = False
