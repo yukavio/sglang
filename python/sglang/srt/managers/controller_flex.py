@@ -56,6 +56,8 @@ def get_match_len(node, key, match_length: int) -> int:
         return match_length
 
 
+import time
+
 from sglang.srt.managers.controller_single import (
     start_controller_process as start_controller_process_single,
 )
@@ -128,6 +130,7 @@ class ControllerMultiFlex:
         self.recv_from_tree_cache.setsockopt(zmq.RCVHWM, 1000)
         self.recv_from_tree_cache.bind(f"tcp://127.0.0.1:41935")
 
+        self.pre_radix = server_args.load_balance_method == "pre_radix"
         self.dp_size = server_args.dp_size
 
         # Dispatch method
@@ -334,8 +337,12 @@ class ControllerMultiFlex:
         while True:
             recv_reqs = self.recv_requests()
 
-            self.recv_tree_cache()
+            if self.pre_radix:
+                self.recv_tree_cache()
+            t1 = time.time()
             self.dispatching(recv_reqs)
+            t2 = time.time()
+            print(f"spend [{t2 - t1}] seconds to scheduler requests")
 
     def recv_tree_cache(self):
         flag = False

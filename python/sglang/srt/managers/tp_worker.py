@@ -187,6 +187,7 @@ class ModelTpServer:
                 token_to_kv_pool=self.model_runner.token_to_kv_pool,
                 disable=server_args.disable_radix_cache,
                 gpu_id=gpu_id,
+                pre_radix=(server_args.load_balance_method == "pre_radix"),
             )
         self.tree_cache_metrics = {"total": 0, "hit": 0}
         self.scheduler = PolicyScheduler(self.schedule_policy, self.tree_cache)

@@ -75,16 +75,21 @@ class RadixCache(BasePrefixCache):
         token_to_kv_pool: BaseTokenToKVPool,
         disable: bool = False,
         gpu_id: int = 0,
+        pre_radix: bool = False,
     ):
         self.req_to_token_pool = req_to_token_pool
         self.token_to_kv_pool = token_to_kv_pool
         self.disable = disable
-
-        context = zmq.Context()
-        self.send_radix_tree = context.socket(zmq.PUSH)
-        self.send_radix_tree.setsockopt(zmq.SNDHWM, 1000)
-        self.send_radix_tree.connect(f"tcp://127.0.0.1:41935")
+        self.pre_radix = pre_radix
         self.gpu_id = gpu_id
+
+        if pre_radix:
+            context = zmq.Context()
+            self.send_radix_tree = context.socket(zmq.PUSH)
+            self.send_radix_tree.setsockopt(zmq.SNDHWM, 1000)
+            self.send_radix_tree.connect(f"tcp://127.0.0.1:41935")
+        else:
+            print(f"dp[{self.gpu_id}] will not use pre_radix....")
 
         self.send_cnt = 0
         self.reset()
@@ -92,21 +97,24 @@ class RadixCache(BasePrefixCache):
     ##### Public API #####
 
     def send_prefix_tree(self):
-        self.send_cnt += 1
-        try:
-            node = deepcopy(self.root_node)
-            self.send_radix_tree.send_pyobj(
-                RadixCacheSend(gpu_id=self.gpu_id, root_node=node, time=time.time()),
-                zmq.NOBLOCK,
-            )
-            if self.send_cnt % 10 == 0:
-                print(f"[{self.gpu_id}] has send [{self.send_cnt}] caches")
-            del node
-            torch.cuda.empty_cache()
-        except zmq.Again as e:
-            print(
-                "=======================================Radix Cache Queue is full, drop out new radix cache tree======================================="
-            )
+        if self.pre_radix:
+            self.send_cnt += 1
+            try:
+                node = deepcopy(self.root_node)
+                self.send_radix_tree.send_pyobj(
+                    RadixCacheSend(
+                        gpu_id=self.gpu_id, root_node=node, time=time.time()
+                    ),
+                    zmq.NOBLOCK,
+                )
+                if self.send_cnt % 10 == 0:
+                    print(f"[{self.gpu_id}] has send [{self.send_cnt}] caches")
+                del node
+                torch.cuda.empty_cache()
+            except zmq.Again as e:
+                print(
+                    "=======================================Radix Cache Queue is full, drop out new radix cache tree======================================="
+                )
 
     def reset(self):
         self.root_node = TreeNode()
