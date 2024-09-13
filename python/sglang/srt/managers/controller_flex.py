@@ -210,7 +210,7 @@ class ControllerMultiFlex:
                 min_waitting_idx = [
                     i for i in max_len_indices if num_reqs_waiting[i] == min_waiitting
                 ]
-                selected_worker_index = min_waitting_idx[0]
+                selected_worker_index = random.choice(min_waitting_idx)
 
             self.workers[selected_worker_index].queue.put(r)
             num_reqs_waiting[selected_worker_index] += 1

@@ -275,8 +275,8 @@ class ModelTpServer:
                     self.forward_decode_batch(self.running_batch)
 
                     # Print stats
-                    if self.tp_rank == 0 and self.decode_forward_ct % 1 == 0:
-                        # self.print_decode_stats()
+                    if self.tp_rank == 0 and self.decode_forward_ct % 10 == 0:
+                        self.print_decode_stats()
                         pass
 
                     if self.running_batch.is_empty():
@@ -452,15 +452,15 @@ class ModelTpServer:
                 )
             except ZeroDivisionError:
                 tree_cache_hit_rate = 1.0
-            # logger.info(
-            #     f"[gpu={self.gpu_id}] Prefill batch. "
-            #     f"#new-seq: {len(can_run_list)}, "
-            #     f"#new-token: {adder.log_input_tokens}, "
-            #     f"#cached-token: {adder.log_hit_tokens}, "
-            #     f"cache hit rate: {100.0 * tree_cache_hit_rate:.2f}%, "
-            #     f"#running-req: {running_bs}, "
-            #     f"#queue-req: {len(self.waiting_queue) - len(can_run_list) + has_inflight}"
-            # )
+            logger.info(
+                f"[gpu={self.gpu_id}] Prefill batch. "
+                f"#new-seq: {len(can_run_list)}, "
+                f"#new-token: {adder.log_input_tokens}, "
+                f"#cached-token: {adder.log_hit_tokens}, "
+                f"cache hit rate: {100.0 * tree_cache_hit_rate:.2f}%, "
+                f"#running-req: {running_bs}, "
+                f"#queue-req: {len(self.waiting_queue) - len(can_run_list) + has_inflight}"
+            )
 
         # Return the new batch
         new_batch = ScheduleBatch.init_new(
