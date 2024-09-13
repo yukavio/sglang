@@ -351,7 +351,8 @@ class ControllerMultiFlex:
                 gpu_id not in self.newest_tree_cache
                 or recv_radix_cache.time > self.newest_tree_cache[gpu_id].time
             ):
-                del self.newest_tree_cache[gpu_id]
+                if gpu_id in self.newest_tree_cache:
+                    del self.newest_tree_cache[gpu_id]
                 self.newest_tree_cache[gpu_id] = recv_radix_cache
                 flag = True
 
