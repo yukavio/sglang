@@ -112,6 +112,8 @@ class ControllerMultiFlex:
         }
         self.dispatching = dispatch_lookup[self.load_balance_method]
 
+        self.newest_tree_cache = {}
+
         # Start data parallel workers
         self.workers = []
         self.controller_info = ControllerInfo(server_args, model_overide_args)
