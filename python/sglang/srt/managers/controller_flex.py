@@ -52,6 +52,7 @@ class LoadBalanceMethod(Enum):
     SHORTEST_QUEUE = auto()
     RESOURCES_AWARE = auto()
     POWER_OF_2_CHOICE = auto()
+    PRE_RADIX = auto()
 
     @classmethod
     def from_str(cls, method: str):
@@ -96,6 +97,10 @@ class ControllerMultiFlex:
         self.recv_from_tokenizer = context.socket(zmq.PULL)
         self.recv_from_tokenizer.bind(f"tcp://127.0.0.1:{port_args.controller_port}")
 
+        self.recv_from_tree_cache = context.socket(zmq.PULL)
+        self.recv_from_tree_cache.setsockopt(zmq.RCVHWM, 8)
+        self.recv_from_tree_cache.bind(f"tcp://127.0.0.1:41935")
+
         # Dispatch method
         self.round_robin_counter = 0
         dispatch_lookup = {
@@ -103,6 +108,7 @@ class ControllerMultiFlex:
             LoadBalanceMethod.SHORTEST_QUEUE: self.shortest_queue_scheduler,
             LoadBalanceMethod.RESOURCES_AWARE: self.resources_aware_scheduler,
             LoadBalanceMethod.POWER_OF_2_CHOICE: self.power_of_2_choice,
+            LoadBalanceMethod.PRE_RADIX: self.pre_radix_scheduler,
         }
         self.dispatching = dispatch_lookup[self.load_balance_method]
 
@@ -148,6 +154,12 @@ class ControllerMultiFlex:
                 queue=queue,
             )
         )
+
+    def pre_radix_scheduler(self, input_requests):
+        if len(input_requests) == 0:
+            return
+
+        self.round_robin_scheduler(input_requests=input_requests)
 
     def resources_aware_scheduler(self, input_requests):
         if len(input_requests) == 0:
@@ -267,7 +279,30 @@ class ControllerMultiFlex:
     def loop_for_forward(self):
         while True:
             recv_reqs = self.recv_requests()
+
+            self.recv_tree_cache()
             self.dispatching(recv_reqs)
+
+    def recv_tree_cache(self):
+        flag = False
+        while True:
+            try:
+                recv_radix_cache = self.recv_from_tree_cache.recv_pyobj(zmq.NOBLOCK)
+            except zmq.ZMQError:
+                break
+
+            gpu_id = recv_radix_cache.gpu_id
+            if (
+                gpu_id not in self.newest_tree_cache
+                or recv_radix_cache.time > self.newest_tree_cache[gpu_id].time
+            ):
+                self.newest_tree_cache[gpu_id] = recv_radix_cache
+                flag = True
+
+        # 使用日志记录器记录信息
+        if flag:
+            # logger.info(f"latest_cache={len(self.newest_tree_cache)}")
+            pass
 
     def recv_requests(self):
         recv_reqs = []

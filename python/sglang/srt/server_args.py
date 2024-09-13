@@ -350,6 +350,7 @@ class ServerArgs:
                 "shortest_queue",
                 "resources_aware",
                 "power_of_2_choice",
+                "pre_radix",
             ],
         )
 
