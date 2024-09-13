@@ -345,6 +345,9 @@ class ControllerMultiFlex:
                 break
 
             gpu_id = recv_radix_cache.gpu_id
+            tmp = self.newest_tree_cache[gpu_id]
+            del tmp
+
             if (
                 gpu_id not in self.newest_tree_cache
                 or recv_radix_cache.time > self.newest_tree_cache[gpu_id].time
@@ -352,6 +355,7 @@ class ControllerMultiFlex:
                 self.newest_tree_cache[gpu_id] = recv_radix_cache
                 flag = True
 
+            del recv_radix_cache
         # 使用日志记录器记录信息
         if flag:
             # logger.info(f"latest_cache={len(self.newest_tree_cache)}")
