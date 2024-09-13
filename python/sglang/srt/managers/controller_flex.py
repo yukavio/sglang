@@ -27,6 +27,7 @@ import random
 from enum import Enum, auto
 
 import numpy as np
+import torch
 import zmq
 
 
@@ -345,13 +346,12 @@ class ControllerMultiFlex:
                 break
 
             gpu_id = recv_radix_cache.gpu_id
-            tmp = self.newest_tree_cache[gpu_id]
-            del tmp
 
             if (
                 gpu_id not in self.newest_tree_cache
                 or recv_radix_cache.time > self.newest_tree_cache[gpu_id].time
             ):
+                del self.newest_tree_cache[gpu_id]
                 self.newest_tree_cache[gpu_id] = recv_radix_cache
                 flag = True
 
@@ -360,6 +360,7 @@ class ControllerMultiFlex:
         if flag:
             # logger.info(f"latest_cache={len(self.newest_tree_cache)}")
             pass
+        torch.cuda.empty_cache()  # 清空未被引用的显存
 
     def recv_requests(self):
         recv_reqs = []
