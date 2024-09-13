@@ -190,7 +190,7 @@ class ControllerMultiFlex:
         )
 
     def pre_radix_scheduler(self, input_requests):
-        num_reqs_waiting = [k.value for k in self.controller_info.waiting_reqs]
+        # num_reqs_waiting = [k.value for k in self.controller_info.waiting_reqs]
 
         if len(input_requests) == 0:
             return
@@ -204,19 +204,19 @@ class ControllerMultiFlex:
             max_len = max(prefix_lens)
             max_len_indices = [i for i, x in enumerate(prefix_lens) if x == max_len]
 
-            # selected_worker_index = random.choice(max_len_indices)
-            if len(max_len_indices) == 1:
-                selected_worker_index = max_len_indices[0]
-            else:
-                # 同样大的选择waiiting少的
-                min_waiitting = min(num_reqs_waiting[i] for i in max_len_indices)
-                min_waitting_idx = [
-                    i for i in max_len_indices if num_reqs_waiting[i] == min_waiitting
-                ]
-                selected_worker_index = random.choice(min_waitting_idx)
+            selected_worker_index = random.choice(max_len_indices)
+            # if len(max_len_indices) == 1:
+            #     selected_worker_index = max_len_indices[0]
+            # else:
+            #     # 同样大的选择waiiting少的
+            #     min_waiitting = min(num_reqs_waiting[i] for i in max_len_indices)
+            #     min_waitting_idx = [
+            #         i for i in max_len_indices if num_reqs_waiting[i] == min_waiitting
+            #     ]
+            #     selected_worker_index = random.choice(min_waitting_idx)
 
             self.workers[selected_worker_index].queue.put(r)
-            num_reqs_waiting[selected_worker_index] += 1
+            # num_reqs_waiting[selected_worker_index] += 1
 
     def resources_aware_scheduler(self, input_requests):
         if len(input_requests) == 0:
