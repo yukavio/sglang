@@ -99,8 +99,8 @@ class RadixCache(BasePrefixCache):
                 ),
                 zmq.NOBLOCK,
             )
-
-            print(f"[{self.gpu_id}] has send [{self.send_cnt}] caches")
+            if self.send_cnt % 10 == 0:
+                print(f"[{self.gpu_id}] has send [{self.send_cnt}] caches")
         except zmq.Again as e:
             print(
                 "=======================================Radix Cache Queue is full, drop out new radix cache tree======================================="
