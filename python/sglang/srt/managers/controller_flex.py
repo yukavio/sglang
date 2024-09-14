@@ -154,6 +154,8 @@ class ControllerMultiFlex:
 
         self.scheduler_time = 0
 
+        self.cnt = 0
+
     def start_dp_worker(self, dp_worker_id: int):
         tp_size = self.server_args.tp_size
 
@@ -337,7 +339,6 @@ class ControllerMultiFlex:
             self.workers[wid].queue.put(r)
 
     def loop_for_forward(self):
-        cnt = 0
         while True:
             recv_reqs = self.recv_requests()
 
@@ -350,9 +351,9 @@ class ControllerMultiFlex:
                 self.dispatching(recv_reqs)
                 t2 = time.time()
 
-                cnt += 1
+                self.cnt += 1
                 self.scheduler_time += t2 - t1
-                if cnt % 10 == 0:
+                if self.cnt % 10 == 0:
                     print(
                         f"spend [{self.scheduler_time}] seconds to scheduler requests"
                     )
