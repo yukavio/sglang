@@ -201,7 +201,7 @@ class ControllerMultiFlex:
                 prefix_lens[gpu_id] = pre_len
 
             # 找到max_len的索引
-            logger.info(f"prefix_lens={prefix_lens}")
+            # logger.info(f"prefix_lens={prefix_lens}")
             max_len = max(prefix_lens)
             max_len_indices = [i for i, x in enumerate(prefix_lens) if x == max_len]
             selected_worker_index = random.choice(max_len_indices)
