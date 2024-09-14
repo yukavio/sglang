@@ -341,6 +341,7 @@ class ControllerMultiFlex:
     def loop_for_forward(self):
         while True:
             recv_reqs = self.recv_requests()
+            print(f"len requests=[{len(recv_reqs)}]")
 
             if len(recv_reqs) != 0:
 
