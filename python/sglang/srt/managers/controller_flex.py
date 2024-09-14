@@ -354,7 +354,7 @@ class ControllerMultiFlex:
                 self.cnt += 1
                 self.scheduler_time += t2 - t1
                 if self.cnt % 10 == 0:
-                    print(
+                    logger.info(
                         f"spend [{self.scheduler_time}] seconds to scheduler requests"
                     )
 
