@@ -152,6 +152,8 @@ class ControllerMultiFlex:
         for i in range(server_args.dp_size):
             self.start_dp_worker(i)
 
+        self.scheduler_time = 0
+
     def start_dp_worker(self, dp_worker_id: int):
         tp_size = self.server_args.tp_size
 
@@ -197,6 +199,7 @@ class ControllerMultiFlex:
         for r in input_requests:
             prefix_lens = [0] * self.dp_size
             for gpu_id, radix_cache in self.newest_tree_cache.items():
+                print(f"[[[[[[[[[[[[[[[[[[{gpu_id}]]]]]]]]]]]]]]]]]]")
                 pre_len = get_match_len(radix_cache.root_node, r.input_ids, 0)
                 prefix_lens[gpu_id] = pre_len
 
@@ -334,6 +337,7 @@ class ControllerMultiFlex:
             self.workers[wid].queue.put(r)
 
     def loop_for_forward(self):
+        cnt = 0
         while True:
             recv_reqs = self.recv_requests()
 
@@ -346,7 +350,12 @@ class ControllerMultiFlex:
                 self.dispatching(recv_reqs)
                 t2 = time.time()
 
-                print(f"spend [{t2 - t1}] seconds to scheduler requests")
+                cnt += 1
+                self.scheduler_time += t2 - t1
+                if cnt % 10 == 0:
+                    print(
+                        f"spend [{self.scheduler_time}] seconds to scheduler requests"
+                    )
 
     def recv_tree_cache(self):
         flag = False
