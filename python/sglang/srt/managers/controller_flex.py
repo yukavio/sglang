@@ -156,6 +156,9 @@ class ControllerMultiFlex:
 
         self.cnt = 0
 
+        if self.pre_radix:
+            multiprocessing.Process(target=self.loop_for_recv_tree_cache).start()
+
     def start_dp_worker(self, dp_worker_id: int):
         tp_size = self.server_args.tp_size
 
@@ -352,12 +355,16 @@ class ControllerMultiFlex:
                 logger.info(f"len requests=[{len(recv_reqs)}]")
                 t1 = time.time()
 
-                if self.pre_radix:
-                    self.recv_tree_cache()
+                # if self.pre_radix:
+                #     self.recv_tree_cache()
 
                 self.dispatching(recv_reqs)
                 t2 = time.time()
                 logger.info(f"{t2 - t1} seconds are spent on dispatching reqs")
+
+    def loop_for_recv_tree_cache(self):
+        while True:
+            self.recv_tree_cache()
 
     def recv_tree_cache(self):
         flag = False
