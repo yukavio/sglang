@@ -343,7 +343,7 @@ class ControllerMultiFlex:
             recv_reqs = self.recv_requests()
 
             if len(recv_reqs) != 0:
-                print(f"len requests=[{len(recv_reqs)}]")
+                logger.info(f"len requests=[{len(recv_reqs)}]")
                 t1 = time.time()
 
                 if self.pre_radix:
