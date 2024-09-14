@@ -200,10 +200,16 @@ class ControllerMultiFlex:
             return
         for r in input_requests:
             prefix_lens = [0] * self.dp_size
+            t1 = time.time()
+
             for gpu_id, radix_cache in self.newest_tree_cache.items():
                 # print(f"[[[[[[[[[[[[[[[[[[{gpu_id}]]]]]]]]]]]]]]]]]]")
                 pre_len = get_match_len(radix_cache.root_node, r.input_ids, 0)
                 prefix_lens[gpu_id] = pre_len
+
+            t2 = time.time()
+
+            logger.info(f"Spend {t2 - t1} seconds when getting match prefix lens")
 
             # 找到max_len的索引
             # logger.info(f"prefix_lens={prefix_lens}")
