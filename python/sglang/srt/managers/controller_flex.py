@@ -156,6 +156,8 @@ class ControllerMultiFlex:
 
         self.cnt = 0
 
+        self.test_cnt = 0
+
         if self.pre_radix:
             multiprocessing.Process(target=self.loop_for_recv_tree_cache).start()
 
@@ -348,6 +350,7 @@ class ControllerMultiFlex:
             self.workers[wid].queue.put(r)
 
     def loop_for_forward(self):
+        print(self.test_cnt)
         while True:
             recv_reqs = self.recv_requests()
 
@@ -367,6 +370,7 @@ class ControllerMultiFlex:
             self.recv_tree_cache()
 
     def recv_tree_cache(self):
+        self.test_cnt += 1
         flag = False
         while True:
             try:
