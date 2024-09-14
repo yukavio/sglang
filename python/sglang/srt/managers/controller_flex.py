@@ -350,8 +350,8 @@ class ControllerMultiFlex:
             self.workers[wid].queue.put(r)
 
     def loop_for_forward(self):
-        logger.info(self.test_cnt)
         while True:
+            logger.info(self.test_cnt)
             recv_reqs = self.recv_requests()
 
             if len(recv_reqs) != 0:
