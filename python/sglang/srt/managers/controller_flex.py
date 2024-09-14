@@ -156,8 +156,8 @@ class ControllerMultiFlex:
 
         self.cnt = 0
 
-        # if self.pre_radix:
-        # multiprocessing.Process(target=self.loop_for_recv_tree_cache).start()
+        if self.pre_radix:
+            multiprocessing.Process(target=self.loop_for_recv_tree_cache).start()
 
     def start_dp_worker(self, dp_worker_id: int):
         tp_size = self.server_args.tp_size
