@@ -199,7 +199,7 @@ class ControllerMultiFlex:
         for r in input_requests:
             prefix_lens = [0] * self.dp_size
             for gpu_id, radix_cache in self.newest_tree_cache.items():
-                print(f"[[[[[[[[[[[[[[[[[[{gpu_id}]]]]]]]]]]]]]]]]]]")
+                # print(f"[[[[[[[[[[[[[[[[[[{gpu_id}]]]]]]]]]]]]]]]]]]")
                 pre_len = get_match_len(radix_cache.root_node, r.input_ids, 0)
                 prefix_lens[gpu_id] = pre_len
 
