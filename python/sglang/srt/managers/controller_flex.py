@@ -350,13 +350,7 @@ class ControllerMultiFlex:
                 t1 = time.time()
                 self.dispatching(recv_reqs)
                 t2 = time.time()
-
-                self.cnt += 1
-                self.scheduler_time += t2 - t1
-                if self.cnt % 10 == 0:
-                    logger.info(
-                        f"spend [{self.scheduler_time}] seconds to scheduler requests"
-                    )
+                logger.info(f"{t2 - t1} seconds are spent on dispatching reqs")
 
     def recv_tree_cache(self):
         flag = False
