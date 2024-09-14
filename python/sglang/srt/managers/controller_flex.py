@@ -344,11 +344,11 @@ class ControllerMultiFlex:
             print(f"len requests=[{len(recv_reqs)}]")
 
             if len(recv_reqs) != 0:
+                t1 = time.time()
 
                 if self.pre_radix:
                     self.recv_tree_cache()
 
-                t1 = time.time()
                 self.dispatching(recv_reqs)
                 t2 = time.time()
                 logger.info(f"{t2 - t1} seconds are spent on dispatching reqs")
