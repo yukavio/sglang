@@ -226,7 +226,10 @@ class ControllerMultiFlex:
 
             t4 = time.time()
             for gpu_id, radix_cache in self.newest_tree_cache.items():
+                # t_1 = time.time()
                 pre_len = get_match_len(radix_cache.root_node, r.input_ids, 0)
+                # t_2 = time.time()
+
                 prefix_lens[gpu_id] = pre_len
 
             # with self.recv_tree_cache_lock:
@@ -247,8 +250,12 @@ class ControllerMultiFlex:
             # with open("match.log", "a+") as f:
             #     f.write(f"[rid={r.rid[:5]}]{prefix_lens}\n")
 
+            t7 = time.time()
             max_len = max(prefix_lens)
             max_len_indices = [i for i, x in enumerate(prefix_lens) if x == max_len]
+            t8 = time.time()
+
+            print(f"find max idx = {t8 - t7}")
             if len(max_len_indices) == 1:
                 selected_worker_index = max_len_indices[0]
                 self.workers[selected_worker_index].queue.put(r)
