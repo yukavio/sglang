@@ -199,40 +199,67 @@ class ControllerMultiFlex:
         )
 
     def pre_radix_scheduler(self, input_requests):
+        available_mem = [k.value for k in self.controller_info.available_kv_cache]
+        num_reqs_waiting = [k.value for k in self.controller_info.waiting_reqs]
+        num_reqs_running = [k.value for k in self.controller_info.running_reqs]
+
+        all_waitting = False
+        if min(num_reqs_waiting) > 0:
+            # 最小值都大于0，全部waiting
+            all_waitting = True
+        else:
+            # 最小值都是0， 则全部waiting
+            all_waitting = False
+        # 选出不waiting
+        no_waiting = [1 if waiting == 0 else 0 for waiting in num_reqs_waiting]
+
         # num_reqs_waiting = [k.value for k in self.controller_info.waiting_reqs]
 
         if len(input_requests) == 0:
             return
         for r in input_requests:
             prefix_lens = [0] * self.dp_size
-            t1 = time.time()
 
             for gpu_id, radix_cache in self.newest_tree_cache.items():
-                # print(f"[[[[[[[[[[[[[[[[[[{gpu_id}]]]]]]]]]]]]]]]]]]")
                 pre_len = get_match_len(radix_cache.root_node, r.input_ids, 0)
                 prefix_lens[gpu_id] = pre_len
 
-            t2 = time.time()
-
-            logger.info(f"Spend {t2 - t1} seconds when getting match prefix lens")
-
-            # 找到max_len的索引
-            # logger.info(f"prefix_lens={prefix_lens}")
             max_len = max(prefix_lens)
             max_len_indices = [i for i, x in enumerate(prefix_lens) if x == max_len]
-            selected_worker_index = random.choice(max_len_indices)
-            # if len(max_len_indices) == 1:
-            #     selected_worker_index = max_len_indices[0]
-            # else:
-            #     # 同样大的选择waiiting少的
-            #     min_waiitting = min(num_reqs_waiting[i] for i in max_len_indices)
-            #     min_waitting_idx = [
-            #         i for i in max_len_indices if num_reqs_waiting[i] == min_waiitting
-            #     ]
-            #     selected_worker_index = random.choice(min_waitting_idx)
+            if len(max_len_indices) == 1:
+                selected_worker_index = max_len_indices[0]
+                self.workers[selected_worker_index].queue.put(r)
+            else:
+                if all_waitting:
+                    # 全部waiting，选最小的
 
-            self.workers[selected_worker_index].queue.put(r)
-            # num_reqs_waiting[selected_worker_index] += 1
+                    ratio = [
+                        run / wait
+                        for run, wait in zip(num_reqs_running, num_reqs_waiting)
+                    ]
+
+                    # run越大 认为后续释放的可能性越多，wait越少，说明后续计算能力更强
+                    min_value = max(ratio)
+                    # 找到所有最小值的索引
+                    min_indices = [i for i, x in enumerate(ratio) if x == min_value]
+                    # 从这些索引中随机选择一个
+                    index = random.choice(min_indices)
+                    # 从waitting最小的找到available最大的
+                    # index = max(min_indices, key=lambda i: available_mem[i])
+                    # index = min(min_indices, key=lambda i: num_reqs_running[i])
+                    self.workers[index].queue.put(r)
+                    num_reqs_waiting[index] += 1
+                    available_mem[index] -= len(r.input_ids)
+                else:
+                    # 选出不waiting的且available mem最大的
+                    # no_waiting 和available做乘法，找最大
+
+                    filter_result = [a * b for a, b in zip(no_waiting, available_mem)]
+                    index = filter_result.index(max(filter_result))
+                    self.workers[index].queue.put(r)
+
+                    # num_reqs_running[index] += 1
+                    available_mem[index] -= len(r.input_ids)
 
     def resources_aware_scheduler(self, input_requests):
         if len(input_requests) == 0:
