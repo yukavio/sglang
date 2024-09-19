@@ -417,7 +417,7 @@ class ControllerMultiFlex:
 
                 self.dispatching(recv_reqs)
                 t2 = time.time()
-                logger.info(f"scheduler time = {t1 - t2}")
+                logger.info(f"scheduler time = {t2 - t1}")
 
     def loop_for_recv_tree_cache(self):
         while True:
