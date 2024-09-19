@@ -202,6 +202,9 @@ class ControllerMultiFlex:
         return gpu_id, get_match_len(radix_cache.root_node, input_ids, 0)
 
     def pre_radix_scheduler(self, input_requests):
+        if len(input_requests) == 0:
+            return
+
         available_mem = [k.value for k in self.controller_info.available_kv_cache]
         num_reqs_waiting = [k.value for k in self.controller_info.waiting_reqs]
         num_reqs_running = [k.value for k in self.controller_info.running_reqs]
@@ -218,14 +221,14 @@ class ControllerMultiFlex:
 
         # num_reqs_waiting = [k.value for k in self.controller_info.waiting_reqs]
 
-        if len(input_requests) == 0:
-            return
         for r in input_requests:
             prefix_lens = [0] * self.dp_size
 
             # for gpu_id, radix_cache in self.newest_tree_cache.items():
             #     pre_len = get_match_len(radix_cache.root_node, r.input_ids, 0)
             #     prefix_lens[gpu_id] = pre_len
+
+            t4 = time.time()
             with self.recv_tree_cache_lock:
                 with ThreadPoolExecutor() as executor:
                     futures = []
@@ -238,8 +241,11 @@ class ControllerMultiFlex:
                     for future in futures:
                         gpu_id, pre_len = future.result()
                         prefix_lens[gpu_id] = pre_len
-            with open("match.log", "a+") as f:
-                f.write(f"[rid={r.rid[:5]}]{prefix_lens}\n")
+
+            t5 = time.time()
+            logger.info(f"match time = {t5 - t4}")
+            # with open("match.log", "a+") as f:
+            #     f.write(f"[rid={r.rid[:5]}]{prefix_lens}\n")
             max_len = max(prefix_lens)
             max_len_indices = [i for i, x in enumerate(prefix_lens) if x == max_len]
             if len(max_len_indices) == 1:
@@ -397,7 +403,7 @@ class ControllerMultiFlex:
             recv_reqs = self.recv_requests()
 
             if len(recv_reqs) != 0:
-                logger.info(f"len requests=[{len(recv_reqs)}]")
+                # logger.info(f"len requests=[{len(recv_reqs)}]")
                 t1 = time.time()
 
                 # if self.pre_radix:
@@ -405,7 +411,7 @@ class ControllerMultiFlex:
 
                 self.dispatching(recv_reqs)
                 t2 = time.time()
-                logger.info(f"{t2 - t1} seconds are spent on dispatching reqs")
+                logger.info(f"scheduler time = {t1 - t2}")
 
     def loop_for_recv_tree_cache(self):
         while True:
