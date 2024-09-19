@@ -17,13 +17,13 @@ limitations under the License.
 A controller that manages multiple data parallel workers.
 Each data parallel worker can manage multiple tensor parallel workers.
 """
-
 import dataclasses
 import logging
 import multiprocessing
 import multiprocessing.shared_memory
 import os
 import random
+from concurrent.futures import ThreadPoolExecutor
 from enum import Enum, auto
 
 import numpy as np
@@ -198,6 +198,9 @@ class ControllerMultiFlex:
             )
         )
 
+    def compute_prefix_length(self, gpu_id, radix_cache, input_ids):
+        return gpu_id, get_match_len(radix_cache.root_node, input_ids, 0)
+
     def pre_radix_scheduler(self, input_requests):
         available_mem = [k.value for k in self.controller_info.available_kv_cache]
         num_reqs_waiting = [k.value for k in self.controller_info.waiting_reqs]
@@ -220,9 +223,19 @@ class ControllerMultiFlex:
         for r in input_requests:
             prefix_lens = [0] * self.dp_size
 
-            for gpu_id, radix_cache in self.newest_tree_cache.items():
-                pre_len = get_match_len(radix_cache.root_node, r.input_ids, 0)
-                prefix_lens[gpu_id] = pre_len
+            # for gpu_id, radix_cache in self.newest_tree_cache.items():
+            #     pre_len = get_match_len(radix_cache.root_node, r.input_ids, 0)
+            #     prefix_lens[gpu_id] = pre_len
+            with ThreadPoolExecutor() as executor:
+                futures = {
+                    executor.submit(
+                        self.compute_prefix_length, gpu_id, radix_cache, r.input_ids
+                    ): gpu_id
+                    for gpu_id, radix_cache in self.newest_tree_cache.items()
+                }
+                for future in futures:
+                    gpu_id, pre_len = future.result()
+                    prefix_lens[gpu_id] = pre_len
 
             max_len = max(prefix_lens)
             max_len_indices = [i for i, x in enumerate(prefix_lens) if x == max_len]
