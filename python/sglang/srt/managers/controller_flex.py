@@ -262,8 +262,9 @@ class ControllerMultiFlex:
                 selected_worker_index = max_len_indices[0]
                 self.workers[selected_worker_index].queue.put(r)
                 t10 = time.time()
-                print(f"len one = {t10 - t9}")
+                logger.info(f"len one = {t10 - t9}")
             else:
+                t11 = time.time()
                 if all_waitting:
                     # 全部waiting，选最小的
 
@@ -294,6 +295,8 @@ class ControllerMultiFlex:
 
                     # num_reqs_running[index] += 1
                     available_mem[index] -= len(r.input_ids)
+                t12 = time.time()
+                print(f"len big one = {t12 - t11}")
             t6 = time.time()
             logger.info(f"real dispatch time = {t6 - t5}")
 
