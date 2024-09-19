@@ -56,6 +56,7 @@ def get_match_len(node, key, match_length: int) -> int:
         return match_length
 
 
+import threading
 import time
 
 from sglang.srt.managers.controller_single import (
@@ -156,10 +157,8 @@ class ControllerMultiFlex:
 
         self.cnt = 0
 
-        self.test_cnt = 0
-
         if self.pre_radix:
-            multiprocessing.Process(target=self.loop_for_recv_tree_cache).start()
+            threading.Thread(target=self.loop_for_recv_tree_cache).start()
 
     def start_dp_worker(self, dp_worker_id: int):
         tp_size = self.server_args.tp_size
@@ -351,7 +350,6 @@ class ControllerMultiFlex:
 
     def loop_for_forward(self):
         while True:
-            logger.info(self.test_cnt)
             recv_reqs = self.recv_requests()
 
             if len(recv_reqs) != 0:
@@ -370,7 +368,6 @@ class ControllerMultiFlex:
             self.recv_tree_cache()
 
     def recv_tree_cache(self):
-        self.test_cnt += 1
         flag = False
         while True:
             try:
