@@ -187,3 +187,4 @@ test.py
 a.txt
 b.txt
 *.txt
+launch_server.py.lprof
