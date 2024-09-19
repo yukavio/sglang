@@ -246,6 +246,7 @@ class ControllerMultiFlex:
             logger.info(f"match time = {t5 - t4}")
             # with open("match.log", "a+") as f:
             #     f.write(f"[rid={r.rid[:5]}]{prefix_lens}\n")
+
             max_len = max(prefix_lens)
             max_len_indices = [i for i, x in enumerate(prefix_lens) if x == max_len]
             if len(max_len_indices) == 1:
@@ -282,6 +283,8 @@ class ControllerMultiFlex:
 
                     # num_reqs_running[index] += 1
                     available_mem[index] -= len(r.input_ids)
+            t6 = time.time()
+            logger.info(f"real dispatch time = {t6 - t5}")
 
     def resources_aware_scheduler(self, input_requests):
         if len(input_requests) == 0:
@@ -325,6 +328,7 @@ class ControllerMultiFlex:
         # 选出不waiting
         no_waiting = [1 if waiting == 0 else 0 for waiting in num_reqs_waiting]
         for r in input_requests:
+            t1 = time.time()
             if all_waitting:
                 # 全部waiting，选最小的
 
@@ -354,6 +358,8 @@ class ControllerMultiFlex:
 
                 # num_reqs_running[index] += 1
                 available_mem[index] -= len(r.input_ids)
+            t2 = time.time()
+            logger.info(f"real dispatch time = {t2 - t1}")
 
         # =======================method1=======================
 
