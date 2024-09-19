@@ -158,6 +158,7 @@ class ControllerMultiFlex:
         self.cnt = 0
 
         if self.pre_radix:
+            self.recv_tree_cache_lock = threading.Lock()
             threading.Thread(target=self.loop_for_recv_tree_cache).start()
 
     def start_dp_worker(self, dp_worker_id: int):
@@ -381,10 +382,11 @@ class ControllerMultiFlex:
                 gpu_id not in self.newest_tree_cache
                 or recv_radix_cache.time > self.newest_tree_cache[gpu_id].time
             ):
-                if gpu_id in self.newest_tree_cache:
-                    del self.newest_tree_cache[gpu_id]
-                self.newest_tree_cache[gpu_id] = recv_radix_cache
-                flag = True
+                with self.recv_tree_cache_lock:
+                    if gpu_id in self.newest_tree_cache:
+                        del self.newest_tree_cache[gpu_id]
+                    self.newest_tree_cache[gpu_id] = recv_radix_cache
+                    flag = True
 
             del recv_radix_cache
         # 使用日志记录器记录信息
