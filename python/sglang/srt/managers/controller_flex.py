@@ -296,7 +296,7 @@ class ControllerMultiFlex:
                     # num_reqs_running[index] += 1
                     available_mem[index] -= len(r.input_ids)
                 t12 = time.time()
-                print(f"len big one = {t12 - t11}")
+                logger.info(f"len two = {t12 - t11}")
             t6 = time.time()
             logger.info(f"real dispatch time = {t6 - t5}")
 
