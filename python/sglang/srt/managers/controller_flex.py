@@ -238,7 +238,8 @@ class ControllerMultiFlex:
                     for future in futures:
                         gpu_id, pre_len = future.result()
                         prefix_lens[gpu_id] = pre_len
-
+            with open("match.log", "a+") as f:
+                f.write(f"[rid={r.rid}]{prefix_lens}")
             max_len = max(prefix_lens)
             max_len_indices = [i for i, x in enumerate(prefix_lens) if x == max_len]
             if len(max_len_indices) == 1:
