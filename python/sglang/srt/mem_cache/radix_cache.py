@@ -164,7 +164,7 @@ class RadixCache(BasePrefixCache):
         res = self._insert_helper(self.root_node, key, value)
 
         with self.change_cnt_lock:
-            self.change_cnt_lock += 1
+            self.change_cnt += 1
         return res
 
     def cache_finished_req(self, req: Req, token_ids: Optional[List[int]] = None):
@@ -251,7 +251,7 @@ class RadixCache(BasePrefixCache):
                 heapq.heappush(leaves, x.parent)
         # self.send_prefix_tree()
         with self.change_cnt_lock:
-            self.change_cnt_lock += 1
+            self.change_cnt += 1
 
     def inc_lock_ref(self, node: TreeNode):
         if self.disable:
