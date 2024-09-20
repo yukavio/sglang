@@ -225,26 +225,26 @@ class ControllerMultiFlex:
             prefix_lens = [0] * self.dp_size
 
             with self.recv_tree_cache_lock:
-                for gpu_id, radix_cache in self.newest_tree_cache.items():
-                    # t_1 = time.time()
-                    pre_len = get_match_len(radix_cache.root_node, r.input_ids, 0)
-                    # t_2 = time.time()
-                    prefix_lens[gpu_id] = pre_len
+                # for gpu_id, radix_cache in self.newest_tree_cache.items():
+                #     # t_1 = time.time()
+                #     pre_len = get_match_len(radix_cache.root_node, r.input_ids, 0)
+                #     # t_2 = time.time()
+                #     prefix_lens[gpu_id] = pre_len
 
-            #     with ThreadPoolExecutor() as executor:
-            #         futures = []
-            #         for gpu_id, radix_cache in self.newest_tree_cache.items():
-            #             future = executor.submit(
-            #                 self.compute_prefix_length,
-            #                 gpu_id,
-            #                 radix_cache,
-            #                 r.input_ids,
-            #             )
-            #             futures.append(future)
+                with ThreadPoolExecutor() as executor:
+                    futures = []
+                    for gpu_id, radix_cache in self.newest_tree_cache.items():
+                        future = executor.submit(
+                            self.compute_prefix_length,
+                            gpu_id,
+                            radix_cache,
+                            r.input_ids,
+                        )
+                        futures.append(future)
 
-            #         for future in futures:
-            #             gpu_id, pre_len = future.result()
-            #             prefix_lens[gpu_id] = pre_len
+                    for future in futures:
+                        gpu_id, pre_len = future.result()
+                        prefix_lens[gpu_id] = pre_len
 
             # t4 = time.time()
             # with open("match.log", "a+") as f:
