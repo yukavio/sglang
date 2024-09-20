@@ -108,7 +108,7 @@ class RadixCache(BasePrefixCache):
                 if self.change_cnt != 0:
                     self.change_cnt -= 1
             self.send_prefix_tree()
-            time.sleep(0.01)
+            time.sleep(1)
 
     def send_prefix_tree(self):
         # t1 = time.time()
