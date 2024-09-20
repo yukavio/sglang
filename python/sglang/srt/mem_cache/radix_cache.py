@@ -145,7 +145,6 @@ class RadixCache(BasePrefixCache):
         if value is None:
             value = [x for x in key]
         res = self._insert_helper(self.root_node, key, value)
-        self.send_prefix_tree()
         return res
 
     def cache_finished_req(self, req: Req, token_ids: Optional[List[int]] = None):
@@ -169,7 +168,7 @@ class RadixCache(BasePrefixCache):
         self.req_to_token_pool.free(req.req_pool_idx)
         self.dec_lock_ref(req.last_node)
 
-        # self.send_prefix_tree()
+        self.send_prefix_tree()
 
     def cache_unfinished_req(self, req: Req, token_ids: Optional[List[int]] = None):
         """Cache request when it is unfinished."""
@@ -199,7 +198,7 @@ class RadixCache(BasePrefixCache):
         req.prefix_indices = new_indices
         req.last_node = new_last_node
 
-        # self.send_prefix_tree()
+        self.send_prefix_tree()
 
     def pretty_print(self):
         self._print_helper(self.root_node, 0)
@@ -230,7 +229,6 @@ class RadixCache(BasePrefixCache):
 
             if len(x.parent.children) == 0:
                 heapq.heappush(leaves, x.parent)
-
         self.send_prefix_tree()
 
     def inc_lock_ref(self, node: TreeNode):
