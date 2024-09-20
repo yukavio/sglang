@@ -225,13 +225,13 @@ class ControllerMultiFlex:
             prefix_lens = [0] * self.dp_size
 
             t4 = time.time()
-            for gpu_id, radix_cache in self.newest_tree_cache.items():
-                # t_1 = time.time()
-                pre_len = get_match_len(radix_cache.root_node, r.input_ids, 0)
-                # t_2 = time.time()
-                prefix_lens[gpu_id] = pre_len
+            with self.recv_tree_cache_lock:
+                for gpu_id, radix_cache in self.newest_tree_cache.items():
+                    # t_1 = time.time()
+                    pre_len = get_match_len(radix_cache.root_node, r.input_ids, 0)
+                    # t_2 = time.time()
+                    prefix_lens[gpu_id] = pre_len
 
-            # with self.recv_tree_cache_lock:
             #     with ThreadPoolExecutor() as executor:
             #         futures = []
             #         for gpu_id, radix_cache in self.newest_tree_cache.items():
