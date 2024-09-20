@@ -246,7 +246,7 @@ class ControllerMultiFlex:
             #             gpu_id, pre_len = future.result()
             #             prefix_lens[gpu_id] = pre_len
 
-            t4 = time.time()
+            # t4 = time.time()
             # with open("match.log", "a+") as f:
             #     f.write(f"[rid={r.rid[:5]}]{prefix_lens}\n")
 
@@ -263,8 +263,8 @@ class ControllerMultiFlex:
                 self.workers[selected_worker_index].queue.put(r)
                 # t10 = time.time()
                 # logger.info(f"len one = {t10 - t9}")
-                t5 = time.time()
-                logger.info(f"if time = {t5 - t4}")
+                # t5 = time.time()
+                # logger.info(f"if time = {t5 - t4}")
             else:
                 # t11 = time.time()
                 if all_waitting:
@@ -300,8 +300,8 @@ class ControllerMultiFlex:
                     available_mem[index] -= len(r.input_ids)
                 # t12 = time.time()
                 # logger.info(f"len two = {t12 - t11}")
-                t5 = time.time()
-                logger.info(f"else time = {t5 - t4}")
+                # t5 = time.time()
+                # logger.info(f"else time = {t5 - t4}")
             # t6 = time.time()
             # logger.info(f"real dispatch time = {t6 - t8}")
 
@@ -347,7 +347,7 @@ class ControllerMultiFlex:
         # 选出不waiting
         no_waiting = [1 if waiting == 0 else 0 for waiting in num_reqs_waiting]
         for r in input_requests:
-            t1 = time.time()
+            # t1 = time.time()
             if all_waitting:
                 # 全部waiting，选最小的
 
@@ -377,8 +377,8 @@ class ControllerMultiFlex:
 
                 # num_reqs_running[index] += 1
                 available_mem[index] -= len(r.input_ids)
-            t2 = time.time()
-            logger.info(f"real dispatch time = {t2 - t1}")
+            # t2 = time.time()
+            # logger.info(f"real dispatch time = {t2 - t1}")
 
         # =======================method1=======================
 
