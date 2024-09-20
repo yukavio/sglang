@@ -107,10 +107,10 @@ class RadixCache(BasePrefixCache):
                     ),
                     zmq.NOBLOCK,
                 )
-                if self.send_cnt % 10 == 0:
-                    print(f"[{self.gpu_id}] has send [{self.send_cnt}] caches")
+                # if self.send_cnt % 10 == 0:
+                # print(f"[{self.gpu_id}] has send [{self.send_cnt}] caches")
                 del node
-                torch.cuda.empty_cache()
+                # torch.cuda.empty_cache()
             except zmq.Again as e:
                 print(
                     "=======================================Radix Cache Queue is full, drop out new radix cache tree======================================="
