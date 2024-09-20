@@ -229,7 +229,7 @@ class ControllerMultiFlex:
                 # t_1 = time.time()
                 pre_len = get_match_len(radix_cache.root_node, r.input_ids, 0)
                 # t_2 = time.time()
-            prefix_lens[gpu_id] = pre_len
+                prefix_lens[gpu_id] = pre_len
 
             # with self.recv_tree_cache_lock:
             #     with ThreadPoolExecutor() as executor:
