@@ -97,6 +97,7 @@ class RadixCache(BasePrefixCache):
     ##### Public API #####
 
     def send_prefix_tree(self):
+        t1 = time.time()
         if self.pre_radix:
             self.send_cnt += 1
             try:
@@ -115,6 +116,8 @@ class RadixCache(BasePrefixCache):
                 print(
                     "=======================================Radix Cache Queue is full, drop out new radix cache tree======================================="
                 )
+        t2 = time.time()
+        print(f"send radix time = {t2 - t1}")
 
     def reset(self):
         self.root_node = TreeNode()
