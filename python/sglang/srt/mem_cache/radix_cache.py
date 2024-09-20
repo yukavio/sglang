@@ -106,8 +106,8 @@ class RadixCache(BasePrefixCache):
         while True:
             with self.change_cnt_lock:
                 if self.change_cnt != 0:
-                    self.send_prefix_tree()
                     self.change_cnt -= 1
+            self.send_prefix_tree()
             time.sleep(0.01)
 
     def send_prefix_tree(self):
@@ -115,7 +115,10 @@ class RadixCache(BasePrefixCache):
         if self.pre_radix:
             self.send_cnt += 1
             try:
-                node = deepcopy(self.root_node)
+                try:
+                    node = deepcopy(self.root_node)
+                except Exception as e:
+                    return
                 self.send_radix_tree.send_pyobj(
                     RadixCacheSend(
                         gpu_id=self.gpu_id, root_node=node, time=time.time()
