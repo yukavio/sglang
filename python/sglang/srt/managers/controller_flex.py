@@ -224,7 +224,7 @@ class ControllerMultiFlex:
         for r in input_requests:
             prefix_lens = [0] * self.dp_size
 
-            # t4 = time.time()
+            t4 = time.time()
             # for gpu_id, radix_cache in self.newest_tree_cache.items():
             #     # t_1 = time.time()
             #     pre_len = get_match_len(radix_cache.root_node, r.input_ids, 0)
@@ -232,7 +232,7 @@ class ControllerMultiFlex:
             #     prefix_lens[gpu_id] = pre_len
 
             with self.recv_tree_cache_lock:
-                with ProcessPoolExecutor() as executor:
+                with ThreadPoolExecutor() as executor:
                     futures = []
                     for gpu_id, radix_cache in self.newest_tree_cache.items():
                         future = executor.submit(
@@ -247,8 +247,8 @@ class ControllerMultiFlex:
                         gpu_id, pre_len = future.result()
                         prefix_lens[gpu_id] = pre_len
 
-            # t5 = time.time()
-            # logger.info(f"match time = {t5 - t4}")
+            t5 = time.time()
+            logger.info(f"match time = {t5 - t4}")
             # with open("match.log", "a+") as f:
             #     f.write(f"[rid={r.rid[:5]}]{prefix_lens}\n")
 
