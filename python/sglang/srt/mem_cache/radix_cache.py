@@ -83,7 +83,8 @@ class RadixCache(BasePrefixCache):
         self.disable = disable
         self.pre_radix = pre_radix
         self.gpu_id = gpu_id
-
+        self.send_cnt = 0
+        self.change_cnt = 0
         if pre_radix:
             context = zmq.Context()
             self.send_radix_tree = context.socket(zmq.PUSH)
@@ -97,8 +98,6 @@ class RadixCache(BasePrefixCache):
         else:
             print(f"dp[{self.gpu_id}] will not use pre_radix....")
 
-        self.send_cnt = 0
-        self.change_cnt = 0
         self.reset()
 
     ##### Public API #####
