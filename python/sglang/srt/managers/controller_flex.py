@@ -263,6 +263,8 @@ class ControllerMultiFlex:
                 self.workers[selected_worker_index].queue.put(r)
                 # t10 = time.time()
                 # logger.info(f"len one = {t10 - t9}")
+                t5 = time.time()
+                logger.info(f"if time = {t5 - t4}")
             else:
                 # t11 = time.time()
                 if all_waitting:
@@ -285,8 +287,7 @@ class ControllerMultiFlex:
                     self.workers[index].queue.put(r)
                     num_reqs_waiting[index] += 1
                     available_mem[index] -= len(r.input_ids)
-                    t5 = time.time()
-                    logger.info(f"if time = {t5 - t4}")
+
                 else:
                     # 选出不waiting的且available mem最大的
                     # no_waiting 和available做乘法，找最大
@@ -297,10 +298,10 @@ class ControllerMultiFlex:
 
                     # num_reqs_running[index] += 1
                     available_mem[index] -= len(r.input_ids)
-                    # t12 = time.time()
-                    # logger.info(f"len two = {t12 - t11}")
-                    t5 = time.time()
-                    logger.info(f"else time = {t5 - t4}")
+                # t12 = time.time()
+                # logger.info(f"len two = {t12 - t11}")
+                t5 = time.time()
+                logger.info(f"else time = {t5 - t4}")
             # t6 = time.time()
             # logger.info(f"real dispatch time = {t6 - t8}")
 
