@@ -224,7 +224,6 @@ class ControllerMultiFlex:
         for r in input_requests:
             prefix_lens = [0] * self.dp_size
 
-            t4 = time.time()
             with self.recv_tree_cache_lock:
                 for gpu_id, radix_cache in self.newest_tree_cache.items():
                     # t_1 = time.time()
@@ -247,8 +246,7 @@ class ControllerMultiFlex:
             #             gpu_id, pre_len = future.result()
             #             prefix_lens[gpu_id] = pre_len
 
-            t5 = time.time()
-            logger.info(f"match time = {t5 - t4}")
+            t4 = time.time()
             # with open("match.log", "a+") as f:
             #     f.write(f"[rid={r.rid[:5]}]{prefix_lens}\n")
 
@@ -287,6 +285,8 @@ class ControllerMultiFlex:
                     self.workers[index].queue.put(r)
                     num_reqs_waiting[index] += 1
                     available_mem[index] -= len(r.input_ids)
+                    t5 = time.time()
+                    logger.info(f"if time = {t5 - t4}")
                 else:
                     # 选出不waiting的且available mem最大的
                     # no_waiting 和available做乘法，找最大
@@ -297,8 +297,10 @@ class ControllerMultiFlex:
 
                     # num_reqs_running[index] += 1
                     available_mem[index] -= len(r.input_ids)
-                # t12 = time.time()
-                # logger.info(f"len two = {t12 - t11}")
+                    # t12 = time.time()
+                    # logger.info(f"len two = {t12 - t11}")
+                    t5 = time.time()
+                    logger.info(f"else time = {t5 - t4}")
             # t6 = time.time()
             # logger.info(f"real dispatch time = {t6 - t8}")
 
