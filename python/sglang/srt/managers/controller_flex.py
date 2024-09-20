@@ -201,7 +201,6 @@ class ControllerMultiFlex:
     def compute_prefix_length(self, gpu_id, radix_cache, input_ids):
         return gpu_id, get_match_len(radix_cache.root_node, input_ids, 0)
 
-    @profile
     def pre_radix_scheduler(self, input_requests):
         if len(input_requests) == 0:
             return
@@ -225,7 +224,7 @@ class ControllerMultiFlex:
         for r in input_requests:
             prefix_lens = [0] * self.dp_size
 
-            t4 = time.time()
+            # t4 = time.time()
             for gpu_id, radix_cache in self.newest_tree_cache.items():
                 # t_1 = time.time()
                 pre_len = get_match_len(radix_cache.root_node, r.input_ids, 0)
@@ -233,26 +232,42 @@ class ControllerMultiFlex:
 
                 prefix_lens[gpu_id] = pre_len
 
-            t5 = time.time()
-            logger.info(f"match time = {t5 - t4}")
+                with self.recv_tree_cache_lock:
+                    with ThreadPoolExecutor() as executor:
+                        futures = []
+                        for gpu_id, radix_cache in self.newest_tree_cache.items():
+                            future = executor.submit(
+                                self.compute_prefix_length,
+                                gpu_id,
+                                radix_cache,
+                                r.input_ids,
+                            )
+                            futures.append(future)
+
+                        for future in futures:
+                            gpu_id, pre_len = future.result()
+                            prefix_lens[gpu_id] = pre_len
+
+            # t5 = time.time()
+            # logger.info(f"match time = {t5 - t4}")
             # with open("match.log", "a+") as f:
             #     f.write(f"[rid={r.rid[:5]}]{prefix_lens}\n")
 
-            t7 = time.time()
+            # t7 = time.time()
             max_len = max(prefix_lens)
             max_len_indices = [i for i, x in enumerate(prefix_lens) if x == max_len]
-            t8 = time.time()
+            # t8 = time.time()
 
-            logger.info(f"find max idx = {t8 - t7}")
+            # logger.info(f"find max idx = {t8 - t7}")
 
             if len(max_len_indices) == 1:
-                t9 = time.time()
+                # t9 = time.time()
                 selected_worker_index = max_len_indices[0]
                 self.workers[selected_worker_index].queue.put(r)
-                t10 = time.time()
-                logger.info(f"len one = {t10 - t9}")
+                # t10 = time.time()
+                # logger.info(f"len one = {t10 - t9}")
             else:
-                t11 = time.time()
+                # t11 = time.time()
                 if all_waitting:
                     # 全部waiting，选最小的
 
@@ -283,10 +298,10 @@ class ControllerMultiFlex:
 
                     # num_reqs_running[index] += 1
                     available_mem[index] -= len(r.input_ids)
-                t12 = time.time()
-                logger.info(f"len two = {t12 - t11}")
-            t6 = time.time()
-            logger.info(f"real dispatch time = {t6 - t8}")
+                # t12 = time.time()
+                # logger.info(f"len two = {t12 - t11}")
+            # t6 = time.time()
+            # logger.info(f"real dispatch time = {t6 - t8}")
 
     def resources_aware_scheduler(self, input_requests):
         if len(input_requests) == 0:
