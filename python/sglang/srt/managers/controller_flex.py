@@ -266,7 +266,7 @@ class ControllerMultiFlex:
                 # t5 = time.time()
                 # logger.info(f"if time = {t5 - t4}")
             else:
-                self.resources_aware_scheduler(r)
+                self.resources_aware_scheduler([r])
                 # t11 = time.time()
                 # if all_waitting:
                 #     # 全部waiting，选最小的
