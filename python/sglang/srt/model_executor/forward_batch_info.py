@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from sglang.srt.mem_cache.memory_pool import BaseTokenToKVPool, ReqToTokenPool
     from sglang.srt.model_executor.model_runner import ModelRunner
     from sglang.srt.sampling.sampling_batch_info import SamplingBatchInfo
-
+    from sglang.srt.speculative.speculative_utils import SpecInput
 
 class ForwardMode(IntEnum):
     # Prefill a new sequence. This is deprecated now. "EXTEND" covers this case.
@@ -56,18 +56,31 @@ class ForwardMode(IntEnum):
     DECODE = auto()
     # Contains both EXTEND and DECODE.
     MIXED = auto()
+    # Speculative Verify stage
+    SPECVERIFY = auto()
+    # Speculative draft Extend stage which after verify stage
+    SPECEXTEND = auto()
 
     def is_prefill(self):
         return self == ForwardMode.PREFILL
 
     def is_extend(self):
-        return self == ForwardMode.EXTEND or self == ForwardMode.MIXED
+        return self in (ForwardMode.EXTEND, self == ForwardMode.MIXED, ForwardMode.SPECEXTEND)
 
     def is_decode(self):
-        return self == ForwardMode.DECODE
+        return self in (ForwardMode.DECODE, ForwardMode.SPECVERIFY)
 
     def is_mixed(self):
         return self == ForwardMode.MIXED
+    
+    def is_verify(self):
+        return self == ForwardMode.SPECVERIFY
+    
+    def is_spec_extend(self):
+        return self == ForwardMode.SPECEXTEND
+    
+    def is_cuda_graph(self):
+        return self in (ForwardMode.DECODE, ForwardMode.SPECVERIFY)
 
 
 @dataclass
@@ -124,6 +137,12 @@ class ForwardBatch:
     req_to_token_pool: ReqToTokenPool = None
     token_to_kv_pool: BaseTokenToKVPool = None
     attn_backend: AttentionBackend = None
+    
+    # Speculative decoding
+    spec_info: SpecInput = None
+    spec_algorithm: str = None
+    is_draft_batch: bool = False
+    is_cuda_graph: bool = False
 
     # For Qwen2-VL
     mrope_positions: torch.Tensor = None
@@ -207,8 +226,12 @@ class ForwardBatch:
             top_logprobs_nums=batch.top_logprobs_nums,
             lora_paths=batch.lora_paths,
             sampling_info=batch.sampling_info,
+            spec_algorithm=batch.spec_algorithm,
+            spec_info=batch.spec_info,
         )
 
+        if ret.spec_info is not None and getattr(ret.spec_info, 'positions', None) is not None:
+            ret.positions = ret.spec_info.positions
         # Init position information
         if not ret.forward_mode.is_decode():
             ret.positions = torch.concat(

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Copyright 2023-2024 SGLang Team
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,7 +33,8 @@ ScheduleBatch -> ModelWorkerBatch -> ForwardBatch
 
 import dataclasses
 import logging
-from typing import List, Optional, Tuple, Union
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, List, Optional, Tuple, Union
 
 import torch
 
@@ -45,6 +48,9 @@ from sglang.srt.model_executor.forward_batch_info import ForwardMode
 from sglang.srt.sampling.sampling_batch_info import SamplingBatchInfo
 from sglang.srt.sampling.sampling_params import SamplingParams
 from sglang.srt.server_args import ServerArgs
+
+if TYPE_CHECKING:
+    from sglang.srt.speculative.speculative_utils import SpecInput
 
 INIT_INCREMENTAL_DETOKENIZATION_OFFSET = 5
 
@@ -474,6 +480,10 @@ class ScheduleBatch:
     # device
     device: str = "cuda"
 
+    # speculative decoding
+    spec_info: SpecInput = None
+    spec_algorithm: str = None
+
     @classmethod
     def init_new(
         cls,
@@ -482,6 +492,7 @@ class ScheduleBatch:
         token_to_kv_pool,
         tree_cache,
         model_config,
+        speculative_algorithm,
     ):
         return cls(
             reqs=reqs,
@@ -493,6 +504,7 @@ class ScheduleBatch:
             has_stream=any(req.stream for req in reqs),
             has_grammar=any(req.grammar for req in reqs),
             device=req_to_token_pool.device,
+            spec_algorithm=speculative_algorithm
         )
 
     def batch_size(self):
@@ -705,8 +717,8 @@ class ScheduleBatch:
         self.extend_lens.extend([1] * running_bs)
         self.extend_logprob_start_lens.extend([0] * running_bs)
 
-    def check_decode_mem(self):
-        bs = len(self.reqs)
+    def check_decode_mem(self, buf_multiplier=1):
+        bs = len(self.reqs)*buf_multiplier
         if self.token_to_kv_pool.available_size() >= bs:
             return True
 
@@ -854,6 +866,8 @@ class ScheduleBatch:
 
     def prepare_for_decode(self, enable_overlap: bool = False):
         self.forward_mode = ForwardMode.DECODE
+        if self.spec_algorithm == 'EAGLE':
+            return
 
         self.input_ids = self.output_ids
         self.output_ids = None
@@ -962,6 +976,8 @@ class ScheduleBatch:
         self.return_logprob = self.return_logprob or other.return_logprob
         self.has_stream = self.has_stream or other.has_stream
         self.has_grammar = self.has_grammar or other.has_grammar
+        if self.spec_info is not None:
+            self.spec_info.merge_batch(other.spec_info)
 
     def get_model_worker_batch(self):
         if self.forward_mode.is_decode():
@@ -1003,6 +1019,8 @@ class ScheduleBatch:
             encoder_out_cache_loc=self.encoder_out_cache_loc,
             lora_paths=[req.lora_path for req in self.reqs],
             sampling_info=self.sampling_info,
+            spec_algorithm=self.spec_algorithm,
+            spec_info=self.spec_info,
             mrope_positions_delta=mrope_positions_delta,
         )
 
@@ -1069,9 +1087,14 @@ class ModelWorkerBatch:
 
     # Sampling info
     sampling_info: SamplingBatchInfo
-
+    
     # For Qwen2-VL
     mrope_positions_delta: List[List[int]]
+    
+    # Speclulative decoding
+    spec_algorithm: str = None
+    spec_info: SpecInput = None
+
 
     def copy(self):
         return dataclasses.replace(self, sampling_info=self.sampling_info.copy())

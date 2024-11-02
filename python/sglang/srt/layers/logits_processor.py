@@ -34,6 +34,13 @@ class LogitsProcessorOutput:
     next_token_logits: torch.Tensor
     # The logprobs of the next tokens.     shape: [#seq, vocab_size]
     next_token_logprobs: torch.Tensor = None
+    
+    # Used by speculative inference
+    # The output of transformer layers
+    hidden_states: Optional[torch.Tensor] = None
+    # backup of next_token_logits when use cuda graph
+    # id(next_token_logits_bak) == id(next_token_logits)
+    next_token_logits_bak: Optional[torch.Tensor] = None
 
     # The normlaized logprobs of prompts.  shape: [#seq]
     normalized_prompt_logprobs: torch.Tensor = None
@@ -59,6 +66,8 @@ class LogitsMetadata:
 
     extend_logprob_start_lens_cpu: Optional[List[int]] = None
     extend_logprob_pruned_lens_cpu: Optional[List[int]] = None
+    
+    is_draft_batch: bool = False
 
     @classmethod
     def from_forward_batch(cls, forward_batch: ForwardBatch):
@@ -67,7 +76,7 @@ class LogitsMetadata:
         else:
             return_top_logprob = False
 
-        if forward_batch.forward_mode.is_extend():
+        if forward_batch.forward_mode.is_extend() and not forward_batch.is_draft_batch:
             extend_logprob_pruned_lens_cpu = [
                 extend_len - start_len
                 for extend_len, start_len in zip(
@@ -75,6 +84,7 @@ class LogitsMetadata:
                     forward_batch.extend_logprob_start_lens_cpu,
                 )
             ]
+        
         else:
             extend_logprob_pruned_lens_cpu = None
         return cls(
@@ -86,6 +96,7 @@ class LogitsMetadata:
             extend_seq_lens_cpu=forward_batch.extend_seq_lens_cpu,
             extend_logprob_start_lens_cpu=forward_batch.extend_logprob_start_lens_cpu,
             extend_logprob_pruned_lens_cpu=extend_logprob_pruned_lens_cpu,
+            is_draft_batch=forward_batch.is_draft_batch
         )
 
 
@@ -168,7 +179,9 @@ class LogitsProcessor(nn.Module):
         weight,
         logits_metadata: Union[LogitsMetadata, ForwardBatch],
     ):
+        need_hidden_states = False
         if isinstance(logits_metadata, ForwardBatch):
+            need_hidden_states = logits_metadata.spec_algorithm == 'EAGLE'
             logits_metadata = LogitsMetadata.from_forward_batch(logits_metadata)
         assert isinstance(logits_metadata, LogitsMetadata)
 
@@ -191,7 +204,7 @@ class LogitsProcessor(nn.Module):
             last_logits.mul_(self.config.final_logit_softcapping)
 
         # Return only last_logits if logprob is not requested
-        if not logits_metadata.return_logprob:
+        if not logits_metadata.return_logprob or logits_metadata.is_draft_batch:
             return LogitsProcessorOutput(
                 next_token_logits=last_logits,
                 next_token_logprobs=None,
@@ -199,6 +212,8 @@ class LogitsProcessor(nn.Module):
                 input_token_logprobs=None,
                 input_top_logprobs=None,
                 output_top_logprobs=None,
+                hidden_states=last_hidden if need_hidden_states else None,
+                next_token_logits_bak=last_logits,
             )
         else:
             last_logprobs = torch.nn.functional.log_softmax(last_logits, dim=-1)

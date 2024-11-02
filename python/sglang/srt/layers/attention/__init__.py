@@ -23,9 +23,12 @@ class AttentionBackend(ABC):
     def init_forward_metadata_capture_cuda_graph(
         self,
         bs: int,
+        num_token: int,
         req_pool_indices: torch.Tensor,
         seq_lens: torch.Tensor,
-        encoder_lens: Optional[torch.Tensor] = None,
+        encoder_lens: torch.Tensor = None,
+        spec_info=None,
+        is_draft_runner=False,
     ):
         """Init the metadata for a forward pass for capturing a cuda graph."""
         raise NotImplementedError()
@@ -33,10 +36,12 @@ class AttentionBackend(ABC):
     def init_forward_metadata_replay_cuda_graph(
         self,
         bs: int,
+        num_token: int,
         req_pool_indices: torch.Tensor,
         seq_lens: torch.Tensor,
         seq_lens_sum: int,
-        encoder_lens: Optional[torch.Tensor] = None,
+        encoder_lens=None,
+        spec_info=None,
     ):
         """Init the metadata for a forward pass for replying a cuda graph."""
         raise NotImplementedError()
@@ -54,7 +59,9 @@ class AttentionBackend(ABC):
         forward_batch: ForwardBatch,
     ):
         """Run forward on an attention layer."""
-        if forward_batch.forward_mode.is_decode():
+        if forward_batch.forward_mode.is_verify():
+            return self.forward_extend(q, k, v, layer, forward_batch)
+        elif forward_batch.forward_mode.is_decode():
             return self.forward_decode(q, k, v, layer, forward_batch)
         else:
             return self.forward_extend(q, k, v, layer, forward_batch)

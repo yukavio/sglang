@@ -84,9 +84,12 @@ class TritonAttnBackend(AttentionBackend):
     def init_forward_metadata_capture_cuda_graph(
         self,
         bs: int,
+        num_token: int,
         req_pool_indices: torch.Tensor,
         seq_lens: torch.Tensor,
-        encoder_lens=None,
+        encoder_lens: torch.Tensor = None,
+        spec_info=None,
+        is_draft_runner=False,
     ):
         # NOTE: encoder_lens expected to be zeros or None
         self.forward_metadata = (
@@ -99,10 +102,12 @@ class TritonAttnBackend(AttentionBackend):
     def init_forward_metadata_replay_cuda_graph(
         self,
         bs: int,
+        num_token: int,
         req_pool_indices: torch.Tensor,
         seq_lens: torch.Tensor,
         seq_lens_sum: int,
         encoder_lens=None,
+        spec_info=None,
     ):
         # NOTE: encoder_lens expected to be zeros or None
         self.cuda_graph_start_loc.zero_()

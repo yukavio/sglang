@@ -60,6 +60,7 @@ from sglang.srt.managers.schedule_policy import (
     PrefillAdder,
     SchedulePolicy,
 )
+from sglang.srt.speculative.speculative_worker import spec_worker_factory
 from sglang.srt.managers.tp_worker import TpModelWorker
 from sglang.srt.managers.tp_worker_overlap_thread import TpModelWorkerClient
 from sglang.srt.mem_cache.chunk_cache import ChunkCache
@@ -158,6 +159,7 @@ class Scheduler:
             self.model_config.hf_config.architectures, self.server_args.is_embedding
         )
 
+
         # Launch a tensor parallel worker
         if self.enable_overlap:
             TpWorkerClass = TpModelWorkerClient
@@ -171,7 +173,20 @@ class Scheduler:
             dp_rank=dp_rank,
             nccl_port=port_args.nccl_port,
         )
-
+        
+        # Launch Speculative worker if need
+        if self.server_args.speculative_algorithm is not None:
+            self.draft_worker = spec_worker_factory.get(self.server_args.speculative_algorithm)(
+                gpu_id=gpu_id,
+                tp_rank=tp_rank,
+                server_args=server_args,
+                nccl_port=port_args.nccl_port,
+                target_worker=self.tp_worker,
+                dp_rank=dp_rank,
+            )
+        else:
+            self.draft_worker = None
+            
         # Get token and memory info from the model worker
         (
             self.max_total_num_tokens,
@@ -318,6 +333,7 @@ class Scheduler:
         """A normal blocking scheduler loop."""
         self.last_batch = None
 
+        # TODO: need to edit it to support batch by split prefill @kavioyu
         while True:
             recv_reqs = self.recv_requests()
             self.process_input_requests(recv_reqs)
@@ -375,13 +391,15 @@ class Scheduler:
     def recv_requests(self):
         if self.tp_rank == 0:
             recv_reqs = []
-
+        
             while True:
                 try:
                     recv_req = self.recv_from_tokenizer.recv_pyobj(zmq.NOBLOCK)
                 except zmq.ZMQError:
                     break
                 recv_reqs.append(recv_req)
+                if self.server_args.split_prefill_batch:
+                    break
         else:
             recv_reqs = None
 
@@ -715,6 +733,7 @@ class Scheduler:
             self.token_to_kv_pool,
             self.tree_cache,
             self.model_config,
+            self.server_args.speculative_algorithm
         )
         new_batch.prepare_for_extend()
 
@@ -740,11 +759,14 @@ class Scheduler:
             return
 
         # Check if decode out of memory
-        if not batch.check_decode_mem() or (test_retract and batch.batch_size() > 10):
+        buf_multiplier = 1 if self.server_args.speculative_algorithm is None else self.server_args.num_draft_tokens
+        if not batch.check_decode_mem(buf_multiplier) or (test_retract and batch.batch_size() > 10):
             old_ratio = self.new_token_ratio
 
             retracted_reqs, new_token_ratio = batch.retract_decode()
             self.new_token_ratio = new_token_ratio
+            if self.draft_worker is not None:
+                self.draft_worker.finish_request(retracted_reqs)
 
             logger.info(
                 "Decode out of memory happened. "
@@ -772,13 +794,18 @@ class Scheduler:
     def run_batch(self, batch: ScheduleBatch):
         """Run a batch."""
         self.forward_ct += 1
-
         if self.is_generation:
             if batch.forward_mode.is_decode() or batch.extend_num_tokens != 0:
-                model_worker_batch = batch.get_model_worker_batch()
-                logits_output, next_token_ids = self.tp_worker.forward_batch_generation(
-                    model_worker_batch
-                )
+                if self.server_args.speculative_algorithm:
+                    logits_output, next_token_ids, model_worker_batch = self.draft_worker.forward_batch_speculative_generate(
+                        batch
+                    )
+                else:
+                    model_worker_batch = batch.get_model_worker_batch()
+                    logits_output, next_token_ids = self.tp_worker.forward_batch_generation(
+                        model_worker_batch
+                    )
+                
             else:
                 logits_output = None
                 if self.skip_tokenizer_init:
@@ -898,7 +925,8 @@ class Scheduler:
                 continue
 
             req.completion_tokens_wo_jump_forward += 1
-            req.output_ids.append(next_token_id)
+            if batch.spec_algorithm is None: # speculative worker will solve the output_ids in speculative decoding
+                req.output_ids.append(next_token_id)
             req.check_finished()
 
             if req.grammar is not None:
@@ -1018,6 +1046,8 @@ class Scheduler:
             if req.finished() or (
                 req.stream and (is_stream_iter or len(req.output_ids) == 1)
             ):
+                if req.finished() and self.draft_worker is not None:
+                    self.draft_worker.finish_request(req)
                 output_rids.append(req.rid)
                 output_finished_reason.append(req.finished_reason)
                 if self.is_generation:
