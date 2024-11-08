@@ -21,6 +21,7 @@ import threading
 import time
 import warnings
 from collections import deque
+from copy import deepcopy
 from types import SimpleNamespace
 from typing import List, Optional
 
@@ -36,6 +37,7 @@ from sglang.srt.managers.io_struct import (
     AbortReq,
     BatchEmbeddingOut,
     BatchTokenIDOut,
+    ControllerInfo,
     FlushCacheReq,
     GetMemPoolSizeReq,
     GetMemPoolSizeReqOutput,
@@ -61,7 +63,7 @@ from sglang.srt.managers.schedule_policy import (
 from sglang.srt.managers.tp_worker import TpModelWorker
 from sglang.srt.managers.tp_worker_overlap_thread import TpModelWorkerClient
 from sglang.srt.mem_cache.chunk_cache import ChunkCache
-from sglang.srt.mem_cache.radix_cache import RadixCache
+from sglang.srt.mem_cache.radix_cache import RadixCache, RadixCacheSend
 from sglang.srt.metrics.metrics_collector import PrometheusMetricsCollector
 from sglang.srt.metrics.metrics_types import Stats
 from sglang.srt.server_args import PortArgs, ServerArgs
@@ -95,6 +97,7 @@ class Scheduler:
         gpu_id: int,
         tp_rank: int,
         dp_rank: Optional[int],
+        controller_info: Optional[ControllerInfo] = None,
     ):
         # Parse args
         self.server_args = server_args
@@ -224,8 +227,8 @@ class Scheduler:
         self.forward_ct = 0
         self.forward_ct_decode = 0
         self.num_generated_tokens = 0
-        self.last_stats_tic = time.time() # time of last stats for every iter
-        self.last_log_tic = time.time() # time of last log for print decode log
+        self.last_stats_tic = time.time()  # time of last stats for every iter
+        self.last_log_tic = time.time()  # time of last log for print decode log
         self.stream_interval = server_args.stream_interval
 
         # Init chunked prefill
@@ -303,6 +306,34 @@ class Scheduler:
             },
             max_model_len=self.max_total_num_tokens,
         )
+
+        # init controller info
+        if controller_info and self.tp_rank == 0:
+            self.controller_info = controller_info
+            self.gpu_id = gpu_id
+            self.controller_info.available_kv_cache[self.gpu_id].value = (
+                self.token_to_kv_pool.available_size()
+            )
+            if self.server_args.load_balance_method == "pre_radix":
+                self.pre_radix = True
+                self.change_cnt_lock = threading.Lock()
+                threading.Thread(target=self.loop_for_send_tree_cache).start()
+        else:
+            self.controller_info = None
+
+        # init controller info
+        if controller_info and self.tp_rank == 0:
+            self.controller_info = controller_info
+            self.gpu_id = gpu_id
+            self.controller_info.available_kv_cache[self.gpu_id].value = (
+                self.token_to_kv_pool.available_size()
+            )
+            if self.server_args.load_balance_method == "pre_radix":
+                self.pre_radix = True
+                self.change_cnt_lock = threading.Lock()
+                threading.Thread(target=self.loop_for_send_tree_cache).start()
+        else:
+            self.controller_info = None
 
     def watchdog_thread(self):
         self.watchdog_last_forward_ct = 0
@@ -384,6 +415,25 @@ class Scheduler:
                 self.new_token_ratio = self.init_new_token_ratio
 
             self.last_batch = batch
+
+    def loop_for_send_tree_cache(self):
+        while True:
+            self.send_tree_cache_to_queue()
+            time.sleep(1)
+
+    def send_tree_cache_to_queue(self):
+        if self.pre_radix:
+            try:
+                node = deepcopy(self.tree_cache.root_node)
+                send_data = RadixCacheSend(
+                    gpu_id=self.gpu_id, root_node=node, time=time.time()
+                )
+                del node
+                self.controller_info.radix_queue.put(send_data)
+                # logger.info("[send_tree_cache_to_queue] has send new data")
+            except Exception as e:
+                # logger.info(f"[send_tree_cache_to_queue]error:{e}")
+                return
 
     def recv_requests(self):
         if self.tp_rank == 0:
@@ -566,9 +616,7 @@ class Scheduler:
             and not self.last_batch.is_empty()
         ):
             if self.being_chunked_req:
-                self.last_batch.filter_batch(
-                    being_chunked_req=self.being_chunked_req
-                )
+                self.last_batch.filter_batch(being_chunked_req=self.being_chunked_req)
                 self.tree_cache.cache_unfinished_req(self.being_chunked_req)
                 # Inflight request keeps its rid but will get a new req_pool_idx.
                 self.req_to_token_pool.free(self.being_chunked_req.req_pool_idx)
@@ -628,9 +676,7 @@ class Scheduler:
         has_inflight = self.being_chunked_req is not None
         if has_inflight:
             self.being_chunked_req.init_next_round_input()
-            self.being_chunked_req = adder.add_inflight_req(
-                self.being_chunked_req
-            )
+            self.being_chunked_req = adder.add_inflight_req(self.being_chunked_req)
 
         if self.lora_paths:
             lora_set = (
@@ -813,7 +859,8 @@ class Scheduler:
             embeddings = self.tp_worker.forward_batch_embedding(model_worker_batch)
             ret = embeddings, model_worker_batch.bid
         return ret
-    def get_stats(self,batch: ScheduleBatch):
+
+    def get_stats(self, batch: ScheduleBatch):
         # TODO: get stats for chunked prefill
 
         now = time.time()
@@ -829,8 +876,8 @@ class Scheduler:
         # set stats from prefill
         if self.stats is not None:
             # new_seq=self.stats.new_seq
-            cache_hit_rate=self.stats.cache_hit_rate
-            token_usage=self.stats.token_usage
+            cache_hit_rate = self.stats.cache_hit_rate
+            token_usage = self.stats.token_usage
         # Iteration stats
         num_prompt_tokens_iter = 0
         num_generation_tokens_iter = 0
@@ -838,7 +885,7 @@ class Scheduler:
         time_per_output_tokens_iter: List[float] = []
 
         # Request stats
-        #   Decode 
+        #   Decode
         gen_throughput: float = 0.0
         #   Latency
         time_e2e_requests: List[float] = []
@@ -851,26 +898,31 @@ class Scheduler:
         # _, next_token_ids, _ = result
         if batch is not None:
             num_generation_tokens_iter = len(batch.output_ids)
-            gen_throughput = round(num_generation_tokens_iter / (now - self.last_stats_tic), 2)
+            gen_throughput = round(
+                num_generation_tokens_iter / (now - self.last_stats_tic), 2
+            )
 
             for i, req in enumerate(batch.reqs):
                 # NOTE: Batch forward mode is extend befor start decode,
                 if batch.forward_mode.is_extend():
-                    num_prompt_tokens_iter=len(batch.input_ids)+sum(batch.prefix_lens)
+                    num_prompt_tokens_iter = len(batch.input_ids) + sum(
+                        batch.prefix_lens
+                    )
                     time_to_first_tokens_iter.append(now - req.started_time)
                 else:
-                    time_per_output_tokens_iter.append(now-self.last_stats_tic)
+                    time_per_output_tokens_iter.append(now - self.last_stats_tic)
 
                 if req.finished():
                     time_e2e_requests.append(now - req.created_time)
                     time_waiting_requests.append(req.queued_time - req.created_time)
                     num_prompt_tokens_requests.append(len(req.origin_input_ids))
                     num_generation_tokens_requests.append(len(req.output_ids))
-                    finished_reason_requests.append(                            
-                            req.finished_reason.to_json()
-                            if req.finished_reason is not None
-                            else None)
-    
+                    finished_reason_requests.append(
+                        req.finished_reason.to_json()
+                        if req.finished_reason is not None
+                        else None
+                    )
+
         return Stats(
             new_seq=new_seq,
             num_running_req=num_running_req,
@@ -893,7 +945,7 @@ class Scheduler:
             max_running_requests=self.max_running_requests,
         )
 
-    def log_stats(self,stats:Stats):
+    def log_stats(self, stats: Stats):
         self.metrics_collector.log_stats(stats)
 
     def process_batch_result(self, batch: ScheduleBatch, result):
@@ -903,6 +955,20 @@ class Scheduler:
                 self.running_batch = None
         else:
             self.process_batch_result_prefill(batch, result)
+
+        # update controller info
+        if self.controller_info:
+            with self.controller_info.lock:
+                self.controller_info.available_kv_cache[self.gpu_id].value = (
+                    self.token_to_kv_pool.available_size()
+                    + self.tree_cache.evictable_size()
+                )
+                self.controller_info.running_reqs[self.gpu_id].value = (
+                    len(self.running_batch.reqs) if self.running_batch else 0
+                )
+                self.controller_info.waiting_reqs[self.gpu_id].value = len(
+                    self.waiting_queue
+                )
 
     def process_batch_result_prefill(self, batch: ScheduleBatch, result):
 
@@ -1003,9 +1069,7 @@ class Scheduler:
             if req.is_retracted:
                 continue
 
-            if self.server_args.enable_overlap_schedule and (
-                req.finished()
-            ):
+            if self.server_args.enable_overlap_schedule and (req.finished()):
                 self.token_to_kv_pool.free(batch.out_cache_loc[i : i + 1])
                 continue
 
@@ -1031,7 +1095,10 @@ class Scheduler:
         self.token_to_kv_pool.free_group_end()
 
         self.forward_ct_decode = (self.forward_ct_decode + 1) % (1 << 30)
-        if self.tp_rank == 0 and self.forward_ct_decode % self.server_args.decode_log_interval == 0:
+        if (
+            self.tp_rank == 0
+            and self.forward_ct_decode % self.server_args.decode_log_interval == 0
+        ):
             self.print_decode_stats()
 
     def add_logprob_return_values(
@@ -1285,6 +1352,7 @@ def run_scheduler_process(
     tp_rank: int,
     dp_rank: Optional[int],
     pipe_writer,
+    controller_info: Optional[ControllerInfo] = None,
 ):
     if dp_rank is None:
         configure_logger(server_args, prefix=f" TP{tp_rank}")
@@ -1294,7 +1362,9 @@ def run_scheduler_process(
     suppress_other_loggers()
 
     try:
-        scheduler = Scheduler(server_args, port_args, gpu_id, tp_rank, dp_rank)
+        scheduler = Scheduler(
+            server_args, port_args, gpu_id, tp_rank, dp_rank, controller_info
+        )
         pipe_writer.send("ready")
         if server_args.enable_overlap_schedule:
             scheduler.event_loop_overlap()

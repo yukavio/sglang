@@ -18,9 +18,11 @@ The definition of objects transfered between different
 processes (TokenizerManager, DetokenizerManager, Controller).
 """
 
+import multiprocessing
 import uuid
 from dataclasses import dataclass
 from enum import Enum
+from multiprocessing import Value
 from typing import Dict, List, Optional, Union
 
 from sglang.srt.managers.schedule_batch import BaseFinishReason
@@ -86,8 +88,10 @@ class GenerateReqInput:
             self.parallel_sample_num = self.sampling_params.get("n", 1)
         else:  # isinstance(self.sampling_params, list):
             self.parallel_sample_num = self.sampling_params[0].get("n", 1)
-            assert all(self.parallel_sample_num == sampling_params.get("n", 1) for sampling_params in self.sampling_params), (
-                "The parallel_sample_num should be the same for all samples in sample params.")
+            assert all(
+                self.parallel_sample_num == sampling_params.get("n", 1)
+                for sampling_params in self.sampling_params
+            ), "The parallel_sample_num should be the same for all samples in sample params."
 
         if self.parallel_sample_num > 1 and self.is_single:
             self.is_single = False
@@ -355,3 +359,19 @@ class GetMemPoolSizeReq:
 @dataclass
 class GetMemPoolSizeReqOutput:
     size: int
+
+
+class ControllerInfo:
+    def __init__(self, dp_size):
+        self.available_kv_cache = []
+        self.running_reqs = []
+        self.waiting_reqs = []
+        self.lock = multiprocessing.Lock()
+
+        # For pre radix
+        self.radix_queue = multiprocessing.Queue()
+
+        for i in range(dp_size):
+            self.available_kv_cache.append(Value("i", 0))
+            self.running_reqs.append(Value("i", 0))
+            self.waiting_reqs.append(Value("i", 0))

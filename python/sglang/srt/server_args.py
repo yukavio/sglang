@@ -448,7 +448,7 @@ class ServerArgs:
             "--decode-log-interval",
             type=int,
             default=ServerArgs.decode_log_interval,
-            help="The log interval of decode batch"
+            help="The log interval of decode batch",
         )
 
         # Data parallelism
@@ -467,9 +467,10 @@ class ServerArgs:
             choices=[
                 "round_robin",
                 "shortest_queue",
+                "resources_aware",
+                "pre_radix",
             ],
         )
-
         # Multi-node distributed serving args
         parser.add_argument(
             "--dist-init-addr",
