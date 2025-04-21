@@ -5,6 +5,7 @@ class SpeculativeAlgorithm(IntEnum):
     NONE = auto()
     EAGLE = auto()
     EAGLE3 = auto()
+    NAIVE_EAGLE = auto()
 
     def is_none(self):
         return self == SpeculativeAlgorithm.NONE
@@ -14,6 +15,9 @@ class SpeculativeAlgorithm(IntEnum):
 
     def is_eagle3(self):
         return self == SpeculativeAlgorithm.EAGLE3
+
+    def is_naive_eagle(self):
+        return self == SpeculativeAlgorithm.NAIVE_EAGLE
 
     @staticmethod
     def from_string(name: str):
