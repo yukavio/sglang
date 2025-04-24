@@ -64,6 +64,9 @@ class EagleDraftInput:
     kv_indices: torch.Tensor = None
 
     all_padding_lens: Optional[torch.Tensor] = None
+    
+    # ADD: get next token idx
+    next_token_idx: torch.Tensor = None
 
     def prepare_for_extend(self, batch: ScheduleBatch):
         # Prefill only generate 1 token.

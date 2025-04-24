@@ -870,7 +870,7 @@ class ModelRunner:
                 )
 
                 # Init streams
-                if self.server_args.speculative_algorithm == "EAGLE":
+                if self.server_args.speculative_algorithm == "EAGLE" or self.server_args.speculative_algorithm == "NAIVE_EAGLE":
                     self.plan_stream_for_flashinfer = torch.cuda.Stream()
                 self.attn_backend = FlashInferAttnBackend(self)
             else:

@@ -335,7 +335,7 @@ class ServerArgs:
 
         if (
             self.speculative_algorithm == "EAGLE"
-            or self.speculative_algorithm == "EAGLE3"
+            or self.speculative_algorithm == "EAGLE3" or self.speculative_algorithm == "NAIVE_EAGLE"
         ):
             if self.max_running_requests is None:
                 self.max_running_requests = 48
@@ -872,7 +872,7 @@ class ServerArgs:
         parser.add_argument(
             "--speculative-algorithm",
             type=str,
-            choices=["EAGLE", "EAGLE3", "NEXTN"],
+            choices=["EAGLE", "EAGLE3", "NEXTN", "NAIVE_EAGLE"],
             help="Speculative algorithm.",
         )
         parser.add_argument(

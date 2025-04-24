@@ -33,7 +33,6 @@ from sglang.srt.speculative.eagle_utils import (
     assign_draft_cache_locs,
     select_top_k_tokens,
 )
-from sglang.srt.speculative.eagle_worker import EAGLEWorker
 from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
 from sglang.srt.utils import empty_context, fast_topk, get_available_gpu_memory, is_cuda
 
@@ -51,7 +50,7 @@ def draft_tp_context(tp_group: GroupCoordinator):
         yield
 
 
-class NaiveEAGLEWorker(EAGLEWorker):
+class NaiveEagleWorker(TpModelWorker):
 
     def __init__(
         self,
@@ -146,7 +145,10 @@ class NaiveEAGLEWorker(EAGLEWorker):
         with self.draft_tp_context(self.draft_model_runner.tp_group):
             self.init_attention_backend()
             self.init_cuda_graphs()
-
+            
+            
+        # ADD: navie verify
+        self.draft_token_idx = None
     def init_attention_backend(self):
         # Create multi-step attn backends and cuda graph runners
         if self.server_args.attention_backend == "flashinfer":
@@ -230,6 +232,10 @@ class NaiveEAGLEWorker(EAGLEWorker):
         if self.draft_extend_attn_backend:
             raise NotImplementedError()
 
+    @property
+    def draft_model_runner(self):
+        return self.model_runner
+
     def forward_batch_speculative_generation(
         self, batch: ScheduleBatch
     ) -> Tuple[LogitsProcessorOutput, List[int], int, int]:
@@ -245,6 +251,7 @@ class NaiveEAGLEWorker(EAGLEWorker):
             the batch id (used for overlap schedule), and number of accepeted tokens.
         """
         if batch.forward_mode.is_decode():
+            # ADD: 直接进行verify
             with self.draft_tp_context(self.draft_model_runner.tp_group):
                 spec_info = self.draft(batch)
             logits_output, verify_output, model_worker_batch = self.verify(
@@ -270,16 +277,44 @@ class NaiveEAGLEWorker(EAGLEWorker):
             return logits_output, next_token_ids, model_worker_batch.bid, 0
         else:
             logits_output, next_token_ids, bid = self.forward_target_extend(batch)
+            print(f'[forward_target_extend]{logits_output=}')
+            print(f'[forward_target_extend]{logits_output.hidden_states.shape=}')
+            print(f'[forward_target_extend]{next_token_ids=}')
+            print(f'[forward_target_extend]{bid=}')
             with self.draft_tp_context(self.draft_model_runner.tp_group):
                 self.forward_draft_extend(
                     batch, logits_output.hidden_states, next_token_ids
                 )
             return logits_output, next_token_ids, bid, 0
 
+    def forward_target_extend(
+        self, batch: ScheduleBatch
+    ) -> Tuple[LogitsProcessorOutput, List[int], int]:
+        """Run the target extend.
+
+        Args:
+            batch: The batch to run. States could be modified.
+
+        Returns:
+            logits_output: The output of logits. It will contain the full hidden states.
+            next_token_ids: Next token ids generated.
+            bid: The model batch ID. Used for overlap schedule.
+        """
+        # Forward with the target model and get hidden states.
+        # We need the full hidden states to prefill the KV cache of the draft model.
+        model_worker_batch = batch.get_model_worker_batch()
+        model_worker_batch.capture_hidden_mode = CaptureHiddenMode.FULL
+        logits_output, next_token_ids = self.target_worker.forward_batch_generation(
+            model_worker_batch
+        )
+        return logits_output, next_token_ids, model_worker_batch.bid
+
     def draft(self, batch: ScheduleBatch):
         # Parse args
         num_seqs = batch.batch_size()
         spec_info = batch.spec_info
+        print(f"[draft]:{num_seqs=}")
+        print(f"[draft]:{spec_info=}")
 
         # Accumulate penalty
         if batch.sampling_info.penalizer_orchestrator.is_required:
@@ -294,38 +329,9 @@ class NaiveEAGLEWorker(EAGLEWorker):
                 num_seqs * self.topk * self.speculative_num_steps, backup_state=True
             )
         else:
-            if self.topk == 1:
-                prefix_lens = batch.seq_lens
-                seq_lens = prefix_lens + self.speculative_num_steps
-                extend_num_tokens = num_seqs * self.speculative_num_steps
-            else:
-                # In this case, the last partial page needs to be duplicated.
-                # KV cache layout in batch.req_to_token_pool.req_to_token:
-                #
-                # | -------- | -- xxxx .. | -- xxxx .. | -- xxxx .. |
-                #    prefix     top-k = 0    tok-k = 1    top-k = 2
-                #
-                #  "-" means prefix tokens
-                #  "x" means speculative draft tokens
-                #  "." means padded tokens
-
-                # TODO: fuse these ops
-                prefix_lens = batch.seq_lens
-                last_page_lens = prefix_lens % self.page_size
-                num_new_pages = (
-                    last_page_lens + self.speculative_num_steps + self.page_size - 1
-                ) // self.page_size
-                seq_lens = (
-                    prefix_lens // self.page_size * self.page_size
-                    + num_new_pages * (self.page_size * self.topk)
-                )
-                extend_num_tokens = torch.sum(seq_lens - prefix_lens).item()
-                raise NotImplementedError(
-                    "page_size > 1 and top_k > 1 are not supported."
-                )
-                # TODO: Support page_size > 1 and top_k > 1
-                # 1. Duplicate the KV cache in the last partial page for all top-k segments
-                # 2. Modify generate_draft_decode_kv_indices accordingly
+            prefix_lens = batch.seq_lens
+            seq_lens = prefix_lens + self.speculative_num_steps
+            extend_num_tokens = num_seqs * self.speculative_num_steps
 
             last_loc = get_last_loc(
                 batch.req_to_token_pool.req_to_token,
@@ -447,14 +453,21 @@ class NaiveEAGLEWorker(EAGLEWorker):
 
         return score_list, token_list, parents_list
 
-    def verify(self, batch: ScheduleBatch, spec_info: EagleVerifyInput):
+    def verify(self, batch: ScheduleBatch, spec_info: EagleVerifyInput, ):
         spec_info.prepare_for_verify(batch, self.page_size)
         batch.forward_mode = ForwardMode.TARGET_VERIFY
         batch.spec_info = spec_info
         model_worker_batch = batch.get_model_worker_batch()
-        logits_output, _ = self.target_worker.forward_batch_generation(
-            model_worker_batch, skip_sample=True
+        
+        # ADD get next_token_ids from target worker after prefill
+        logits_output, next_token_ids = self.target_worker.forward_batch_generation(
+            model_worker_batch, skip_sample=False
         )
+        print(f"verify:{next_token_ids=}")
+        if next_token_ids == self.draft_token_idx:
+            print("verified done!!!!!!!!!!!")
+        else:
+            print(f"{next_token_ids=}, {self.draft_token_idx=},verified failed!!!!!!!!!!!")
         self._detect_nan_if_needed(logits_output)
         spec_info.hidden_states = logits_output.hidden_states
         res: EagleVerifyOutput = spec_info.verify(
@@ -480,6 +493,66 @@ class NaiveEAGLEWorker(EAGLEWorker):
 
         return logits_output, res, model_worker_batch
 
+    def add_logprob_values(
+        self,
+        batch: ScheduleBatch,
+        res: EagleVerifyOutput,
+        logits_output: LogitsProcessorOutput,
+    ):
+        # Extract args
+        logits_output = res.logits_output
+        top_logprobs_nums = batch.top_logprobs_nums
+        token_ids_logprobs = batch.token_ids_logprobs
+        logprobs = torch.nn.functional.log_softmax(
+            logits_output.next_token_logits, dim=-1
+        )
+        batch_next_token_ids = res.verified_id
+        num_tokens_per_req = [accept + 1 for accept in res.accept_length_per_req_cpu]
+
+        # We should repeat top_logprobs_nums to match num_tokens_per_req.
+        top_logprobs_nums_repeat_interleaved = []
+        token_ids_logprobs_repeat_interleaved = []
+        for num, num_tokens in zip(top_logprobs_nums, num_tokens_per_req):
+            top_logprobs_nums_repeat_interleaved.extend([num] * num_tokens)
+        for token_ids, num_tokens in zip(token_ids_logprobs, num_tokens_per_req):
+            token_ids_logprobs_repeat_interleaved.extend([token_ids] * num_tokens)
+
+        # Extract logprobs
+        if any(x > 0 for x in top_logprobs_nums):
+            (
+                logits_output.next_token_top_logprobs_val,
+                logits_output.next_token_top_logprobs_idx,
+            ) = get_top_logprobs(logprobs, top_logprobs_nums_repeat_interleaved)
+
+        if any(x is not None for x in token_ids_logprobs):
+            (
+                logits_output.next_token_token_ids_logprobs_val,
+                logits_output.next_token_token_ids_logprobs_idx,
+            ) = get_token_ids_logprobs(logprobs, token_ids_logprobs_repeat_interleaved)
+
+        logits_output.next_token_logprobs = logprobs[
+            torch.arange(len(batch_next_token_ids), device=batch.sampling_info.device),
+            batch_next_token_ids,
+        ]
+
+        # Add output logprobs to the request
+        pt = 0
+        next_token_logprobs = logits_output.next_token_logprobs.tolist()
+        verified_ids = batch_next_token_ids.tolist()
+        for req, num_tokens in zip(batch.reqs, num_tokens_per_req):
+            for _ in range(num_tokens):
+                if req.return_logprob:
+                    req.output_token_logprobs_val.append(next_token_logprobs[pt])
+                    req.output_token_logprobs_idx.append(verified_ids[pt])
+                    if req.top_logprobs_num > 0:
+                        req.output_top_logprobs_val.append(
+                            res.logits_output.next_token_top_logprobs_val[pt]
+                        )
+                        req.output_top_logprobs_idx.append(
+                            res.logits_output.next_token_top_logprobs_idx[pt]
+                        )
+                pt += 1
+
     def forward_draft_extend(
         self,
         batch: ScheduleBatch,
@@ -497,7 +570,10 @@ class NaiveEAGLEWorker(EAGLEWorker):
             hidden_states=hidden_states,
             verified_id=next_token_ids,
         )
-        batch.spec_info.prepare_for_extend(batch)
+        print(f"Before prepare_for_extend:{batch.input_ids=}")
+        print(f"target prefill done, decode 1 token:{next_token_ids=}")
+        batch.spec_info.prepare_for_extend(batch) # Put target output 1 token into draft input
+        print(f"After prepare_for_extend:{batch.input_ids}")
         batch.spec_info.capture_hidden_mode = CaptureHiddenMode.LAST
         model_worker_batch = batch.get_model_worker_batch()
         forward_batch = ForwardBatch.init_new(
@@ -505,10 +581,19 @@ class NaiveEAGLEWorker(EAGLEWorker):
         )
         forward_batch.return_logprob = False
         logits_output = self.draft_model_runner.forward(forward_batch)
+        
+        # ADD: get next token idx
+        self.draft_token_idx = self.draft_model_runner.sample(logits_output, forward_batch)
+        print(f"Dfrat get token from prefill: {self.draft_token_idx}")
+        
+        forward_batch.spec_info.next_token_idx = next_token_ids
+        print(f"draft_logits_output:{logits_output},{next_token_ids=}")
+        
         self._detect_nan_if_needed(logits_output)
         assert isinstance(forward_batch.spec_info, EagleDraftInput)
         assert forward_batch.spec_info is batch.spec_info
         self.capture_for_decode(logits_output, forward_batch.spec_info)
+        print(f'{forward_batch.spec_info=}')
 
     def forward_draft_extend_after_decode(self, batch: ScheduleBatch):
         # Backup fileds that will be modified in-place
@@ -532,6 +617,9 @@ class NaiveEAGLEWorker(EAGLEWorker):
 
         # Run
         logits_output = self.draft_model_runner.forward(forward_batch)
+                
+        # ADD: get next token idx after extend
+        self.draft_token_idx = self.draft_model_runner.sample(logits_output, forward_batch)
 
         self._detect_nan_if_needed(logits_output)
         self.capture_for_decode(logits_output, forward_batch.spec_info)
@@ -550,3 +638,21 @@ class NaiveEAGLEWorker(EAGLEWorker):
         probs = torch.softmax(logits_output.next_token_logits, dim=-1)
         draft_input.topk_p, draft_input.topk_index = fast_topk(probs, self.topk, dim=-1)
         draft_input.hidden_states = logits_output.hidden_states
+
+    def _detect_nan_if_needed(self, logits_output: LogitsProcessorOutput):
+        if self.enable_nan_detection:
+            logits = logits_output.next_token_logits
+            if torch.any(torch.isnan(logits)):
+                logger.error("Detected errors during sampling! NaN in the logits.")
+                raise ValueError("Detected errors during sampling! NaN in the logits.")
+
+
+def load_token_map(token_map_path: str) -> List[int]:
+    if not os.path.exists(token_map_path):
+        cache_dir = snapshot_download(
+            os.path.dirname(token_map_path),
+            ignore_patterns=["*.bin", "*.safetensors"],
+        )
+        token_map_path = os.path.join(cache_dir, os.path.basename(token_map_path))
+    hot_token_id = torch.load(token_map_path, weights_only=True)
+    return torch.tensor(hot_token_id, dtype=torch.int32)
