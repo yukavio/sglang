@@ -279,9 +279,19 @@ class EAGLEWorker(TpModelWorker):
                 )
             return logits_output, next_token_ids, bid, 0
 
+    def check_kv_cache(self, msg):
+        logger.info(f"######################[check_kv_cache:{msg}]######################")
+        logger.info(f'{self.req_to_token_pool.req_to_token.shape=}')
+        logger.info(f'{self.token_to_kv_pool_allocator.get_kvcache().k_buffer[0].shape=}')
+        logger.info(f'{self.req_to_token_pool.req_to_token[0].tolist()=}')
+        k_buffer_sum = [k.sum().item() for k in self.token_to_kv_pool_allocator.get_kvcache().k_buffer[0]]
+        logger.info(f'{k_buffer_sum=}')
+        logger.info(f"#############################################################")
+    
     def forward_target_extend(
         self, batch: ScheduleBatch
     ) -> Tuple[LogitsProcessorOutput, List[int], int]:
+        self.check_kv_cache("forward_target_extend start")
         """Run the target extend.
 
         Args:
@@ -299,6 +309,9 @@ class EAGLEWorker(TpModelWorker):
         logits_output, next_token_ids = self.target_worker.forward_batch_generation(
             model_worker_batch
         )
+        # print(f"[forward_target_extend]{logits_output.hidden_states=}")
+        # print(f"[forward_target_extend]{logits_output.hidden_states.shape=}")
+        self.check_kv_cache("forward_target_extend end")
         return logits_output, next_token_ids, model_worker_batch.bid
 
     def draft(self, batch: ScheduleBatch):
@@ -312,7 +325,6 @@ class EAGLEWorker(TpModelWorker):
             batch.sampling_info.penalizer_orchestrator.cumulate_output_tokens(
                 spec_info.verified_id.to(torch.int64)
             )
-
         # Allocate cache locations
         if self.page_size == 1:
             out_cache_loc, token_to_kv_pool_state_backup = batch.alloc_token_slots(
@@ -366,7 +378,9 @@ class EAGLEWorker(TpModelWorker):
                     backup_state=True,
                 )
             )
-
+        self.check_kv_cache(f"[draft before assign draft cache loc,{out_cache_loc=}]")
+        
+        # NOTE: Here, we alloc the draft cache locations
         assign_draft_cache_locs[(num_seqs,)](
             batch.req_pool_indices,
             batch.req_to_token_pool.req_to_token,
@@ -377,10 +391,12 @@ class EAGLEWorker(TpModelWorker):
             self.speculative_num_steps,
             self.page_size,
         )
+        self.check_kv_cache(f"[draft after assign draft cache loc]")
         batch.out_cache_loc = out_cache_loc
         batch.seq_lens_sum = torch.sum(batch.seq_lens).item()
         spec_info.positions = batch.seq_lens.repeat_interleave(self.topk, dim=0)
 
+        
         # Get forward batch
         spec_info.capture_hidden_mode = CaptureHiddenMode.LAST
         model_worker_batch = batch.get_model_worker_batch()
@@ -473,13 +489,17 @@ class EAGLEWorker(TpModelWorker):
         return score_list, token_list, parents_list
 
     def verify(self, batch: ScheduleBatch, spec_info: EagleVerifyInput):
+        self.check_kv_cache("verify start")
         spec_info.prepare_for_verify(batch, self.page_size)
         batch.forward_mode = ForwardMode.TARGET_VERIFY
         batch.spec_info = spec_info
         model_worker_batch = batch.get_model_worker_batch()
+        logger.info(f"[verify]{model_worker_batch=}")
+        # print(f"[verify]{batch.input_ids}")
         logits_output, _ = self.target_worker.forward_batch_generation(
             model_worker_batch, skip_sample=True
-        )
+        )# target计算了3的hidden stats
+        logger.info(f'[verify]{logits_output.hidden_states.shape}')
         self._detect_nan_if_needed(logits_output)
         spec_info.hidden_states = logits_output.hidden_states
         res: EagleVerifyOutput = spec_info.verify(
@@ -488,6 +508,7 @@ class EAGLEWorker(TpModelWorker):
             self.token_to_kv_pool_allocator,
             self.page_size,
         )
+        self.check_kv_cache(f"verify end:{res.accepeted_indices=}")
 
         # Post process based on verified outputs.
         # Pick indices that we care (accepeted)
@@ -578,6 +599,7 @@ class EAGLEWorker(TpModelWorker):
             hidden_states: Hidden states from the target model forward
             next_token_ids: Next token ids generated from the target forward.
         """
+        self.check_kv_cache("forward_draft_extend before")
         batch.spec_info = EagleDraftInput(
             hidden_states=hidden_states,
             verified_id=next_token_ids,
@@ -593,7 +615,9 @@ class EAGLEWorker(TpModelWorker):
         self._detect_nan_if_needed(logits_output)
         assert isinstance(forward_batch.spec_info, EagleDraftInput)
         assert forward_batch.spec_info is batch.spec_info
+        # print(f'{logits_output.hidden_states.shape=}')
         self.capture_for_decode(logits_output, forward_batch.spec_info)
+        self.check_kv_cache("forward_draft_extend after")
 
     def forward_draft_extend_after_decode(self, batch: ScheduleBatch):
         # Backup fileds that will be modified in-place
@@ -616,6 +640,7 @@ class EAGLEWorker(TpModelWorker):
         )
 
         # Run
+        # print(f"[forward_draft_extend_after_decode]{batch.input_ids=}")
         logits_output = self.draft_model_runner.forward(forward_batch)
 
         self._detect_nan_if_needed(logits_output)

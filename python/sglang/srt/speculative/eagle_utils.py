@@ -238,6 +238,7 @@ class EagleVerifyInput:
 
     def prepare_for_verify(self, batch: ScheduleBatch, page_size: int):
         batch.input_ids = self.draft_token
+        print(f"{self.draft_token=}")
 
         if page_size == 1:
             batch.out_cache_loc = batch.alloc_token_slots(len(batch.input_ids))

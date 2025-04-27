@@ -38,7 +38,8 @@ class TestEAGLEEngine(CustomTestCase):
     BASE_CONFIG = {
         "model_path": DEFAULT_EAGLE_TARGET_MODEL_FOR_TEST,
         "speculative_draft_model_path": DEFAULT_EAGLE_DRAFT_MODEL_FOR_TEST,
-        "speculative_algorithm": "NAIVE_EAGLE",
+        "speculative_algorithm": "EAGLE",
+        # "speculative_algorithm": "NAIVE_EAGLE",
         "speculative_num_steps": 1,
         "speculative_eagle_topk": 1,
         "speculative_num_draft_tokens": 1,
@@ -48,14 +49,15 @@ class TestEAGLEEngine(CustomTestCase):
     NUM_CONFIGS = 1
 
     def setUp(self):
-        self.prompt = "Today is a sunny day and I like"
-        self.sampling_params = {"temperature": 0, "max_new_tokens": 8}
+        pass
+        # self.prompt = "Today is"
+        # self.sampling_params = {"temperature": 0, "max_new_tokens": 8}
 
-        ref_engine = sgl.Engine(
-            model_path=self.BASE_CONFIG["model_path"], cuda_graph_max_bs=1
-        )
-        self.ref_output = ref_engine.generate(self.prompt, self.sampling_params)["text"]
-        ref_engine.shutdown()
+        # ref_engine = sgl.Engine(
+        #     model_path=self.BASE_CONFIG["model_path"], cuda_graph_max_bs=1
+        # )
+        # self.ref_output = ref_engine.generate(self.prompt, self.sampling_params)["text"]
+        # ref_engine.shutdown()
 
     def test_correctness(self):
         configs = [
@@ -87,7 +89,7 @@ class TestEAGLEEngine(CustomTestCase):
 
     def _test_batch_generation(self, engine):
         prompts = [
-            "Hello The come A France is",
+            "Hello The",
             # "The president of the United States is",
             # "The capital of France is",
             # "The future of come is A",

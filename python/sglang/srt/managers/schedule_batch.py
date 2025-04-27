@@ -982,7 +982,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
 
         # Allocate req slots
         bs = len(self.reqs)
-        req_pool_indices = self.alloc_req_slots(bs)
+        req_pool_indices = self.alloc_req_slots(bs) #0
 
         # Init tensors
         reqs = self.reqs
@@ -1320,6 +1320,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             # `forward_batch_speculative_generation` after running draft models.
             return
 
+        logger.info("Preparing for decode...")
         if self.sampling_info.penalizer_orchestrator.is_required:
             if self.enable_overlap:
                 # TODO: this can be slow, optimize this.

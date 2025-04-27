@@ -67,6 +67,7 @@ class ReqToTokenPool:
         self.free_slots = list(range(size))
 
     def write(self, indices, values):
+        logger.info(f"[ReqToTokenPool write]:{indices=},{values=}")
         self.req_to_token[indices] = values
 
     def available_size(self):
@@ -78,7 +79,7 @@ class ReqToTokenPool:
 
         select_index = self.free_slots[:need_size]
         self.free_slots = self.free_slots[need_size:]
-
+        logger.info(f"[ReqToTokenPool alloc]{need_size=},{select_index=}")
         return select_index
 
     def free(self, free_index: Union[int, List[int]]):
@@ -165,6 +166,8 @@ class TokenToKVPoolAllocator:
 
         select_index = self.free_slots[:need_size]
         self.free_slots = self.free_slots[need_size:]
+        logger.info(f"[TokenToKVPoolAllocator Alloc] {need_size} slots. and select {select_index}., free slots left {len(self.free_slots)}")
+        
         return select_index
 
     def free(self, free_index: torch.Tensor):
