@@ -315,6 +315,7 @@ class EAGLEWorker(TpModelWorker):
         return logits_output, next_token_ids, model_worker_batch.bid
 
     def draft(self, batch: ScheduleBatch):
+        logger.info(f'[before draft]{batch=}')
         # Parse args
         num_seqs = batch.batch_size()
         spec_info = batch.spec_info
@@ -489,20 +490,19 @@ class EAGLEWorker(TpModelWorker):
         return score_list, token_list, parents_list
 
     def verify(self, batch: ScheduleBatch, spec_info: EagleVerifyInput):
-        self.check_kv_cache("verify start")
-        logger.info(f"batch.seq_lens = {batch.seq_lens}")
+        # self.check_kv_cache("verify start")
+        # logger.info(f"batch.seq_lens = {batch.seq_lens}")
         spec_info.prepare_for_verify(batch, self.page_size)
         batch.forward_mode = ForwardMode.TARGET_VERIFY
         batch.spec_info = spec_info
+        logger.info(f"[after draft, before verify]{batch=}")
         model_worker_batch = batch.get_model_worker_batch()
-        logger.info(f"[verify]{model_worker_batch=}")
-        # print(f"[verify]{batch.input_ids}")
         logits_output, _ = self.target_worker.forward_batch_generation(
             model_worker_batch, skip_sample=True
         )# target计算了3的hidden stats
         logger.info(f"[verify]{logits_output=}")
-        self.check_kv_cache(f"verify end")
-        logger.info(f'[verify]{logits_output.hidden_states.shape}')
+        # self.check_kv_cache(f"verify end")
+        # logger.info(f'[verify]{logits_output.hidden_states.shape}')
         self._detect_nan_if_needed(logits_output)
         spec_info.hidden_states = logits_output.hidden_states
         res: EagleVerifyOutput = spec_info.verify(
@@ -514,6 +514,7 @@ class EAGLEWorker(TpModelWorker):
 
         # Post process based on verified outputs.
         # Pick indices that we care (accepeted)
+        logger.info(f'[verify]{res.accepeted_indices}')
         logits_output.next_token_logits = logits_output.next_token_logits[
             res.accepeted_indices
         ]
@@ -642,11 +643,12 @@ class EAGLEWorker(TpModelWorker):
         )
 
         # Run
-        # print(f"[forward_draft_extend_after_decode]{batch.input_ids=}")
+        print(f"[forward_draft_extend_after_decode]{forward_batch=}")
         logits_output = self.draft_model_runner.forward(forward_batch)
 
         self._detect_nan_if_needed(logits_output)
         self.capture_for_decode(logits_output, forward_batch.spec_info)
+        logger.info(f"[draft decode done!]{logits_output=}, {forward_batch=}")
 
         # Restore backup.
         # This is because `seq_lens` can be modified in `prepare_extend_after_decode`

@@ -147,7 +147,7 @@ class NaiveEagleWorker(TpModelWorker):
             self.init_attention_backend()
             self.init_cuda_graphs()
             
-        self.exit_cnt = 2
+        self.exit_cnt = 1
         self.run_cnt = 0
         
 
@@ -326,6 +326,7 @@ class NaiveEagleWorker(TpModelWorker):
         spec_info = batch.spec_info
 
         batch.input_ids = batch.output_ids
+        batch.output_ids = None
         # logger.info(f"check kv: {self.req_to_token_pool=}, {self.token_to_kv_pool_allocator=},{self.token_to_kv_pool_allocator.get_kvcache().get_key_buffer(0)=}")
         # logger.info(f"check kv: {self.target_worker.get_memory_pool()=},{self.target_worker.get_memory_pool()[1].get_kvcache().get_key_buffer(0)=}")
         if self.page_size == 1:
@@ -348,83 +349,129 @@ class NaiveEagleWorker(TpModelWorker):
         else:
             raise NotImplementedError("josephyou: Page size > 1 not supported yet")
         
-        batch.forward_mode = ForwardMode.EXTEND
-        batch.seq_lens_sum = torch.sum(batch.seq_lens + num_seqs * 2).item()
-        batch.seq_lens.add_(2)
-        batch.extend_lens[0] = 2  # we always extend 2 tokens here
-        batch.extend_num_tokens = sum(batch.extend_lens)
-        batch.return_logprob = True
-        batch.top_logprobs_nums = [1]
-        batch.token_ids_logprobs = [[0, 1]]
-        batch.extend_logprob_start_lens = [0] # We always get all props, so we set it to zero to get it all props
+        batch.forward_mode = ForwardMode.TARGET_VERIFY
+        batch.input_ids = torch.cat((batch.input_ids, spec_info.topk_index[0]))
+        # batch.seq_lens_sum = torch.sum(batch.seq_lens + num_seqs * 2).item()
+        # batch.seq_lens.add_(2)
+        # batch.extend_lens[0] = 2  # we always extend 2 tokens here
+        # batch.extend_num_tokens = sum(batch.extend_lens)
+        # batch.return_logprob = True
+        # batch.top_logprobs_nums = [1]
+        # batch.token_ids_logprobs = [[0, 1]]
+        # batch.extend_logprob_start_lens = [0] # We always get all props, so we set it to zero to get it all props
+        # construct TargetVerifyInput: We don't need to build a tree for navie eagle
+        positions = torch.empty((num_seqs * 2,), device=self.device, dtype=torch.long)
+        # For bs = 1
+        positions[0] = batch.seq_lens[0]
+        positions[1] = batch.seq_lens[0] + 1 
+        tree_mask = torch.full((batch.seq_lens_sum * 2 + 2  * 2 * num_seqs,),
+                            True,
+                            device=self.device,)
+        tree_mask[batch.seq_lens_sum + 1] = False
+        batch.spec_info = EagleVerifyInput(
+            draft_token=batch.input_ids,
+            custom_mask=tree_mask, 
+            positions=positions,
+            retrive_index=None,
+            retrive_next_token=None,
+            retrive_next_sibling=None,
+            retrive_cum_len=None,
+            draft_token_num=2,
+            spec_steps=1,
+            capture_hidden_mode=CaptureHiddenMode.FULL,
+        )
+        logger.info(f"[before verify]{batch=}")
         model_worker_batch = batch.get_model_worker_batch()
-
-        model_worker_batch.input_ids = torch.cat((model_worker_batch.input_ids, spec_info.topk_index[0])) #TODO: Adapt for multi requests.
+        # logger.info(f'[before cat]{model_worker_batch.input_ids=}, {spec_info.topk_index[0]=}')
+        # model_worker_batch.input_ids = torch.cat((model_worker_batch.input_ids, spec_info.topk_index[0])) #TODO: Adapt for multi requests.
         
         
         # logger.info(f'[target forward batch]{model_worker_batch=}')
-        model_worker_batch.capture_hidden_mode = CaptureHiddenMode.FULL
         logits_output, next_token_ids = self.target_worker.forward_batch_generation(
             model_worker_batch, skip_sample=False
         )
-        
-        self.check_kv_cache("[after target forward with draft input]")
-        self.check_exit()
-        
-        # logger.info(f'{logits_output=}, {next_token_ids=}')
+        next_token_ids_cpu = next_token_ids.tolist()
+        batch.spec_info.hidden_states = logits_output.hidden_states
+        # self.check_kv_cache("[after target forward with draft input]")
+        logger.info(f'[after decode forward batch]{logits_output=}, {next_token_ids=}')
         # draft token = spec_info.topk_index[0], verify token = logits_output.input_top_logprobs_idx[0][0]
         # logger.info(f"draft_token={spec_info.topk_index[0]}, verify_token={logits_output.input_top_logprobs_idx[0][0]}")
         draft_token = model_worker_batch.input_ids[1]
-        verify_token = logits_output.input_top_logprobs_idx[0][0]
-        if draft_token == verify_token:
+        target_token = next_token_ids_cpu[0]
+        if draft_token == target_token:
             logger.info("verify success!!!!!!!")
             self.check_exit()
             pass
         else:
-            
-            # logger.info(f'verify fail, {batch=}')
-            # 1. release 1 kv cache because reject draft and set batch.output_ids as verify_token for next decode step
-            # logger.warning(f"Draft token {draft_token} does not match verify token {verify_token}.")
-            self.token_to_kv_pool_allocator.free(model_worker_batch.out_cache_loc[1:])  # Release the last token
+            batch.reqs[0].output_ids.append(target_token) # just for 1 req, if more reqs, need to add all reqs.
+            # Release the last token
+            self.token_to_kv_pool_allocator.free(batch.out_cache_loc[1:])  # Release the last token
             batch.out_cache_loc = batch.out_cache_loc[0:1]
-            # 2. parepare input ids and other infos.
-            batch.input_ids = torch.tensor(verify_token, device=self.device, dtype=torch.int32)
+            # accept length:
+            accept_length = torch.zeros((num_seqs,), dtype=torch.int32, device="cuda")
+            accept_length.add_(0) # can delete, no accept from draft model.
+            accept_length_cpu = accept_length.tolist()
+            # just accept 1 token from target model
+            batch.seq_lens.add_(1)
+
+
+            
+
+            # do not accept, construct new draft input
+            draft_input = EagleDraftInput()
+            draft_input.hidden_states = batch.spec_info.hidden_states[0:1] # we only 1 req, so first dim is 0
+            logger.info(f"draft_input={draft_input.hidden_states=}")
+            draft_input.accept_length = accept_length
+            draft_input.accept_length_cpu = accept_length_cpu
+            draft_input.seq_lens_for_draft_extend = batch.seq_lens
+            draft_input.req_pool_indices_for_draft_extend = batch.req_pool_indices
+
+            batch.spec_info = draft_input
+
+            logits_output.hidden_states = logits_output.hidden_states[0:1]
+            logits_output.next_token_logits = logits_output.next_token_logits[0:1]
+            
+            seq_lens_backup = batch.seq_lens.clone()
+            req_pool_indices_backup = batch.req_pool_indices
+            accept_length_backup = batch.spec_info.accept_length
+            return_logprob_backup = batch.return_logprob
+            
             batch.forward_mode = ForwardMode.DRAFT_EXTEND
-            batch.seq_lens_sum = batch.seq_lens_sum - num_seqs * 1
-            batch.seq_lens.sub_(1)
-            batch.extend_lens[0] = 1  # we extend 1 tokens for draft if match fail
-            batch.return_logprob = False
+            accept_length_cpu = batch.spec_info.accept_length_cpu
+            batch.extend_lens = [x + 1 for x in accept_length_cpu]
             batch.extend_num_tokens = sum(batch.extend_lens)
-            batch.top_logprobs_nums = None
-            batch.token_ids_logprobs = None
+            batch.seq_lens = batch.spec_info.seq_lens_for_draft_extend
+            batch.req_pool_indices = batch.spec_info.req_pool_indices_for_draft_extend
+            seq_lens_cpu = batch.seq_lens.tolist()
+            batch.seq_lens_sum = sum(seq_lens_cpu)
+            batch.input_ids = torch.tensor([target_token], device=self.device, dtype=torch.int32)
             
-            # update batch.spec_info
             batch.spec_info.positions = batch.seq_lens.clone()
-            batch.spec_info.positions.sub_(1) # we just extend 1 tokens here
+            batch.spec_info.positions.sub_(1)
+            batch.spec_info.accept_length.add_(1)
             
-            verify_token_hidden_states = logits_output.hidden_states[0:1]
-            batch.spec_info.hidden_states = verify_token_hidden_states
-            batch.spec_info.accept_length = torch.tensor([1], device=self.device, dtype=torch.int32)
+            batch.spec_info.capture_hidden_mode = CaptureHiddenMode.LAST
+            batch.return_logprob = False
+            # logger.info(f'[temp!batch=]{batch=}')
+            # logger.info(f'[batch.spec_info.positions]={batch.spec_info.positions=}')
             
             model_worker_batch = batch.get_model_worker_batch()
-            # 3. start draft forward
-            model_worker_batch.capture_hidden_mode = CaptureHiddenMode.LAST
             forward_batch = ForwardBatch.init_new(
                 model_worker_batch, self.draft_model_runner
             )
+            # logger.info(f'[draft forward batch]{forward_batch=}')
             draft_logits_output = self.draft_model_runner.forward(forward_batch)
-            # logger.info(f'[draft forward batch]{model_worker_batch=}')
             self.capture_for_decode(draft_logits_output, forward_batch.spec_info)
-            logger.info(f'[draft decode done]{draft_logits_output=}, {forward_batch=}')
+            logger.info(f'[draft decode done!]{draft_logits_output=}, {forward_batch=}')
             
+            exit(-1)
             batch.forward_mode = ForwardMode.DECODE
-            logits_output.hidden_states = logits_output.hidden_states[0:1] # just keep first token
-            logger.info(f"[ready to return], {logits_output=}, {verify_token=}, {model_worker_batch.bid=}, 0")
-            self.check_exit()
-            # TODO: ADD to the output ids!
-            req = batch.reqs[0]
-            req.output_ids.append(verify_token[0])
-            return logits_output, verify_token, model_worker_batch.bid, 0
+            batch.seq_lens = seq_lens_backup
+            batch.req_pool_indices = req_pool_indices_backup
+            batch.spec_info.accept_length = accept_length_backup
+            batch.return_logprob = return_logprob_backup
+            # 4.prepare for next decode
+            return logits_output, batch.input_ids, model_worker_batch.bid, 0 # batch.input_ids is accepted token, only one, comes from target.
             
 
             

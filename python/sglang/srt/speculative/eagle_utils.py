@@ -139,6 +139,7 @@ class EagleDraftInput:
             req_to_token.size(1),
         )
 
+        logger.info(f"[eagleDraftInput output]{kv_indices=},{cum_kv_seq_len=},{qo_indptr=}")
         return kv_indices, cum_kv_seq_len, qo_indptr, None
 
     def filter_batch(self, new_indices: torch.Tensor):

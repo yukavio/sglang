@@ -181,14 +181,14 @@ class LlamaAttention(nn.Module):
         forward_batch: ForwardBatch,
     ) -> torch.Tensor:
         qkv, _ = self.qkv_proj(hidden_states)
-        # logger.info(f"[temp!!]{torch.isnan(qkv).any()=}")
+        # logger.info(f"[temp!!]{qkv=}")
         q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
         q, k = self.rotary_emb(positions, q, k)
-        # logger.info(f"[temp!!]{torch.isnan(q).any()=},{torch.isnan(k).any()=}")
+        # logger.info(f"[temp!!]{q=},{k=}")
         attn_output = self.attn(q, k, v, forward_batch)
-        # logger.info(f"[temp!!]{torch.isnan(attn_output).any()=}")
+        # logger.info(f"[temp!!]{attn_output=}")
         output, _ = self.o_proj(attn_output)
-        # logger.info(f"[temp!!]{torch.isnan(output).any()=}")
+        # logger.info(f"[temp!!]{output=}")
         return output
 
 
@@ -261,7 +261,7 @@ class LlamaDecoderLayer(nn.Module):
             hidden_states=hidden_states,
             forward_batch=forward_batch,
         )
-        # logger.info(f'[temp!!]{hidden_states=}')
+        # logger.info(f'[temp!!decode!]{hidden_states=}')
 
         # Fully Connected
         hidden_states, residual = self.post_attention_layernorm(hidden_states, residual)
@@ -434,7 +434,8 @@ class LlamaForCausalLM(nn.Module):
             hidden_states = self.model(
                 input_ids, positions, forward_batch, input_embeds
             )
-
+        logger.info(f'[temp!!]{input_ids=}, {positions=}, {forward_batch=}, {input_embeds=}')
+        logger.info(f'[temp!!!]{hidden_states=}')
         if not get_embedding:
             return self.logits_processor(
                 input_ids, hidden_states, self.lm_head, forward_batch, aux_hidden_states
