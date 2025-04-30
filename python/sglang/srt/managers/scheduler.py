@@ -630,6 +630,7 @@ class Scheduler(
             self.cur_batch = batch
 
             if batch:
+                logger.info(f"[input batch]={batch.input_ids=},{batch.forward_mode=}")
                 result = self.run_batch(batch)
                 self.process_batch_result(batch, result)
             else:
@@ -1168,7 +1169,6 @@ class Scheduler(
         # Handle DP attention
         if self.server_args.enable_dp_attention or self.server_args.enable_sp_layernorm:
             ret, _ = self.prepare_dp_attn_batch(ret)
-
         return ret
 
     def get_new_batch_prefill(self) -> Optional[ScheduleBatch]:
@@ -1419,9 +1419,12 @@ class Scheduler(
         result: Union[GenerationBatchResult, EmbeddingBatchResult],
     ):
         if batch.forward_mode.is_decode():
+            # logger.info(f"[in decode]{batch=}")
             self.process_batch_result_decode(batch, result)
         elif batch.forward_mode.is_extend():
+            # logger.info(f"[in prefill before], {batch.input_ids=},{batch.output_ids=}")
             self.process_batch_result_prefill(batch, result)
+            # logger.info(f"[in prefill done], {batch.input_ids=},{batch.output_ids=}")
         elif batch.forward_mode.is_idle():
             if self.enable_overlap:
                 self.tp_worker.resolve_batch_result(result.bid)

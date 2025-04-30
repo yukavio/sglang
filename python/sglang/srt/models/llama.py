@@ -181,10 +181,14 @@ class LlamaAttention(nn.Module):
         forward_batch: ForwardBatch,
     ) -> torch.Tensor:
         qkv, _ = self.qkv_proj(hidden_states)
+        # logger.info(f"[temp!!]{torch.isnan(qkv).any()=}")
         q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
         q, k = self.rotary_emb(positions, q, k)
+        # logger.info(f"[temp!!]{torch.isnan(q).any()=},{torch.isnan(k).any()=}")
         attn_output = self.attn(q, k, v, forward_batch)
+        # logger.info(f"[temp!!]{torch.isnan(attn_output).any()=}")
         output, _ = self.o_proj(attn_output)
+        # logger.info(f"[temp!!]{torch.isnan(output).any()=}")
         return output
 
 
@@ -257,6 +261,7 @@ class LlamaDecoderLayer(nn.Module):
             hidden_states=hidden_states,
             forward_batch=forward_batch,
         )
+        # logger.info(f'[temp!!]{hidden_states=}')
 
         # Fully Connected
         hidden_states, residual = self.post_attention_layernorm(hidden_states, residual)

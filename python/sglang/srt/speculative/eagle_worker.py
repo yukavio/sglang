@@ -490,6 +490,7 @@ class EAGLEWorker(TpModelWorker):
 
     def verify(self, batch: ScheduleBatch, spec_info: EagleVerifyInput):
         self.check_kv_cache("verify start")
+        logger.info(f"batch.seq_lens = {batch.seq_lens}")
         spec_info.prepare_for_verify(batch, self.page_size)
         batch.forward_mode = ForwardMode.TARGET_VERIFY
         batch.spec_info = spec_info
@@ -499,6 +500,8 @@ class EAGLEWorker(TpModelWorker):
         logits_output, _ = self.target_worker.forward_batch_generation(
             model_worker_batch, skip_sample=True
         )# target计算了3的hidden stats
+        logger.info(f"[verify]{logits_output=}")
+        self.check_kv_cache(f"verify end")
         logger.info(f'[verify]{logits_output.hidden_states.shape}')
         self._detect_nan_if_needed(logits_output)
         spec_info.hidden_states = logits_output.hidden_states
@@ -508,7 +511,6 @@ class EAGLEWorker(TpModelWorker):
             self.token_to_kv_pool_allocator,
             self.page_size,
         )
-        self.check_kv_cache(f"verify end:{res.accepeted_indices=}")
 
         # Post process based on verified outputs.
         # Pick indices that we care (accepeted)

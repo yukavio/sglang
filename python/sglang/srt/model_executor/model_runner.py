@@ -1033,6 +1033,10 @@ class ModelRunner:
     def forward(
         self, forward_batch: ForwardBatch, skip_attn_backend_init: bool = False
     ) -> LogitsProcessorOutput:
+        if self.is_draft_worker:
+            logger.info(f"[draft input]:{forward_batch=}")
+        else:
+            logger.info(f"[target input]:{forward_batch=}")
         if (
             forward_batch.forward_mode.is_cuda_graph()
             and self.cuda_graph_runner

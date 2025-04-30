@@ -1372,7 +1372,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             self.out_cache_loc = self.alloc_paged_token_slots_decode(
                 self.seq_lens, last_loc
             )
-
+        logger.info(f"{self.req_pool_indices=}, {locs=}, {self.out_cache_loc=}")
         self.req_to_token_pool.write(
             (self.req_pool_indices, locs), self.out_cache_loc.to(torch.int32)
         )
@@ -1473,7 +1473,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             extend_seq_lens = self.extend_lens
             extend_prefix_lens = self.prefix_lens
             extend_logprob_start_lens = self.extend_logprob_start_lens
-
+            logger.info(f"[schedule_batch]{extend_logprob_start_lens=}, {extend_seq_lens=}")
         # Create seq_lens_cpu when needed
         if (
             (

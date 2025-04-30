@@ -238,7 +238,7 @@ class EagleVerifyInput:
 
     def prepare_for_verify(self, batch: ScheduleBatch, page_size: int):
         batch.input_ids = self.draft_token
-        print(f"{self.draft_token=}")
+        logger.info(f"{self.draft_token=}")
 
         if page_size == 1:
             batch.out_cache_loc = batch.alloc_token_slots(len(batch.input_ids))
@@ -555,12 +555,12 @@ def create_extend_spec_info(
     accept_len_cum,
     positions,
     new_verified_id,
-    accept_len_upper: tl.constexpr,
+    accept_len_upper: tl.constexpr, # 1
 ):
     pid = tl.program_id(axis=0)
     offset = 0 if pid == 0 else tl.load(accept_len_cum + pid - 1)
     seq_length = tl.load(seq_len + pid)
-    accept_length = tl.load(accept_len + pid)
+    accept_length = tl.load(accept_len + pid) # 1
     positions_ptr = positions + offset
     data = tl.arange(0, accept_len_upper)
     mask = data < accept_length

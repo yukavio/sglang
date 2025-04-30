@@ -32,9 +32,10 @@ from sglang.srt.speculative.eagle_utils import (
     EagleVerifyOutput,
     assign_draft_cache_locs,
     select_top_k_tokens,
+    assign_req_to_token_pool,
 )
 from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
-from sglang.srt.utils import empty_context, fast_topk, get_available_gpu_memory, is_cuda
+from sglang.srt.utils import empty_context, fast_topk, get_available_gpu_memory, is_cuda, next_power_of_2
 
 if is_cuda():
     from sgl_kernel import segment_packbits
@@ -146,9 +147,10 @@ class NaiveEagleWorker(TpModelWorker):
             self.init_attention_backend()
             self.init_cuda_graphs()
             
-            
-        # ADD: navie verify
-        self.draft_token_idx = None
+        self.exit_cnt = 2
+        self.run_cnt = 0
+        
+
     def init_attention_backend(self):
         # Create multi-step attn backends and cuda graph runners
         if self.server_args.attention_backend == "flashinfer":
@@ -251,23 +253,7 @@ class NaiveEagleWorker(TpModelWorker):
             the batch id (used for overlap schedule), and number of accepeted tokens.
         """
         if batch.forward_mode.is_decode():
-            # ADD: 直接进行verify
-            with self.draft_tp_context(self.draft_model_runner.tp_group):
-                spec_info = self.draft(batch)
-            logits_output, verify_output, model_worker_batch = self.verify(
-                batch, spec_info
-            )
-
-            # If it is None, it means all requests are finished
-            if batch.spec_info.verified_id is not None:
-                with self.draft_tp_context(self.draft_model_runner.tp_group):
-                    self.forward_draft_extend_after_decode(batch)
-            return (
-                logits_output,
-                verify_output.verified_id,
-                model_worker_batch.bid,
-                sum(verify_output.accept_length_per_req_cpu),
-            )
+            return self.draft(batch)
         elif batch.forward_mode.is_idle():
             model_worker_batch = batch.get_model_worker_batch()
             logits_output, next_token_ids = self.target_worker.forward_batch_generation(
@@ -277,19 +263,35 @@ class NaiveEagleWorker(TpModelWorker):
             return logits_output, next_token_ids, model_worker_batch.bid, 0
         else:
             logits_output, next_token_ids, bid = self.forward_target_extend(batch)
-            print(f'[forward_target_extend]{logits_output=}')
-            print(f'[forward_target_extend]{logits_output.hidden_states.shape=}')
-            print(f'[forward_target_extend]{next_token_ids=}')
-            print(f'[forward_target_extend]{bid=}')
             with self.draft_tp_context(self.draft_model_runner.tp_group):
                 self.forward_draft_extend(
                     batch, logits_output.hidden_states, next_token_ids
                 )
             return logits_output, next_token_ids, bid, 0
 
+    def check_kv_cache(self, msg):
+        logger.info(f"######################[check_kv_cache:{msg}]######################")
+        logger.info(f'{self.req_to_token_pool.req_to_token.shape=}')
+        logger.info(f'{self.token_to_kv_pool_allocator.get_kvcache().k_buffer[0].shape=}')
+        logger.info(f'{self.req_to_token_pool.req_to_token[0].tolist()=}')
+        k_buffer_sum = [k.sum().item() for k in self.token_to_kv_pool_allocator.get_kvcache().k_buffer[0]]
+        logger.info(f'{k_buffer_sum=}')
+        logger.info(f"#############################################################")
+    
+    
+    def check_exit(self):
+        if self.run_cnt == self.exit_cnt:
+            exit(-1)
+    
     def forward_target_extend(
         self, batch: ScheduleBatch
     ) -> Tuple[LogitsProcessorOutput, List[int], int]:
+        # logger.info(f"check kv: {self.req_to_token_pool=}, {self.token_to_kv_pool_allocator=},{self.token_to_kv_pool_allocator.get_kvcache().get_key_buffer(0)=}")
+        # logger.info(f"check kv: {self.target_worker.get_memory_pool()=},{self.target_worker.get_memory_pool()[1].get_kvcache().get_key_buffer(0)=}")
+        
+        
+        self.check_kv_cache("forward_target_extend start")
+        logger.info(f"[forward_target_extend]{batch.input_ids=}")
         """Run the target extend.
 
         Args:
@@ -303,101 +305,133 @@ class NaiveEagleWorker(TpModelWorker):
         # Forward with the target model and get hidden states.
         # We need the full hidden states to prefill the KV cache of the draft model.
         model_worker_batch = batch.get_model_worker_batch()
+        logger.info(f"[forward_target_extend]{model_worker_batch=}")
         model_worker_batch.capture_hidden_mode = CaptureHiddenMode.FULL
         logits_output, next_token_ids = self.target_worker.forward_batch_generation(
             model_worker_batch
         )
+        logger.info(f"[forward_target_extend]{logits_output=}")
+        # print(f"[forward_target_extend]{logits_output.hidden_states=}")
+        # print(f"[forward_target_extend]{logits_output.hidden_states.shape=}")
+        self.check_kv_cache("forward_target_extend end")
         return logits_output, next_token_ids, model_worker_batch.bid
 
     def draft(self, batch: ScheduleBatch):
+        self.run_cnt += 1
+        logger.info(f"[draft decode start!!!!!]turns={self.run_cnt},\n{batch=}")
+        # logger.info(f"[draft batch all]{batch=}")
+        # logger.info(f"[draft batch]{batch.input_ids=}, {batch.spec_info.topk_index=}")
         # Parse args
         num_seqs = batch.batch_size()
         spec_info = batch.spec_info
-        print(f"[draft]:{num_seqs=}")
-        print(f"[draft]:{spec_info=}")
 
-        # Accumulate penalty
-        if batch.sampling_info.penalizer_orchestrator.is_required:
-            # This is a relaxed version of penalties for speculative decoding.
-            batch.sampling_info.penalizer_orchestrator.cumulate_output_tokens(
-                spec_info.verified_id.to(torch.int64)
-            )
-
-        # Allocate cache locations
+        batch.input_ids = batch.output_ids
+        # logger.info(f"check kv: {self.req_to_token_pool=}, {self.token_to_kv_pool_allocator=},{self.token_to_kv_pool_allocator.get_kvcache().get_key_buffer(0)=}")
+        # logger.info(f"check kv: {self.target_worker.get_memory_pool()=},{self.target_worker.get_memory_pool()[1].get_kvcache().get_key_buffer(0)=}")
         if self.page_size == 1:
-            out_cache_loc, token_to_kv_pool_state_backup = batch.alloc_token_slots(
-                num_seqs * self.topk * self.speculative_num_steps, backup_state=True
+            batch.out_cache_loc = batch.alloc_token_slots(
+                num_seqs * 2, backup_state=False # hard code, 1 for target preill, 1 for draft
             )
-        else:
-            prefix_lens = batch.seq_lens
-            seq_lens = prefix_lens + self.speculative_num_steps
-            extend_num_tokens = num_seqs * self.speculative_num_steps
-
-            last_loc = get_last_loc(
-                batch.req_to_token_pool.req_to_token,
+            # logger.info(f"[draft batch]{batch.out_cache_loc=},{batch.seq_lens=}")
+            end_offset = batch.seq_lens + 2 # assign 2 tokens
+            # self.check_kv_cache("[before assign_req_to_token_pool]")
+            assign_req_to_token_pool[(num_seqs,)](
                 batch.req_pool_indices,
-                prefix_lens,
+                batch.req_to_token_pool.req_to_token,
+                batch.seq_lens,
+                end_offset,
+                batch.out_cache_loc,
+                batch.req_to_token_pool.req_to_token.shape[1],
+                next_power_of_2(num_seqs),
             )
-            out_cache_loc, token_to_kv_pool_state_backup = (
-                batch.alloc_paged_token_slots_extend(
-                    prefix_lens,
-                    seq_lens,
-                    last_loc,
-                    extend_num_tokens,
-                    backup_state=True,
-                )
-            )
-
-        assign_draft_cache_locs[(num_seqs,)](
-            batch.req_pool_indices,
-            batch.req_to_token_pool.req_to_token,
-            batch.seq_lens,
-            out_cache_loc,
-            batch.req_to_token_pool.req_to_token.shape[1],
-            self.topk,
-            self.speculative_num_steps,
-            self.page_size,
-        )
-        batch.out_cache_loc = out_cache_loc
-        batch.seq_lens_sum = torch.sum(batch.seq_lens).item()
-        spec_info.positions = batch.seq_lens.repeat_interleave(self.topk, dim=0)
-
-        # Get forward batch
-        spec_info.capture_hidden_mode = CaptureHiddenMode.LAST
-        model_worker_batch = batch.get_model_worker_batch()
-        forward_batch = ForwardBatch.init_new(
-            model_worker_batch, self.draft_model_runner
-        )
-        can_cuda_graph = self.cuda_graph_runner and self.cuda_graph_runner.can_run(
-            forward_batch
-        )
-        if can_cuda_graph:
-            score_list, token_list, parents_list = self.cuda_graph_runner.replay(
-                forward_batch
-            )
+            # self.check_kv_cache("[after assign_req_to_token_pool]")
         else:
-            # Initialize attention backend
-            self.draft_attn_backend.init_forward_metadata(forward_batch)
+            raise NotImplementedError("josephyou: Page size > 1 not supported yet")
+        
+        batch.forward_mode = ForwardMode.EXTEND
+        batch.seq_lens_sum = torch.sum(batch.seq_lens + num_seqs * 2).item()
+        batch.seq_lens.add_(2)
+        batch.extend_lens[0] = 2  # we always extend 2 tokens here
+        batch.extend_num_tokens = sum(batch.extend_lens)
+        batch.return_logprob = True
+        batch.top_logprobs_nums = [1]
+        batch.token_ids_logprobs = [[0, 1]]
+        batch.extend_logprob_start_lens = [0] # We always get all props, so we set it to zero to get it all props
+        model_worker_batch = batch.get_model_worker_batch()
+
+        model_worker_batch.input_ids = torch.cat((model_worker_batch.input_ids, spec_info.topk_index[0])) #TODO: Adapt for multi requests.
+        
+        
+        # logger.info(f'[target forward batch]{model_worker_batch=}')
+        model_worker_batch.capture_hidden_mode = CaptureHiddenMode.FULL
+        logits_output, next_token_ids = self.target_worker.forward_batch_generation(
+            model_worker_batch, skip_sample=False
+        )
+        
+        self.check_kv_cache("[after target forward with draft input]")
+        self.check_exit()
+        
+        # logger.info(f'{logits_output=}, {next_token_ids=}')
+        # draft token = spec_info.topk_index[0], verify token = logits_output.input_top_logprobs_idx[0][0]
+        # logger.info(f"draft_token={spec_info.topk_index[0]}, verify_token={logits_output.input_top_logprobs_idx[0][0]}")
+        draft_token = model_worker_batch.input_ids[1]
+        verify_token = logits_output.input_top_logprobs_idx[0][0]
+        if draft_token == verify_token:
+            logger.info("verify success!!!!!!!")
+            self.check_exit()
+            pass
+        else:
+            
+            # logger.info(f'verify fail, {batch=}')
+            # 1. release 1 kv cache because reject draft and set batch.output_ids as verify_token for next decode step
+            # logger.warning(f"Draft token {draft_token} does not match verify token {verify_token}.")
+            self.token_to_kv_pool_allocator.free(model_worker_batch.out_cache_loc[1:])  # Release the last token
+            batch.out_cache_loc = batch.out_cache_loc[0:1]
+            # 2. parepare input ids and other infos.
+            batch.input_ids = torch.tensor(verify_token, device=self.device, dtype=torch.int32)
+            batch.forward_mode = ForwardMode.DRAFT_EXTEND
+            batch.seq_lens_sum = batch.seq_lens_sum - num_seqs * 1
+            batch.seq_lens.sub_(1)
+            batch.extend_lens[0] = 1  # we extend 1 tokens for draft if match fail
+            batch.return_logprob = False
+            batch.extend_num_tokens = sum(batch.extend_lens)
+            batch.top_logprobs_nums = None
+            batch.token_ids_logprobs = None
+            
+            # update batch.spec_info
+            batch.spec_info.positions = batch.seq_lens.clone()
+            batch.spec_info.positions.sub_(1) # we just extend 1 tokens here
+            
+            verify_token_hidden_states = logits_output.hidden_states[0:1]
+            batch.spec_info.hidden_states = verify_token_hidden_states
+            batch.spec_info.accept_length = torch.tensor([1], device=self.device, dtype=torch.int32)
+            
+            model_worker_batch = batch.get_model_worker_batch()
+            # 3. start draft forward
+            model_worker_batch.capture_hidden_mode = CaptureHiddenMode.LAST
             forward_batch = ForwardBatch.init_new(
                 model_worker_batch, self.draft_model_runner
             )
-            # Run forward steps
-            score_list, token_list, parents_list = self.draft_forward(forward_batch)
+            draft_logits_output = self.draft_model_runner.forward(forward_batch)
+            # logger.info(f'[draft forward batch]{model_worker_batch=}')
+            self.capture_for_decode(draft_logits_output, forward_batch.spec_info)
+            logger.info(f'[draft decode done]{draft_logits_output=}, {forward_batch=}')
+            
+            batch.forward_mode = ForwardMode.DECODE
+            logits_output.hidden_states = logits_output.hidden_states[0:1] # just keep first token
+            logger.info(f"[ready to return], {logits_output=}, {verify_token=}, {model_worker_batch.bid=}, 0")
+            self.check_exit()
+            # TODO: ADD to the output ids!
+            req = batch.reqs[0]
+            req.output_ids.append(verify_token[0])
+            return logits_output, verify_token, model_worker_batch.bid, 0
+            
 
-        self.token_to_kv_pool_allocator.restore_state(token_to_kv_pool_state_backup)
+            
+        # logger.info(f"check kv: {self.req_to_token_pool=}, {self.token_to_kv_pool_allocator=},{self.token_to_kv_pool_allocator.get_kvcache().get_key_buffer(0)=}")
+        # logger.info(f"check kv: {self.target_worker.get_memory_pool()=},{self.target_worker.get_memory_pool()[1].get_kvcache().get_key_buffer(0)=}")
 
-        ret = EagleVerifyInput.create(
-            spec_info.verified_id,
-            score_list,
-            token_list,
-            parents_list,
-            batch.seq_lens,
-            batch.seq_lens_sum,
-            self.topk,
-            self.speculative_num_steps,
-            self.server_args.speculative_num_draft_tokens,
-        )
-        return ret
+        
 
     def draft_forward(self, forward_batch: ForwardBatch):
         # Parse args
@@ -453,21 +487,20 @@ class NaiveEagleWorker(TpModelWorker):
 
         return score_list, token_list, parents_list
 
-    def verify(self, batch: ScheduleBatch, spec_info: EagleVerifyInput, ):
+    def verify(self, batch: ScheduleBatch, spec_info: EagleVerifyInput):
+
+        self.check_kv_cache("verify start")
         spec_info.prepare_for_verify(batch, self.page_size)
         batch.forward_mode = ForwardMode.TARGET_VERIFY
         batch.spec_info = spec_info
         model_worker_batch = batch.get_model_worker_batch()
-        
-        # ADD get next_token_ids from target worker after prefill
-        logits_output, next_token_ids = self.target_worker.forward_batch_generation(
-            model_worker_batch, skip_sample=False
-        )
-        print(f"verify:{next_token_ids=}")
-        if next_token_ids == self.draft_token_idx:
-            print("verified done!!!!!!!!!!!")
-        else:
-            print(f"{next_token_ids=}, {self.draft_token_idx=},verified failed!!!!!!!!!!!")
+        logger.info(f"[verify]{model_worker_batch=}")
+        # print(f"[verify]{batch.input_ids}")
+        logits_output, _ = self.target_worker.forward_batch_generation(
+            model_worker_batch, skip_sample=True
+        )# target计算了3的hidden stats
+        self.check_kv_cache("verify end, check target verify")
+        logger.info(f'[verify]{logits_output.hidden_states.shape}')
         self._detect_nan_if_needed(logits_output)
         spec_info.hidden_states = logits_output.hidden_states
         res: EagleVerifyOutput = spec_info.verify(
@@ -566,34 +599,28 @@ class NaiveEagleWorker(TpModelWorker):
             hidden_states: Hidden states from the target model forward
             next_token_ids: Next token ids generated from the target forward.
         """
+        # logger.info(f"check kv: {self.req_to_token_pool=}, {self.token_to_kv_pool_allocator=},{self.token_to_kv_pool_allocator.get_kvcache().get_key_buffer(0)=}")
+        # logger.info(f"check kv: {self.target_worker.get_memory_pool()=},{self.target_worker.get_memory_pool()[1].get_kvcache().get_key_buffer(0)=}")
+        # self.check_kv_cache("forward_draft_extend before")
         batch.spec_info = EagleDraftInput(
             hidden_states=hidden_states,
             verified_id=next_token_ids,
         )
-        print(f"Before prepare_for_extend:{batch.input_ids=}")
-        print(f"target prefill done, decode 1 token:{next_token_ids=}")
-        batch.spec_info.prepare_for_extend(batch) # Put target output 1 token into draft input
-        print(f"After prepare_for_extend:{batch.input_ids}")
+        batch.spec_info.prepare_for_extend(batch)
         batch.spec_info.capture_hidden_mode = CaptureHiddenMode.LAST
         model_worker_batch = batch.get_model_worker_batch()
         forward_batch = ForwardBatch.init_new(
             model_worker_batch, self.draft_model_runner
         )
         forward_batch.return_logprob = False
+        logger.info(f"[forward_draft_extend batch]{forward_batch=}")
         logits_output = self.draft_model_runner.forward(forward_batch)
-        
-        # ADD: get next token idx
-        self.draft_token_idx = self.draft_model_runner.sample(logits_output, forward_batch)
-        print(f"Dfrat get token from prefill: {self.draft_token_idx}")
-        
-        forward_batch.spec_info.next_token_idx = next_token_ids
-        print(f"draft_logits_output:{logits_output},{next_token_ids=}")
-        
         self._detect_nan_if_needed(logits_output)
         assert isinstance(forward_batch.spec_info, EagleDraftInput)
         assert forward_batch.spec_info is batch.spec_info
+        # print(f'{logits_output.hidden_states.shape=}')
         self.capture_for_decode(logits_output, forward_batch.spec_info)
-        print(f'{forward_batch.spec_info=}')
+        # self.check_kv_cache("forward_draft_extend after")
 
     def forward_draft_extend_after_decode(self, batch: ScheduleBatch):
         # Backup fileds that will be modified in-place
@@ -616,10 +643,8 @@ class NaiveEagleWorker(TpModelWorker):
         )
 
         # Run
+        # print(f"[forward_draft_extend_after_decode]{batch.input_ids=}")
         logits_output = self.draft_model_runner.forward(forward_batch)
-                
-        # ADD: get next token idx after extend
-        self.draft_token_idx = self.draft_model_runner.sample(logits_output, forward_batch)
 
         self._detect_nan_if_needed(logits_output)
         self.capture_for_decode(logits_output, forward_batch.spec_info)

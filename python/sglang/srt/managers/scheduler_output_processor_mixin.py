@@ -171,7 +171,7 @@ class SchedulerOutputProcessorMixin:
                 else:
                     # being chunked reqs' prefill is not finished
                     req.is_chunked -= 1
-
+    
         self.stream_output(batch.reqs, batch.return_logprob, skip_stream_req)
 
     def process_batch_result_decode(

@@ -128,6 +128,7 @@ class LogitsMetadata:
             )
             extend_return_logprob = False
             extend_logprob_pruned_lens_cpu = []
+            logger.info(f"[from_forward_batch]{forward_batch.extend_seq_lens_cpu=}, {forward_batch.extend_logprob_start_lens_cpu=}")
             for extend_len, start_len in zip(
                 forward_batch.extend_seq_lens_cpu,
                 forward_batch.extend_logprob_start_lens_cpu,
