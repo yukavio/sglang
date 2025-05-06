@@ -434,8 +434,8 @@ class LlamaForCausalLM(nn.Module):
             hidden_states = self.model(
                 input_ids, positions, forward_batch, input_embeds
             )
-        logger.info(f'[temp!!]{input_ids=}, {positions=}, {forward_batch=}, {input_embeds=}')
-        logger.info(f'[temp!!!]{hidden_states=}')
+        # logger.info(f'[temp!!]{input_ids=}, {positions=}, {forward_batch=}, {input_embeds=}')
+        # logger.info(f'[temp!!!]{hidden_states=}')
         if not get_embedding:
             return self.logits_processor(
                 input_ids, hidden_states, self.lm_head, forward_batch, aux_hidden_states
