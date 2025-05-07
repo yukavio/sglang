@@ -902,20 +902,37 @@ class FlashInferIndicesUpdaterPrefill:
             )
 
         # cached part
-        wrapper_paged.begin_forward(
-            qo_indptr,
-            kv_indptr,
-            kv_indices,
-            self.kv_last_page_len[:bs],
-            self.num_qo_heads,
-            self.num_kv_heads,
-            self.head_dim,
-            1,
-            q_data_type=self.q_data_type,
-            kv_data_type=self.data_type,
-            custom_mask=custom_mask,
-            non_blocking=True,
-        )
+        if custom_mask is not None:
+            wrapper_paged.begin_forward(
+                qo_indptr,
+                kv_indptr,
+                kv_indices,
+                self.kv_last_page_len[:bs],
+                self.num_qo_heads,
+                self.num_kv_heads,
+                self.head_dim,
+                1,
+                q_data_type=self.q_data_type,
+                kv_data_type=self.data_type,
+                custom_mask=custom_mask,
+                non_blocking=True,
+            )
+        else:
+            wrapper_paged.begin_forward(
+                qo_indptr,
+                kv_indptr,
+                kv_indices,
+                self.kv_last_page_len[:bs],
+                self.num_qo_heads,
+                self.num_kv_heads,
+                self.head_dim,
+                1,
+                q_data_type=self.q_data_type,
+                kv_data_type=self.data_type,
+                custom_mask=None,
+                causal=True, # for naive speculative
+                non_blocking=True,
+            )
 
 
 # Use as a fast path to override the indptr in flashinfer's plan function

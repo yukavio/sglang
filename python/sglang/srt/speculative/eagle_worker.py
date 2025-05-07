@@ -379,7 +379,7 @@ class EAGLEWorker(TpModelWorker):
                     backup_state=True,
                 )
             )
-        self.check_kv_cache(f"[draft before assign draft cache loc,{out_cache_loc=}]")
+        # self.check_kv_cache(f"[draft before assign draft cache loc,{out_cache_loc=}]")
         
         # NOTE: Here, we alloc the draft cache locations
         assign_draft_cache_locs[(num_seqs,)](
@@ -392,7 +392,7 @@ class EAGLEWorker(TpModelWorker):
             self.speculative_num_steps,
             self.page_size,
         )
-        self.check_kv_cache(f"[draft after assign draft cache loc]")
+        # self.check_kv_cache(f"[draft after assign draft cache loc]")
         batch.out_cache_loc = out_cache_loc
         batch.seq_lens_sum = torch.sum(batch.seq_lens).item()
         spec_info.positions = batch.seq_lens.repeat_interleave(self.topk, dim=0)
@@ -491,7 +491,7 @@ class EAGLEWorker(TpModelWorker):
 
     def verify(self, batch: ScheduleBatch, spec_info: EagleVerifyInput):
         # self.check_kv_cache("verify start")
-        # logger.info(f"batch.seq_lens = {batch.seq_lens}")
+        # logger.info(f"batch.seq_lens = {batch.seq_lens}")'
         spec_info.prepare_for_verify(batch, self.page_size)
         batch.forward_mode = ForwardMode.TARGET_VERIFY
         batch.spec_info = spec_info
@@ -635,6 +635,7 @@ class EAGLEWorker(TpModelWorker):
             batch,
             self.speculative_num_steps,
         )
+        logger.info(f"[verify-prepare_extend_after_decode]{batch.spec_info=}")
         batch.spec_info.capture_hidden_mode = CaptureHiddenMode.LAST
         batch.return_logprob = False
         model_worker_batch = batch.get_model_worker_batch()

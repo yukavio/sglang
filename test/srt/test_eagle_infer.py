@@ -92,6 +92,7 @@ class TestEAGLEEngine(CustomTestCase):
     def _test_batch_generation(self, engine):
         prompts = [
             "Hello The",
+            "One hamster", 
             # "The president of the United States is",
             # "The capital of France is",
             # "The future of come is A",

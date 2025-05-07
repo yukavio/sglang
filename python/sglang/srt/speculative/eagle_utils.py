@@ -98,7 +98,7 @@ class EagleDraftInput:
         new_verified_id = torch.empty_like(self.accept_length, dtype=torch.int32)
         self.accept_length.add_(1)
 
-        logger.info(f"[prepare_extend_after_decode before!!!!]{self.positions=},{batch.seq_lens=},{self.accept_length=}")
+        # logger.info(f"[prepare_extend_after_decode before!!!!]{self.positions=},{batch.seq_lens=},{self.accept_length=}")
         create_extend_spec_info[(self.accept_length.numel(),)](
             self.verified_id,
             batch.seq_lens,
@@ -108,7 +108,7 @@ class EagleDraftInput:
             new_verified_id,
             next_power_of_2(speculative_num_steps + 1),
         )
-        logger.info(f"[prepare_extend_after_decode after!!!!]{self.positions=},{batch.seq_lens=},{self.accept_length=}")
+        # logger.info(f"[prepare_extend_after_decode after!!!!]{self.positions=},{batch.seq_lens=},{self.accept_length=}")
 
         batch.seq_lens_sum = sum(seq_lens_cpu)
         batch.input_ids = self.verified_id
@@ -424,6 +424,8 @@ class EagleVerifyInput:
                 spec_steps=self.spec_steps,
             )
 
+        logger.info(f"[verify-accept_index]={accept_index}")
+        logger.info(f"[verify-accept_length]={accept_length}")
         new_accept_index = []
         unfinished_index = []
         accept_index_cpu = accept_index.tolist()
@@ -461,6 +463,8 @@ class EagleVerifyInput:
         verified_id = predict[accept_index]
         evict_mask = torch.full_like(self.draft_token, True, dtype=torch.bool)
         evict_mask[accept_index] = False
+        logger.info(f"[verify-evict_mask]={evict_mask}")
+        logger.info(f"[verify-verified_id]={verified_id}")
 
         if page_size != 1:
             align_evict_mask_to_page_size[len(batch.seq_lens),](
