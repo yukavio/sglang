@@ -258,6 +258,7 @@ class EAGLEWorker(TpModelWorker):
             if batch.spec_info.verified_id is not None:
                 with self.draft_tp_context(self.draft_model_runner.tp_group):
                     self.forward_draft_extend_after_decode(batch)
+            logger.info(f"[return:!!]{verify_output.verified_id=},{sum(verify_output.accept_length_per_req_cpu)=},{model_worker_batch.bid=},{logits_output=}")
             return (
                 logits_output,
                 verify_output.verified_id,

@@ -464,7 +464,7 @@ class EagleVerifyInput:
         evict_mask = torch.full_like(self.draft_token, True, dtype=torch.bool)
         evict_mask[accept_index] = False
         logger.info(f"[verify-evict_mask]={evict_mask}")
-        logger.info(f"[verify-verified_id]={verified_id}")
+        logger.info(f"[verify-verified_id]={verified_id},{has_finished=},{new_accept_index=},{unfinished_index=}")
 
         if page_size != 1:
             align_evict_mask_to_page_size[len(batch.seq_lens),](
@@ -527,6 +527,8 @@ class EagleVerifyInput:
                 draft_input.hidden_states = batch.spec_info.hidden_states[
                     new_accept_index
                 ]
+                logger.info(f"[0053]{predict=}")
+                logger.info(f"[0054]{new_accept_index=}")
                 draft_input.verified_id = predict[new_accept_index]
                 draft_input.accept_length_cpu = [
                     accept_length_cpu[i] for i in unfinished_index
