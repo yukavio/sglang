@@ -242,7 +242,7 @@ class EagleVerifyInput:
 
     def prepare_for_verify(self, batch: ScheduleBatch, page_size: int):
         batch.input_ids = self.draft_token
-        logger.info(f"{self.draft_token=}")
+        # logger.info(f"{self.draft_token=}")
 
         if page_size == 1:
             batch.out_cache_loc = batch.alloc_token_slots(len(batch.input_ids))
@@ -424,8 +424,8 @@ class EagleVerifyInput:
                 spec_steps=self.spec_steps,
             )
 
-        logger.info(f"[verify-accept_index]={accept_index}")
-        logger.info(f"[verify-accept_length]={accept_length}")
+        # logger.info(f"[verify-accept_index]={accept_index}")
+        # logger.info(f"[verify-accept_length]={accept_length}")
         new_accept_index = []
         unfinished_index = []
         accept_index_cpu = accept_index.tolist()
@@ -463,8 +463,8 @@ class EagleVerifyInput:
         verified_id = predict[accept_index]
         evict_mask = torch.full_like(self.draft_token, True, dtype=torch.bool)
         evict_mask[accept_index] = False
-        logger.info(f"[verify-evict_mask]={evict_mask}")
-        logger.info(f"[verify-verified_id]={verified_id},{has_finished=},{new_accept_index=},{unfinished_index=}")
+        # logger.info(f"[verify-evict_mask]={evict_mask}")
+        # logger.info(f"[verify-verified_id]={verified_id},{has_finished=},{new_accept_index=},{unfinished_index=}")
 
         if page_size != 1:
             align_evict_mask_to_page_size[len(batch.seq_lens),](
@@ -527,8 +527,8 @@ class EagleVerifyInput:
                 draft_input.hidden_states = batch.spec_info.hidden_states[
                     new_accept_index
                 ]
-                logger.info(f"[0053]{predict=}")
-                logger.info(f"[0054]{new_accept_index=}")
+                # logger.info(f"[0053]{predict=}")
+                # logger.info(f"[0054]{new_accept_index=}")
                 draft_input.verified_id = predict[new_accept_index]
                 draft_input.accept_length_cpu = [
                     accept_length_cpu[i] for i in unfinished_index

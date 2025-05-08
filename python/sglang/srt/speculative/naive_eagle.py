@@ -170,6 +170,7 @@ class NaiveEagleWorker(TpModelWorker):
         
 
     def init_attention_backend(self):
+        logger.info("init attention backend start!")
         # Create multi-step attn backends and cuda graph runners
         if self.server_args.attention_backend == "flashinfer":
             if not global_server_args_dict["use_mla_backend"]:
@@ -308,8 +309,8 @@ class NaiveEagleWorker(TpModelWorker):
         # logger.info(f"check kv: {self.target_worker.get_memory_pool()=},{self.target_worker.get_memory_pool()[1].get_kvcache().get_key_buffer(0)=}")
         
         
-        self.check_kv_cache("forward_target_extend start")
-        logger.info(f"[forward_target_extend]{batch.input_ids=}")
+        # self.check_kv_cache("forward_target_extend start")
+        # logger.info(f"[forward_target_extend]{batch.input_ids=}")
         """Run the target extend.
 
         Args:
@@ -323,20 +324,20 @@ class NaiveEagleWorker(TpModelWorker):
         # Forward with the target model and get hidden states.
         # We need the full hidden states to prefill the KV cache of the draft model.
         model_worker_batch = batch.get_model_worker_batch()
-        logger.info(f"[forward_target_extend]{model_worker_batch=}")
+        # logger.info(f"[forward_target_extend]{model_worker_batch=}")
         model_worker_batch.capture_hidden_mode = CaptureHiddenMode.FULL
         logits_output, next_token_ids = self.target_worker.forward_batch_generation(
             model_worker_batch
         )
-        logger.info(f"[forward_target_extend]{logits_output=}")
+        # logger.info(f"[forward_target_extend]{logits_output=}")
         # print(f"[forward_target_extend]{logits_output.hidden_states=}")
         # print(f"[forward_target_extend]{logits_output.hidden_states.shape=}")
-        self.check_kv_cache("forward_target_extend end")
+        # self.check_kv_cache("forward_target_extend end")
         return logits_output, next_token_ids, model_worker_batch.bid
 
     def draft(self, batch: ScheduleBatch):
         self.run_cnt += 1
-        logger.info(f"[before draft]turns={self.run_cnt},\n{batch=}")
+        # logger.info(f"[before draft]turns={self.run_cnt},\n{batch=}")
         # logger.info(f"[draft batch all]{batch=}")
         # logger.info(f"[draft batch]{batch.input_ids=}, {batch.spec_info.topk_index=}")
         # Parse args
@@ -344,7 +345,7 @@ class NaiveEagleWorker(TpModelWorker):
         spec_info = batch.spec_info
 
         
-        logger.info(f"[before draft]{batch.input_ids=}")
+        # logger.info(f"[before draft]{batch.input_ids=}")
         # logger.info(f"check kv: {self.req_to_token_pool=}, {self.token_to_kv_pool_allocator=},{self.token_to_kv_pool_allocator.get_kvcache().get_key_buffer(0)=}")
         # logger.info(f"check kv: {self.target_worker.get_memory_pool()=},{self.target_worker.get_memory_pool()[1].get_kvcache().get_key_buffer(0)=}")
         if self.page_size == 1:
@@ -353,7 +354,7 @@ class NaiveEagleWorker(TpModelWorker):
             )
             # logger.info(f"[draft batch]{batch.out_cache_loc=},{batch.seq_lens=}")
             end_offset = batch.seq_lens + 2 # assign 2 tokens
-            self.check_kv_cache("[before assign_req_to_token_pool]")
+            # self.check_kv_cache("[before assign_req_to_token_pool]")
             assign_req_to_token_pool[(num_seqs,)](
                 batch.req_pool_indices,
                 batch.req_to_token_pool.req_to_token,
@@ -363,12 +364,12 @@ class NaiveEagleWorker(TpModelWorker):
                 batch.req_to_token_pool.req_to_token.shape[1],
                 next_power_of_2(num_seqs),
             )
-            self.check_kv_cache("[after assign_req_to_token_pool]")
+            # self.check_kv_cache("[after assign_req_to_token_pool]")
         else:
             raise NotImplementedError("josephyou: Page size > 1 not supported yet")
         
         batch.forward_mode = ForwardMode.TARGET_VERIFY
-        logger.info(f"[draft's batch]{batch=}")
+        # logger.info(f"[draft's batch]{batch=}")
         # for 1 req
         # batch.input_ids = torch.cat((batch.input_ids, spec_info.topk_index[0]))
         # for multi reqs:
@@ -379,9 +380,9 @@ class NaiveEagleWorker(TpModelWorker):
             batch.input_ids = batch.input_ids[input_idx]
             
         batch.input_ids = torch.stack((batch.input_ids, spec_info.topk_index.squeeze(1)), dim=1).reshape(-1)
-        logger.info(f"self.draft_token={batch.input_ids}")
+        # logger.info(f"self.draft_token={batch.input_ids}")
         positions = torch.stack([batch.seq_lens,  batch.seq_lens + 1], dim=1).reshape(-1)
-        logger.info(f"[draft positions process]{positions=}")
+        # logger.info(f"[draft positions process]{positions=}")
         
         # NOTE: In naive speculative algorithm, we do not to set tree mask, insetead, we set casual mask is True directly.
         
@@ -405,7 +406,7 @@ class NaiveEagleWorker(TpModelWorker):
             spec_steps=1,
             capture_hidden_mode=CaptureHiddenMode.FULL,
         )
-        logger.info(f"[after draft, before verify],{batch.input_ids=},{batch=}")
+        # logger.info(f"[after draft, before verify],{batch.input_ids=},{batch=}")
         
         model_worker_batch = batch.get_model_worker_batch()
         # logger.info(f'[before cat]{model_worker_batch.input_ids=}, {spec_info.topk_index[0]=}')
@@ -419,7 +420,7 @@ class NaiveEagleWorker(TpModelWorker):
         batch.spec_info.hidden_states = logits_output.hidden_states
         
         next_token_ids_cpu = next_token_ids.tolist()
-        logger.info(f"[verify]{logits_output=}, {next_token_ids=}")
+        # logger.info(f"[verify]{logits_output=}, {next_token_ids=}")
         accept_index = torch.full((num_seqs, 2), -1, dtype=torch.int32, device="cuda")
         accept_length = torch.zeros((num_seqs,), dtype=torch.int32, device="cuda")
         
@@ -439,7 +440,7 @@ class NaiveEagleWorker(TpModelWorker):
         unfinished_index = []
         has_finished = False
         accept_index_cpu = accept_index.tolist()     
-           
+
         for i, (req, accept_index_row) in enumerate(zip(batch.reqs, accept_index_cpu)):
             new_accept_index_ = []
             for j, idx in enumerate(accept_index_row):
@@ -465,11 +466,11 @@ class NaiveEagleWorker(TpModelWorker):
             accept_length = (accept_index != -1).sum(dim=1) - 1
         
         # verify done, prepare for free
-        logger.info(f'[verify-accept_index]={accept_index}')
+        # logger.info(f'[verify-accept_index]={accept_index}')
         accept_index = accept_index[accept_index != -1]
         evict_mask = torch.full((num_seqs * 2,), True, dtype=torch.bool)
         evict_mask[accept_index] = False
-        logger.info(f'[verify-evict_mask]={evict_mask}')
+        # logger.info(f'[verify-evict_mask]={evict_mask}')
         if self.page_size != 1:
             # TODO: align_evict_mask_to_page_size, see eagle_utils.py/align_evict_mask_to_page_size 
             pass
@@ -479,7 +480,7 @@ class NaiveEagleWorker(TpModelWorker):
         self.token_to_kv_pool_allocator.free(batch.out_cache_loc[evict_mask])
         
         verified_id = next_token_ids[accept_index]
-        logger.info(f'[verify-verified_id]={verified_id},{has_finished=},{new_accept_index=}')
+        # logger.info(f'[verify-verified_id]={verified_id},{has_finished=},{new_accept_index=}')
         
         if not has_finished:
             batch.out_cache_loc = batch.out_cache_loc[accept_index]
@@ -518,7 +519,7 @@ class NaiveEagleWorker(TpModelWorker):
             if len(new_accept_index) > 0:
                 new_accept_index = torch.tensor(new_accept_index, device="cuda")
                 unfinished_index_device = torch.tensor(unfinished_index, device="cuda")
-                logger.info(f"new accept index: {new_accept_index}, unfinished index: {unfinished_index_device}")
+                # logger.info(f"new accept index: {new_accept_index}, unfinished index: {unfinished_index_device}")
                 draft_input.hidden_states = batch.spec_info.hidden_states[new_accept_index]
                 draft_input.verified_id = next_token_ids[new_accept_index]
                 draft_input.accept_length_cpu = [
@@ -541,7 +542,7 @@ class NaiveEagleWorker(TpModelWorker):
         
         # All reqs done here.
         if batch.spec_info.verified_id is None:
-            logger.info(f"[return:!!]{verified_id=},{sum(accept_length_cpu)=},{model_worker_batch.bid=},{logits_output=}")
+            # logger.info(f"[return:!!]{verified_id=},{sum(accept_length_cpu)=},{model_worker_batch.bid=},{logits_output=}")
             return (
                 logits_output,
                 verified_id,
@@ -562,19 +563,19 @@ class NaiveEagleWorker(TpModelWorker):
             batch,
             1,
         )
-        logger.info(f"[verify-prepare_extend_after_decode]{batch.spec_info=}")
+        # logger.info(f"[verify-prepare_extend_after_decode]{batch.spec_info=}")
         batch.spec_info.capture_hidden_mode = CaptureHiddenMode.LAST
         batch.return_logprob = False
         model_worker_batch = batch.get_model_worker_batch()
         forward_batch = ForwardBatch.init_new(
             model_worker_batch, self.draft_model_runner
         )
-        print(f"[forward_draft_extend_after_decode]{forward_batch=}")
+        # print(f"[forward_draft_extend_after_decode]{forward_batch=}")
         logits_output = self.draft_model_runner.forward(forward_batch)
 
         self._detect_nan_if_needed(logits_output)
         self.capture_for_decode(logits_output, forward_batch.spec_info)
-        logger.info(f"[draft decode done!]{logits_output=}, {forward_batch=}")
+        # logger.info(f"[draft decode done!]{logits_output=}, {forward_batch=}")
 
         # Restore backup.
         # This is because `seq_lens` can be modified in `prepare_extend_after_decode`
