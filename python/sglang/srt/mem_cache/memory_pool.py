@@ -166,7 +166,7 @@ class TokenToKVPoolAllocator:
 
         select_index = self.free_slots[:need_size]
         self.free_slots = self.free_slots[need_size:]
-        logger.info(f"[TokenToKVPoolAllocator Alloc] {need_size} slots. and select {select_index}., free slots left {len(self.free_slots)}")
+        # logger.info(f"[TokenToKVPoolAllocator Alloc] {need_size} slots. and select {select_index}., free slots left {len(self.free_slots)}")
         
         return select_index
 
@@ -245,7 +245,7 @@ class MHATokenToKVPool(KVCache):
         )
 
     def _create_buffers(self):
-        print(f"Created Buffers for KV Cache!!!!!!!!!!!")
+        # print(f"Created Buffers for KV Cache!!!!!!!!!!!")
         with self.memory_saver_adapter.region():
             # [size, head_num, head_dim] for each layer
             # The padded slot 0 is used for writing dummy outputs from padded tokens.
@@ -375,8 +375,8 @@ class MHATokenToKVPool(KVCache):
             self.v_buffer[layer_id][loc] = cache_v
             current_stream.wait_stream(self.alt_stream)
         else:
-            if layer_id == 0:
-                logger.info(f'{layer_id=},{loc=},{cache_k.shape=},{cache_v.shape=},{self.k_buffer[layer_id].data_ptr()=},{self.k_buffer[layer_id].shape}')
+            # if layer_id == 0:
+                # logger.info(f'{layer_id=},{loc=},{cache_k.shape=},{cache_v.shape=},{self.k_buffer[layer_id].data_ptr()=},{self.k_buffer[layer_id].shape}')
                 # logger.info(f"{self.k_buffer[layer_id][loc]=}")
                 # logger.info(f'{cache_k=}')
             self.k_buffer[layer_id][loc] = cache_k

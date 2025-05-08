@@ -162,73 +162,11 @@ class NaiveEagleWorker(TpModelWorker):
             draft_tp_context if server_args.enable_dp_attention else empty_context
         )
         with self.draft_tp_context(self.draft_model_runner.tp_group):
-            self.init_attention_backend()
             self.init_cuda_graphs()
             
         self.exit_cnt = 1
         self.run_cnt = 0
         
-
-    def init_attention_backend(self):
-        logger.info("init attention backend start!")
-        # Create multi-step attn backends and cuda graph runners
-        if self.server_args.attention_backend == "flashinfer":
-            if not global_server_args_dict["use_mla_backend"]:
-                from sglang.srt.layers.attention.flashinfer_backend import (
-                    FlashInferMultiStepDraftBackend,
-                )
-
-                self.draft_attn_backend = FlashInferMultiStepDraftBackend(
-                    self.draft_model_runner,
-                    self.topk,
-                    self.speculative_num_steps,
-                )
-            else:
-                from sglang.srt.layers.attention.flashinfer_mla_backend import (
-                    FlashInferMLAMultiStepDraftBackend,
-                )
-
-                self.draft_attn_backend = FlashInferMLAMultiStepDraftBackend(
-                    self.draft_model_runner,
-                    self.topk,
-                    self.speculative_num_steps,
-                )
-            self.draft_extend_attn_backend = None
-            self.padded_static_len = self.speculative_num_steps + 1
-            self.has_prefill_wrapper_verify = True
-        elif self.server_args.attention_backend == "triton":
-            from sglang.srt.layers.attention.triton_backend import (
-                TritonMultiStepDraftBackend,
-            )
-
-            self.draft_attn_backend = TritonMultiStepDraftBackend(
-                self.draft_model_runner,
-                self.topk,
-                self.speculative_num_steps,
-            )
-            self.draft_extend_attn_backend = None
-            self.padded_static_len = self.speculative_num_steps + 1
-            self.has_prefill_wrapper_verify = False
-        elif self.server_args.attention_backend == "fa3":
-            from sglang.srt.layers.attention.flashattention_backend import (
-                FlashAttentionMultiStepBackend,
-            )
-
-            self.draft_attn_backend = FlashAttentionMultiStepBackend(
-                self.draft_model_runner,
-                self.topk,
-                self.speculative_num_steps,
-            )
-            self.draft_extend_attn_backend = None
-            self.padded_static_len = self.speculative_num_steps + 1
-            self.has_prefill_wrapper_verify = False
-        else:
-            raise ValueError(
-                f"EAGLE is not supportted in attention backend {self.server_args.attention_backend}"
-            )
-
-        self.draft_model_runner.draft_attn_backend = self.draft_attn_backend
-
     def init_cuda_graphs(self):
         """Capture cuda graphs."""
         self.cuda_graph_runner = None
@@ -683,7 +621,7 @@ class NaiveEagleWorker(TpModelWorker):
             model_worker_batch, self.draft_model_runner
         )
         forward_batch.return_logprob = False
-        logger.info(f"[forward_draft_extend batch]{forward_batch=}")
+        # logger.info(f"[forward_draft_extend batch]{forward_batch=}")
         logits_output = self.draft_model_runner.forward(forward_batch)
         self._detect_nan_if_needed(logits_output)
         assert isinstance(forward_batch.spec_info, EagleDraftInput)
@@ -698,7 +636,7 @@ class NaiveEagleWorker(TpModelWorker):
         probs = torch.softmax(logits_output.next_token_logits, dim=-1)
         draft_input.topk_p, draft_input.topk_index = fast_topk(probs, self.topk, dim=-1)
         
-        logger.info(f"[capture_for_decode]{draft_input.topk_index}")
+        # logger.info(f"[capture_for_decode]{draft_input.topk_index}")
         draft_input.hidden_states = logits_output.hidden_states
 
     def _detect_nan_if_needed(self, logits_output: LogitsProcessorOutput):

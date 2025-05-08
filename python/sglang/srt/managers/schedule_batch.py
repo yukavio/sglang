@@ -1473,7 +1473,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             extend_seq_lens = self.extend_lens
             extend_prefix_lens = self.prefix_lens
             extend_logprob_start_lens = self.extend_logprob_start_lens
-            logger.info(f"[schedule_batch]{extend_logprob_start_lens=}, {extend_seq_lens=}")
+            # logger.info(f"[schedule_batch]{extend_logprob_start_lens=}, {extend_seq_lens=}")
         # Create seq_lens_cpu when needed
         if (
             (

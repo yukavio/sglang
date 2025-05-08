@@ -205,10 +205,10 @@ class ModelRunner:
             server_args.max_running_requests,
             server_args.max_total_tokens,
         )
-        if not self.is_draft_worker:
-            print("############################")
-            print(f'{self.token_to_kv_pool_allocator.free_slots=}')
-            print("############################")
+        # if not self.is_draft_worker:
+        #     print("############################")
+        #     print(f'{self.token_to_kv_pool_allocator.free_slots=}')
+        #     print("############################")
         
         
         if self.device == "cuda":
@@ -218,17 +218,17 @@ class ModelRunner:
         else:
             self.cuda_graph_runner = None
             self.init_attention_backend()
-        if not self.is_draft_worker:
-            print("############################")
-            print(f'{self.req_to_token_pool.req_to_token.shape=}')
-            print(f'{self.token_to_kv_pool_allocator.get_kvcache().k_buffer[0].shape=}')
-            print(f'{self.token_to_kv_pool_allocator.get_kvcache().v_buffer[0].shape=}')
-            print(f'{self.req_to_token_pool.req_to_token=}')
-            print(f'{len(self.token_to_kv_pool_allocator.get_kvcache().k_buffer)=}')
-            print(f'{len(self.token_to_kv_pool_allocator.get_kvcache().v_buffer)=}')
-            print(f'{self.token_to_kv_pool_allocator.get_kvcache().k_buffer[0]=}')
-            print(f'{self.token_to_kv_pool_allocator.get_kvcache().v_buffer[0]=}')
-            print("############################")
+        # if not self.is_draft_worker:
+        #     print("############################")
+        #     print(f'{self.req_to_token_pool.req_to_token.shape=}')
+        #     print(f'{self.token_to_kv_pool_allocator.get_kvcache().k_buffer[0].shape=}')
+        #     print(f'{self.token_to_kv_pool_allocator.get_kvcache().v_buffer[0].shape=}')
+        #     print(f'{self.req_to_token_pool.req_to_token=}')
+        #     print(f'{len(self.token_to_kv_pool_allocator.get_kvcache().k_buffer)=}')
+        #     print(f'{len(self.token_to_kv_pool_allocator.get_kvcache().v_buffer)=}')
+        #     print(f'{self.token_to_kv_pool_allocator.get_kvcache().k_buffer[0]=}')
+        #     print(f'{self.token_to_kv_pool_allocator.get_kvcache().v_buffer[0]=}')
+        #     print("############################")
         # auxiliary hidden capture mode. TODO: expose this to server args?
         if self.spec_algorithm.is_eagle3() and not self.is_draft_worker:
             self.model.set_eagle3_layers_to_capture()
@@ -1033,10 +1033,10 @@ class ModelRunner:
     def forward(
         self, forward_batch: ForwardBatch, skip_attn_backend_init: bool = False
     ) -> LogitsProcessorOutput:
-        if self.is_draft_worker:
-            logger.info(f"[draft input]:{forward_batch=}")
-        else:
-            logger.info(f"[target input]:{forward_batch=}")
+        # if self.is_draft_worker:
+            # logger.info(f"[draft input]:{forward_batch=}")
+        # else:
+            # logger.info(f"[target input]:{forward_batch=}")
         if (
             forward_batch.forward_mode.is_cuda_graph()
             and self.cuda_graph_runner

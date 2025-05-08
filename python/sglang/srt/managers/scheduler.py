@@ -630,7 +630,7 @@ class Scheduler(
             self.cur_batch = batch
 
             if batch:
-                logger.info(f"[input batch]={batch.input_ids=},{batch.forward_mode=}")
+                # logger.info(f"[input batch]={batch.input_ids=},{batch.forward_mode=}")
                 result = self.run_batch(batch)
                 self.process_batch_result(batch, result)
             else:
