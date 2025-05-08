@@ -20,15 +20,15 @@ from sglang.srt.model_executor.forward_batch_info import (
 from sglang.srt.speculative.eagle_utils import EagleDraftInput
 
 if TYPE_CHECKING:
-    from sglang.srt.speculative.eagle_worker import EAGLEWorker
+    from sglang.srt.speculative.naive_eagle import NaiveEagleWorker
 
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-class EAGLEDraftCudaGraphRunner:
-    def __init__(self, eagle_worker: EAGLEWorker):
+class NaiveEAGLEDraftCudaGraphRunner:
+    def __init__(self, eagle_worker: NaiveEagleWorker):
         # Parse args
         self.eagle_worker = eagle_worker
         self.model_runner = model_runner = eagle_worker.model_runner
@@ -37,21 +37,22 @@ class EAGLEDraftCudaGraphRunner:
         self.enable_torch_compile = model_runner.server_args.enable_torch_compile
         self.disable_padding = model_runner.server_args.disable_cuda_graph_padding
         self.tp_size = self.model_runner.tp_size
-        self.topk = model_runner.server_args.speculative_eagle_topk
-        self.speculative_num_steps = model_runner.server_args.speculative_num_steps
+        self.topk = model_runner.server_args.speculative_eagle_topk  # 1
+        self.speculative_num_steps = model_runner.server_args.speculative_num_steps # 1 
         server_args = model_runner.server_args
 
         # Batch sizes to capture
         self.capture_bs, self.compile_bs = get_batch_sizes_to_capture(model_runner)
-        self.num_tokens_per_bs = server_args.speculative_eagle_topk
+        self.num_tokens_per_bs = server_args.speculative_eagle_topk # 1
 
         # Attention backend
+        # There is no need to capture the attention backend
+        
+        
         self.max_bs = max(self.capture_bs)
         self.max_num_token = self.max_bs * self.num_tokens_per_bs
-        self.model_runner.draft_attn_backend.init_cuda_graph_state(self.max_num_token)
-        self.seq_len_fill_value = self.model_runner.draft_attn_backend.attn_backends[
-            0
-        ].get_cuda_graph_seq_len_fill_value()
+        # self.model_runner.draft_attn_backend.init_cuda_graph_state(self.max_num_token) # we do not need this anymore in this case
+        self.seq_len_fill_value = 0
         self.seq_lens_cpu = torch.full(
             (self.max_bs,), self.seq_len_fill_value, dtype=torch.int32
         )
@@ -77,7 +78,6 @@ class EAGLEDraftCudaGraphRunner:
                 dtype=self.model_runner.dtype,
             )
 
-        logger.info(f"{vars(self)=}")
         # Capture
         try:
             self.capture()

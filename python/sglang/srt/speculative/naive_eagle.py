@@ -23,8 +23,8 @@ from sglang.srt.model_executor.forward_batch_info import (
     ForwardMode,
 )
 from sglang.srt.server_args import ServerArgs
-from sglang.srt.speculative.eagle_draft_cuda_graph_runner import (
-    EAGLEDraftCudaGraphRunner,
+from sglang.srt.speculative.navie_eagle_draft_cuda_graph_runner import (
+    NaiveEAGLEDraftCudaGraphRunner,
 )
 from sglang.srt.speculative.eagle_utils import (
     EagleDraftInput,
@@ -172,7 +172,9 @@ class NaiveEagleWorker(TpModelWorker):
         self.cuda_graph_runner = None
         self.cuda_graph_runner_for_draft_extend = None
 
+        # self.server_args.disable_cuda_graph = True
         if self.server_args.disable_cuda_graph:
+            logger.info("Eagle Cuda Graph is disabled!!!!!!!!!!!")
             return
 
         # Capture draft
@@ -181,7 +183,7 @@ class NaiveEagleWorker(TpModelWorker):
         logger.info(
             f"Capture draft cuda graph begin. This can take up to several minutes. avail mem={before_mem:.2f} GB"
         )
-        self.cuda_graph_runner = EAGLEDraftCudaGraphRunner(self)
+        self.cuda_graph_runner = NaiveEAGLEDraftCudaGraphRunner(self)
         after_mem = get_available_gpu_memory(self.device, self.gpu_id)
         logger.info(
             f"Capture draft cuda graph end. Time elapsed: {time.time() - tic:.2f} s. avail mem={after_mem:.2f} GB. mem usage={(before_mem - after_mem):.2f} GB."
@@ -273,19 +275,13 @@ class NaiveEagleWorker(TpModelWorker):
         # self.check_kv_cache("forward_target_extend end")
         return logits_output, next_token_ids, model_worker_batch.bid
 
+    def draft_1_target_extend(self, batch: ScheduleBatch):
+        
+
     def draft(self, batch: ScheduleBatch):
         self.run_cnt += 1
-        # logger.info(f"[before draft]turns={self.run_cnt},\n{batch=}")
-        # logger.info(f"[draft batch all]{batch=}")
-        # logger.info(f"[draft batch]{batch.input_ids=}, {batch.spec_info.topk_index=}")
-        # Parse args
         num_seqs = batch.batch_size()
         spec_info = batch.spec_info
-
-        
-        # logger.info(f"[before draft]{batch.input_ids=}")
-        # logger.info(f"check kv: {self.req_to_token_pool=}, {self.token_to_kv_pool_allocator=},{self.token_to_kv_pool_allocator.get_kvcache().get_key_buffer(0)=}")
-        # logger.info(f"check kv: {self.target_worker.get_memory_pool()=},{self.target_worker.get_memory_pool()[1].get_kvcache().get_key_buffer(0)=}")
         if self.page_size == 1:
             batch.out_cache_loc = batch.alloc_token_slots(
                 num_seqs * 2, backup_state=False # hard code, 1 for target preill, 1 for draft
@@ -320,18 +316,6 @@ class NaiveEagleWorker(TpModelWorker):
         batch.input_ids = torch.stack((batch.input_ids, spec_info.topk_index.squeeze(1)), dim=1).reshape(-1)
         # logger.info(f"self.draft_token={batch.input_ids}")
         positions = torch.stack([batch.seq_lens,  batch.seq_lens + 1], dim=1).reshape(-1)
-        # logger.info(f"[draft positions process]{positions=}")
-        
-        # NOTE: In naive speculative algorithm, we do not to set tree mask, insetead, we set casual mask is True directly.
-        
-        # tree_mask = torch.full((batch.seq_lens_sum * 2 + 2  * 2 * num_seqs,),
-        #                     True,
-        #                     device=self.device,)
-        # 4 * idx + 2 * seq_lens[idx - 1] * idx + seq_lens[idx] + 1
-        # if idx = 0, then 4 is zero
-        # if idx = 1, then 4 * 1 + 2 * 3 * 1 + 4 + 1 = 4 + 6 + 4 + 1 = 15
-        # tree_mask[batch.seq_lens_sum + 1] = False
-        
         batch.spec_info = EagleVerifyInput(
             draft_token=batch.input_ids,
             custom_mask=None, 
@@ -344,14 +328,8 @@ class NaiveEagleWorker(TpModelWorker):
             spec_steps=1,
             capture_hidden_mode=CaptureHiddenMode.FULL,
         )
-        # logger.info(f"[after draft, before verify],{batch.input_ids=},{batch=}")
         
         model_worker_batch = batch.get_model_worker_batch()
-        # logger.info(f'[before cat]{model_worker_batch.input_ids=}, {spec_info.topk_index[0]=}')
-        # model_worker_batch.input_ids = torch.cat((model_worker_batch.input_ids, spec_info.topk_index[0])) #TODO: Adapt for multi requests.
-        
-        
-        # logger.info(f'[target forward batch]{model_worker_batch=}')
         logits_output, next_token_ids = self.target_worker.forward_batch_generation(
             model_worker_batch, skip_sample=False
         )
