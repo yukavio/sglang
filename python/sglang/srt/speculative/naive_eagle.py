@@ -23,8 +23,8 @@ from sglang.srt.model_executor.forward_batch_info import (
     ForwardMode,
 )
 from sglang.srt.server_args import ServerArgs
-from sglang.srt.speculative.navie_eagle_draft_cuda_graph_runner import (
-    NaiveEAGLEDraftCudaGraphRunner,
+from sglang.srt.speculative.navie_eagle_cuda_graph_runner import (
+    NaiveEAGLECudaGraphRunner,
 )
 from sglang.srt.speculative.eagle_utils import (
     EagleDraftInput,
@@ -183,15 +183,11 @@ class NaiveEagleWorker(TpModelWorker):
         logger.info(
             f"Capture draft cuda graph begin. This can take up to several minutes. avail mem={before_mem:.2f} GB"
         )
-        self.cuda_graph_runner = NaiveEAGLEDraftCudaGraphRunner(self)
+        self.cuda_graph_runner = NaiveEAGLECudaGraphRunner(self.target_worker.model_runner, self.draft_model_runner)
         after_mem = get_available_gpu_memory(self.device, self.gpu_id)
         logger.info(
             f"Capture draft cuda graph end. Time elapsed: {time.time() - tic:.2f} s. avail mem={after_mem:.2f} GB. mem usage={(before_mem - after_mem):.2f} GB."
         )
-
-        # Capture extend
-        if self.draft_extend_attn_backend:
-            raise NotImplementedError()
 
     @property
     def draft_model_runner(self):
@@ -275,8 +271,14 @@ class NaiveEagleWorker(TpModelWorker):
         # self.check_kv_cache("forward_target_extend end")
         return logits_output, next_token_ids, model_worker_batch.bid
 
-    def draft_1_target_extend(self, batch: ScheduleBatch):
-        
+    # def draft_1_target_extend(self, model_worker_batch: ForwardBatch):
+    #     logits_output, next_token_ids =self.target_worker.forward_batch_generation(
+    #         model_worker_batch, skip_sample=False
+    #     )
+    
+    def draft_cuda_graph_1(self, forward_batch: ForwardBatch):
+        logits_output = self.target_worker.model_runner.forward(forward_batch)
+        return logits_output
 
     def draft(self, batch: ScheduleBatch):
         self.run_cnt += 1
@@ -303,10 +305,6 @@ class NaiveEagleWorker(TpModelWorker):
             raise NotImplementedError("josephyou: Page size > 1 not supported yet")
         
         batch.forward_mode = ForwardMode.TARGET_VERIFY
-        # logger.info(f"[draft's batch]{batch=}")
-        # for 1 req
-        # batch.input_ids = torch.cat((batch.input_ids, spec_info.topk_index[0]))
-        # for multi reqs:
         if spec_info.accept_length is None:
             batch.input_ids = batch.output_ids # first decode.
         else:
@@ -314,7 +312,6 @@ class NaiveEagleWorker(TpModelWorker):
             batch.input_ids = batch.input_ids[input_idx]
             
         batch.input_ids = torch.stack((batch.input_ids, spec_info.topk_index.squeeze(1)), dim=1).reshape(-1)
-        # logger.info(f"self.draft_token={batch.input_ids}")
         positions = torch.stack([batch.seq_lens,  batch.seq_lens + 1], dim=1).reshape(-1)
         batch.spec_info = EagleVerifyInput(
             draft_token=batch.input_ids,
@@ -330,9 +327,22 @@ class NaiveEagleWorker(TpModelWorker):
         )
         
         model_worker_batch = batch.get_model_worker_batch()
-        logits_output, next_token_ids = self.target_worker.forward_batch_generation(
-            model_worker_batch, skip_sample=False
+        
+        forward_batch = ForwardBatch.init_new(model_worker_batch, self.target_worker.model_runner)
+        
+        # logger.info(f"[cuda graph]{len(batch.input_ids)=},{forward_batch=}")
+        can_cuda_graph = self.cuda_graph_runner and self.cuda_graph_runner.can_run(
+            forward_batch
         )
+        if can_cuda_graph:
+            logits_output = self.cuda_graph_runner.replay(forward_batch)
+            
+        else:
+            logits_output = self.draft_cuda_graph_1(forward_batch)
+
+        next_token_ids = self.target_worker.model_runner.sample(logits_output, forward_batch)
+
+        
         batch.spec_info.hidden_states = logits_output.hidden_states
         
         next_token_ids_cpu = next_token_ids.tolist()

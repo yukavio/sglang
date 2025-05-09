@@ -35,7 +35,9 @@ if is_flashinfer_available():
     )
     from flashinfer.cascade import merge_state
     from flashinfer.decode import _get_range_buf, get_seq_lens
+import logging
 
+logger = logging.getLogger(__name__)
 
 class WrapperDispatch(Enum):
     SLIDING_WINDOW = auto()
@@ -286,6 +288,7 @@ class FlashInferAttnBackend(AttentionBackend):
         encoder_lens: Optional[torch.Tensor],
         forward_mode: ForwardMode,
         spec_info: Optional[Union[EagleDraftInput, EagleVerifyInput]],
+        is_naive_eagle: Optional[bool]=False, 
     ):
         if forward_mode.is_decode_or_idle():
             decode_wrappers = []
@@ -321,6 +324,11 @@ class FlashInferAttnBackend(AttentionBackend):
         elif forward_mode.is_target_verify():
             prefill_wrappers = []
             for i in range(self.num_wrappers):
+                if not is_naive_eagle:
+                    custom_mask_buf = self.cuda_graph_custom_mask
+                else:
+                    custom_mask_buf = None
+                
                 prefill_wrappers.append(
                     BatchPrefillWithPagedKVCacheWrapper(
                         self.workspace_buffer,
@@ -330,7 +338,7 @@ class FlashInferAttnBackend(AttentionBackend):
                         paged_kv_indptr_buf=self.kv_indptr[i][: bs + 1],
                         paged_kv_indices_buf=self.cuda_graph_kv_indices[i],
                         paged_kv_last_page_len_buf=self.kv_last_page_len[:bs],
-                        custom_mask_buf=self.cuda_graph_custom_mask,
+                        custom_mask_buf=custom_mask_buf,
                         mask_indptr_buf=self.cuda_graph_qk_indptr[i][: bs + 1],
                     )
                 )
@@ -889,7 +897,6 @@ class FlashInferIndicesUpdaterPrefill:
                     self.req_to_token,
                 )
             )
-
         # extend part
         if use_ragged:
             wrapper_ragged.begin_forward(

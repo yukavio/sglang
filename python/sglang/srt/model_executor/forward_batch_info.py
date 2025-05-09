@@ -65,7 +65,6 @@ class ForwardMode(IntEnum):
     TARGET_VERIFY = auto()
     # Used in speculative decoding: extend a batch in the draft model.
     DRAFT_EXTEND = auto()
-    NAIVE_EAGLE = auto()
 
     # A dummy first batch to start the pipeline for overlap scheduler.
     # It is now used for triggering the sampling_info_done event for the first prefill batch.
@@ -80,10 +79,7 @@ class ForwardMode(IntEnum):
             or self == ForwardMode.MIXED
             or self == ForwardMode.DRAFT_EXTEND
             or self == ForwardMode.TARGET_VERIFY
-            or self == ForwardMode.NAIVE_EAGLE
         )
-    def is_naive_eagle(self):
-        return self == ForwardMode.NAIVE_EAGLE
 
     def is_decode(self):
         return self == ForwardMode.DECODE
