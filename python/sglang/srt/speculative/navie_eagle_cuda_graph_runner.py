@@ -35,7 +35,7 @@ from sglang.srt.model_executor.forward_batch_info import (
     ForwardMode,
 )
 from sglang.srt.patch_torch import monkey_patch_torch_compile
-from sglang.srt.utils import get_available_gpu_memory, is_hip
+from sglang.srt.utils import get_available_gpu_memory, is_hip, fast_topk
 
 if TYPE_CHECKING:
     from sglang.srt.model_executor.model_runner import ModelRunner
@@ -222,6 +222,9 @@ class NaiveEAGLECudaGraphRunner:
                 (self.max_num_token, self.model_runner.model_config.hidden_size),
                 dtype=self.model_runner.dtype,
             )
+            
+            # NOTE:Add for naive eagle
+            self.accept_index = torch.full((self.max_bs, 2), -1, dtype=torch.int32, device="cuda")
 
         # Capture
         try:
@@ -369,13 +372,34 @@ class NaiveEAGLECudaGraphRunner:
             True, # is naive
         )
 
+        # Next, we add some infos for capture codes after `self.model_runner.forward`
+        accept_index = self.accept_index[:bs]
         # Run and capture
         def run_once():
             # Clean intermediate result cache for DP attention
             forward_batch.dp_local_start_pos = forward_batch.dp_local_num_tokens = None
 
             logits_output = self.model_runner.forward(forward_batch, skip_attn_backend_init=True) # target model verify
-            return logits_output.next_token_logits, logits_output.hidden_states
+            
+            probs = torch.softmax(logits_output.next_token_logits, dim=-1)
+            _, indices = fast_topk(probs, topk=1, dim=-1)
+            next_token_ids = indices.squeeze(-1)
+            
+            # verify
+            indices = torch.arange(bs, device="cuda", dtype=torch.int32)
+            accept_index[:, 0] = indices * 2
+            accept_index[:, 1] = -1 # init it 
+
+            draft_token = input_ids[2 * indices + 1]
+            target_token = next_token_ids[2 * indices]
+
+            mask = (draft_token == target_token)
+            accept_index[:, 1] = torch.where(mask, 2 * indices + 1, accept_index[:, 1])
+            
+            
+
+
+            return logits_output.next_token_logits, logits_output.hidden_states, next_token_ids, accept_index
 
         for _ in range(2):
             torch.cuda.synchronize()
@@ -477,8 +501,7 @@ class NaiveEAGLECudaGraphRunner:
 
         # Replay
         self.graphs[self.bs].replay()
-        next_token_logits, hidden_states = self.output_buffers[self.bs]
-
+        next_token_logits, hidden_states, next_token_ids, accept_index = self.output_buffers[self.bs]
         logits_output = LogitsProcessorOutput(
             next_token_logits=next_token_logits[: self.raw_num_token],
             hidden_states=(
@@ -487,7 +510,7 @@ class NaiveEAGLECudaGraphRunner:
                 else None
             ),
         )
-        return logits_output
+        return logits_output, next_token_ids, accept_index
 
     def get_spec_info(self):
         spec_info = None

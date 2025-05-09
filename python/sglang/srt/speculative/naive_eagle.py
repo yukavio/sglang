@@ -260,21 +260,12 @@ class NaiveEagleWorker(TpModelWorker):
         # Forward with the target model and get hidden states.
         # We need the full hidden states to prefill the KV cache of the draft model.
         model_worker_batch = batch.get_model_worker_batch()
-        # logger.info(f"[forward_target_extend]{model_worker_batch=}")
         model_worker_batch.capture_hidden_mode = CaptureHiddenMode.FULL
         logits_output, next_token_ids = self.target_worker.forward_batch_generation(
             model_worker_batch
         )
-        # logger.info(f"[forward_target_extend]{logits_output=}")
-        # print(f"[forward_target_extend]{logits_output.hidden_states=}")
-        # print(f"[forward_target_extend]{logits_output.hidden_states.shape=}")
-        # self.check_kv_cache("forward_target_extend end")
         return logits_output, next_token_ids, model_worker_batch.bid
 
-    # def draft_1_target_extend(self, model_worker_batch: ForwardBatch):
-    #     logits_output, next_token_ids =self.target_worker.forward_batch_generation(
-    #         model_worker_batch, skip_sample=False
-    #     )
     
     def draft_cuda_graph_1(self, forward_batch: ForwardBatch):
         logits_output = self.target_worker.model_runner.forward(forward_batch)
@@ -335,31 +326,35 @@ class NaiveEagleWorker(TpModelWorker):
             forward_batch
         )
         if can_cuda_graph:
-            logits_output = self.cuda_graph_runner.replay(forward_batch)
+            logits_output, next_token_ids,accept_index = self.cuda_graph_runner.replay(forward_batch)
             
+            
+            accept_length = torch.zeros((num_seqs,), dtype=torch.int32, device="cuda")
+            for i in range(num_seqs):
+                accept_length[i] = 1 if accept_index[i][1] != -1 else 0
         else:
             logits_output = self.draft_cuda_graph_1(forward_batch)
-
-        next_token_ids = self.target_worker.model_runner.sample(logits_output, forward_batch)
-
+            next_token_ids = self.target_worker.model_runner.sample(logits_output, forward_batch)
         
-        batch.spec_info.hidden_states = logits_output.hidden_states
-        
-        next_token_ids_cpu = next_token_ids.tolist()
-        # logger.info(f"[verify]{logits_output=}, {next_token_ids=}")
-        accept_index = torch.full((num_seqs, 2), -1, dtype=torch.int32, device="cuda")
-        accept_length = torch.zeros((num_seqs,), dtype=torch.int32, device="cuda")
-        
-        # verify
-        for i in range(num_seqs):
-            accept_index[i, 0] = i * 2 # at least accept first token
+            accept_index = torch.full((num_seqs, 2), -1, dtype=torch.int32, device="cuda")
+            accept_length = torch.zeros((num_seqs,), dtype=torch.int32, device="cuda")
             
-            draft_token = batch.input_ids[2 * i + 1]
-            target_token = next_token_ids[2 * i]
-            if draft_token == target_token:
-                accept_index[i, 1] = 2 * i + 1
-                accept_length[i] += 1
-                
+            # verify
+            indices = torch.arange(num_seqs, device="cuda", dtype=torch.int32)
+            accept_index[:, 0] = indices * 2
+
+            draft_token = batch.input_ids[2 * indices + 1]
+            target_token = next_token_ids[2 * indices]
+
+            mask = (draft_token == target_token)
+            accept_index[:, 1] = torch.where(mask, 2 * indices + 1, accept_index[:, 1])
+
+            accept_length = torch.zeros((num_seqs,), dtype=torch.int32, device="cuda")
+            for i in range(num_seqs):
+                accept_length[i] = 1 if accept_index[i][1] != -1 else 0
+                    
+                    
+        batch.spec_info.hidden_states = logits_output.hidden_states
         # Iterate every accepted token and check if req has finished after append the token
         # should be checked BEFORE free kv cache slots
         new_accept_index = []
@@ -367,6 +362,7 @@ class NaiveEagleWorker(TpModelWorker):
         has_finished = False
         accept_index_cpu = accept_index.tolist()     
 
+        next_token_ids_cpu = next_token_ids.tolist()
         for i, (req, accept_index_row) in enumerate(zip(batch.reqs, accept_index_cpu)):
             new_accept_index_ = []
             for j, idx in enumerate(accept_index_row):
@@ -406,7 +402,6 @@ class NaiveEagleWorker(TpModelWorker):
         self.token_to_kv_pool_allocator.free(batch.out_cache_loc[evict_mask])
         
         verified_id = next_token_ids[accept_index]
-        # logger.info(f'[verify-verified_id]={verified_id},{has_finished=},{new_accept_index=}')
         
         if not has_finished:
             batch.out_cache_loc = batch.out_cache_loc[accept_index]
@@ -445,7 +440,6 @@ class NaiveEagleWorker(TpModelWorker):
             if len(new_accept_index) > 0:
                 new_accept_index = torch.tensor(new_accept_index, device="cuda")
                 unfinished_index_device = torch.tensor(unfinished_index, device="cuda")
-                # logger.info(f"new accept index: {new_accept_index}, unfinished index: {unfinished_index_device}")
                 draft_input.hidden_states = batch.spec_info.hidden_states[new_accept_index]
                 draft_input.verified_id = next_token_ids[new_accept_index]
                 draft_input.accept_length_cpu = [
@@ -489,14 +483,12 @@ class NaiveEagleWorker(TpModelWorker):
             batch,
             1,
         )
-        # logger.info(f"[verify-prepare_extend_after_decode]{batch.spec_info=}")
         batch.spec_info.capture_hidden_mode = CaptureHiddenMode.LAST
         batch.return_logprob = False
         model_worker_batch = batch.get_model_worker_batch()
         forward_batch = ForwardBatch.init_new(
             model_worker_batch, self.draft_model_runner
         )
-        # print(f"[forward_draft_extend_after_decode]{forward_batch=}")
         logits_output = self.draft_model_runner.forward(forward_batch)
 
         self._detect_nan_if_needed(logits_output)
@@ -512,9 +504,6 @@ class NaiveEagleWorker(TpModelWorker):
         batch.return_logprob = return_logprob_backup
         
         # return output ids for next decode.
-        # offsets = torch.arange(num_seqs, dtype=torch.int32, device="cuda") * 2 #0, 2, 4, 6, 8
-        # output_indices = offsets + (batch.spec_info.accept_length - 1)
-        # logger.info(f"[return:!!]{batch.spec_info.accept_length=},{verified_id=},{next_token_ids=},{sum(accept_length_cpu)=},{model_worker_batch.bid=},{logits_output=}")
         return (
                 logits_output,
                 verified_id,
