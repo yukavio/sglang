@@ -35,8 +35,10 @@ from sglang.srt.model_executor.forward_batch_info import (
     ForwardMode,
 )
 from sglang.srt.patch_torch import monkey_patch_torch_compile
-from sglang.srt.utils import get_available_gpu_memory, is_hip, fast_topk
-
+from sglang.srt.utils import get_available_gpu_memory, is_hip, fast_topk, next_power_of_2
+from sglang.srt.speculative.eagle_utils import (
+    assign_req_to_token_pool_for_naive_cuda
+)
 if TYPE_CHECKING:
     from sglang.srt.model_executor.model_runner import ModelRunner
 
@@ -175,6 +177,7 @@ class NaiveEAGLECudaGraphRunner:
     def __init__(self, model_runner: ModelRunner, draft_model_runner: ModelRunner):
         # Parse args
         self.model_runner = model_runner
+        self.draft_model_runner = draft_model_runner
         self.graphs = {}
         self.output_buffers = {}
         self.enable_torch_compile = model_runner.server_args.enable_torch_compile
@@ -396,8 +399,17 @@ class NaiveEAGLECudaGraphRunner:
             mask = (draft_token == target_token)
             accept_index[:, 1] = torch.where(mask, 2 * indices + 1, accept_index[:, 1])
             
-            
-
+            accept_length = torch.where(accept_index[:, 1] != -1, 1, 0).to(dtype=torch.int32)
+            assign_req_to_token_pool_for_naive_cuda[(bs,)](
+                    req_pool_indices,
+                    self.draft_model_runner.req_to_token_pool.req_to_token,
+                    seq_lens,
+                    seq_lens + accept_length + 1,
+                    out_cache_loc,
+                    accept_index,
+                    self.draft_model_runner.req_to_token_pool.req_to_token.shape[1],
+                    next_power_of_2(bs),
+                )
 
             return logits_output.next_token_logits, logits_output.hidden_states, next_token_ids, accept_index
 
