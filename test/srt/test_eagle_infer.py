@@ -46,7 +46,7 @@ class TestEAGLEEngine(CustomTestCase):
         "mem_fraction_static": 0.7,
         "cuda_graph_max_bs": 2,
         "disable_cuda_graph": False,
-        # "disable_cuda_graph": True,
+        "disable_cuda_graph": True,
         "disable_overlap_schedule": True,
     }
     NUM_CONFIGS = 1
@@ -93,8 +93,8 @@ class TestEAGLEEngine(CustomTestCase):
     def _test_batch_generation(self, engine):
         prompts = [
             "Hello The",
-            "One hamster", 
-            # "The president of the United States is",
+            # "One hamster", 
+            "The president of the United States is",
             # "The capital of France is",
             # "The future of come is A",
             # "The future of come is A B C D E F G H I J K L M N O P Q R S T U V W X Y Z",

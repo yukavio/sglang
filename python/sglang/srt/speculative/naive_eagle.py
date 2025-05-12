@@ -357,15 +357,14 @@ class NaiveEagleWorker(TpModelWorker):
         
         forward_batch = ForwardBatch.init_new(model_worker_batch, self.target_worker.model_runner)
         
-        # logger.info(f"[cuda graph]{len(batch.input_ids)=},{forward_batch=}")
         can_cuda_graph = self.cuda_graph_runner and self.cuda_graph_runner.can_run(
             forward_batch
         )
         if can_cuda_graph:
-            logits_output, next_token_ids,accept_index = self.cuda_graph_runner.replay(forward_batch)
-            accept_length = torch.zeros((num_seqs,), dtype=torch.int32, device="cuda")
-            for i in range(num_seqs):
-                accept_length[i] = 1 if accept_index[i][1] != -1 else 0
+            logits_output, next_token_ids,accept_index, accept_index_viewd, accept_length, draft_input = self.cuda_graph_runner.replay(forward_batch)
+            logger.info(f"[cuda graph]{logits_output=}, {next_token_ids=},{accept_index_viewd=}")
+            logger.info(f"[cuda graph]{accept_index=}, {accept_length=}, {draft_input=}")
+            # accept_index_viewd = accept_index[accept_index != -1]
         else:
             logits_output = self.draft_cuda_graph_1(forward_batch)
             next_token_ids = self.target_worker.model_runner.sample(logits_output, forward_batch)
@@ -386,27 +385,49 @@ class NaiveEagleWorker(TpModelWorker):
             accept_length = torch.zeros((num_seqs,), dtype=torch.int32, device="cuda")
             for i in range(num_seqs):
                 accept_length[i] = 1 if accept_index[i][1] != -1 else 0
-                    
-                    
+
+            accept_index_viewd = accept_index[accept_index != -1]
             assign_req_to_token_pool[(num_seqs,)](
-                    batch.req_pool_indices,
-                    batch.req_to_token_pool.req_to_token,
-                    batch.seq_lens,
-                    batch.seq_lens + accept_length + 1,
-                    batch.out_cache_loc[accept_index[accept_index != -1]],
-                    batch.req_to_token_pool.req_to_token.shape[1],
+                    forward_batch.req_pool_indices,
+                    forward_batch.req_to_token_pool.req_to_token,
+                    forward_batch.seq_lens,
+                    forward_batch.seq_lens + accept_length + 1,
+                    forward_batch.out_cache_loc[accept_index_viewd],
+                    forward_batch.req_to_token_pool.req_to_token.shape[1],
                     next_power_of_2(num_seqs),
                 )
-        batch.spec_info.hidden_states = logits_output.hidden_states
+            
+            
+            forward_batch.spec_info.hidden_states = logits_output.hidden_states
+            forward_batch.seq_lens.add_(accept_length + 1)
+            out_cache_loc_back_up = batch.out_cache_loc.clone()
+            batch.out_cache_loc = batch.out_cache_loc[accept_index_viewd]
+            accept_length_cpu = accept_length.tolist()
+            
+            draft_input = EagleDraftInput()
+            draft_input.hidden_states = logits_output.hidden_states[accept_index_viewd]
+            draft_input.accept_length = accept_length
+            draft_input.accept_length_cpu = accept_length_cpu
+            draft_input.verified_id = next_token_ids[accept_index_viewd]
+            draft_input.seq_lens_for_draft_extend = batch.seq_lens
+            draft_input.req_pool_indices_for_draft_extend = batch.req_pool_indices
+            
+            batch.spec_info = draft_input
+            
+            self.forward_draft_extend_after_decode(batch)
+        
+            batch.out_cache_loc = out_cache_loc_back_up
+            
+        verified_id = next_token_ids[accept_index_viewd]
+        logits_output.next_token_logits = logits_output.next_token_logits[accept_index_viewd]
+        logits_output.hidden_states = logits_output.hidden_states[accept_index_viewd]
+            
         # Iterate every accepted token and check if req has finished after append the token
         # should be checked BEFORE free kv cache slots
-        
-        
         new_accept_index = []
         unfinished_index = []
         has_finished = False
         accept_index_cpu = accept_index.tolist()     
-
         next_token_ids_cpu = next_token_ids.tolist()
         for i, (req, accept_index_row) in enumerate(zip(batch.reqs, accept_index_cpu)):
             new_accept_index_ = []
@@ -432,11 +453,9 @@ class NaiveEagleWorker(TpModelWorker):
         if has_finished:
             accept_length = (accept_index != -1).sum(dim=1) - 1
         
-        # verify done, prepare for free
         accept_index = accept_index[accept_index != -1]
         evict_mask = torch.full((num_seqs * 2,), True, dtype=torch.bool)
         evict_mask[accept_index] = False
-        # logger.info(f'[verify-evict_mask]={evict_mask}')
         if self.page_size != 1:
             # TODO: align_evict_mask_to_page_size, see eagle_utils.py/align_evict_mask_to_page_size 
             pass
@@ -444,57 +463,16 @@ class NaiveEagleWorker(TpModelWorker):
         
         self.token_to_kv_pool_allocator.free(batch.out_cache_loc[evict_mask])
         
-        verified_id = next_token_ids[accept_index]
-        
         if not has_finished:
             batch.out_cache_loc = batch.out_cache_loc[accept_index]
-            batch.seq_lens.add_(accept_length + 1)
-            accept_length_cpu = accept_length.tolist()
-            
-            draft_input = EagleDraftInput()
-            draft_input.hidden_states = batch.spec_info.hidden_states[accept_index]
-            draft_input.accept_length = accept_length
-            draft_input.accept_length_cpu = accept_length_cpu
-            draft_input.verified_id = verified_id
-            draft_input.seq_lens_for_draft_extend = batch.seq_lens
-            draft_input.req_pool_indices_for_draft_extend = batch.req_pool_indices
         else:
-            batch.seq_lens.add_(accept_length + 1)
-            accept_length_cpu = accept_length.tolist()
-            draft_input = EagleDraftInput()
             if len(new_accept_index) > 0:
                 new_accept_index = torch.tensor(new_accept_index, device="cuda")
                 unfinished_index_device = torch.tensor(unfinished_index, device="cuda")
-                draft_input.hidden_states = batch.spec_info.hidden_states[new_accept_index]
-                draft_input.verified_id = next_token_ids[new_accept_index]
-                draft_input.accept_length_cpu = [
-                    accept_length_cpu[i] for i in unfinished_index
-                ]
-                draft_input.accept_length = accept_length[unfinished_index_device]
-                if has_finished:
-                    draft_input.seq_lens_for_draft_extend = batch.seq_lens[
-                        unfinished_index_device
-                    ]
-                    draft_input.req_pool_indices_for_draft_extend = (
-                        batch.req_pool_indices[unfinished_index_device]
-                    )
+                batch.spec_info.accept_length_cpu = [accept_length_cpu[i] for i in unfinished_index]
+                batch.spec_info.accept_length = accept_length[unfinished_index_device]
             batch.out_cache_loc = batch.out_cache_loc[new_accept_index]
-
-        logits_output.next_token_logits = logits_output.next_token_logits[accept_index]
-        logits_output.hidden_states = logits_output.hidden_states[accept_index]
-        batch.spec_info = draft_input
-        
-        
-        # All reqs done here.
-        if batch.spec_info.verified_id is None:
-            return (
-                logits_output,
-                verified_id,
-                model_worker_batch.bid,
-                sum(accept_length_cpu),
-            ) 
-
-        self.forward_draft_extend_after_decode(batch)
+            
 
         # return output ids for next decode.
         return (

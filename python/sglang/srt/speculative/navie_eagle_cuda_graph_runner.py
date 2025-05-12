@@ -37,8 +37,12 @@ from sglang.srt.model_executor.forward_batch_info import (
 from sglang.srt.patch_torch import monkey_patch_torch_compile
 from sglang.srt.utils import get_available_gpu_memory, is_hip, fast_topk, next_power_of_2
 from sglang.srt.speculative.eagle_utils import (
-    assign_req_to_token_pool_for_naive_cuda
+    EagleDraftInput,
+    assign_req_to_token_pool_for_naive_cuda,
+    assign_req_to_token_pool,
 )
+
+
 if TYPE_CHECKING:
     from sglang.srt.model_executor.model_runner import ModelRunner
 
@@ -228,6 +232,9 @@ class NaiveEAGLECudaGraphRunner:
             
             # NOTE:Add for naive eagle
             self.accept_index = torch.full((self.max_bs, 2), -1, dtype=torch.int32, device="cuda")
+            self.accept_length = torch.zeros((self.max_bs,), dtype=torch.int32, device="cuda")
+            self.accept_index_viewd = torch.full((self.max_bs * 2, ), -1, dtype=torch.int32, device="cuda")
+            self.draft_hidden_states = torch.zeros_like(self.hidden_states)
 
         # Capture
         try:
@@ -362,6 +369,7 @@ class NaiveEAGLECudaGraphRunner:
             spec_info=spec_info,
             capture_hidden_mode=self.capture_hidden_mode,
         )
+        
 
         # Attention backend
         self.model_runner.attn_backend.init_forward_metadata_capture_cuda_graph(
@@ -376,7 +384,15 @@ class NaiveEAGLECudaGraphRunner:
         )
 
         # Next, we add some infos for capture codes after `self.model_runner.forward`
+        draft_hidden_states = self.draft_hidden_states[:num_tokens]
+        draft_input = EagleDraftInput(
+            hidden_states=draft_hidden_states
+        )
+        
         accept_index = self.accept_index[:bs]
+        accept_length = self.accept_length[:bs]
+        accept_index_viewd = self.accept_index_viewd[:num_tokens]
+        
         # Run and capture
         def run_once():
             # Clean intermediate result cache for DP attention
@@ -398,20 +414,47 @@ class NaiveEAGLECudaGraphRunner:
 
             mask = (draft_token == target_token)
             accept_index[:, 1] = torch.where(mask, 2 * indices + 1, accept_index[:, 1])
+            accept_index_viewd.copy_(accept_index.view(-1))
+            accept_length.copy_((accept_index[:, 1] != -1).to(torch.int32))
             
-            accept_length = torch.where(accept_index[:, 1] != -1, 1, 0).to(dtype=torch.int32)
-            assign_req_to_token_pool_for_naive_cuda[(bs,)](
+            # assign_req_to_token_pool_for_naive_cuda[(bs,)](
+            #         req_pool_indices,
+            #         self.draft_model_runner.req_to_token_pool.req_to_token,
+            #         seq_lens,
+            #         seq_lens + accept_length + 1,
+            #         out_cache_loc,
+            #         accept_index,
+            #         self.draft_model_runner.req_to_token_pool.req_to_token.shape[1],
+            #         next_power_of_2(bs),
+            #     )
+            
+            assign_req_to_token_pool[(bs,)](
                     req_pool_indices,
                     self.draft_model_runner.req_to_token_pool.req_to_token,
                     seq_lens,
                     seq_lens + accept_length + 1,
-                    out_cache_loc,
-                    accept_index,
+                    out_cache_loc[accept_index_viewd],
                     self.draft_model_runner.req_to_token_pool.req_to_token.shape[1],
                     next_power_of_2(bs),
                 )
-
-            return logits_output.next_token_logits, logits_output.hidden_states, next_token_ids, accept_index
+            forward_batch.spec_info.hidden_states = logits_output.hidden_states
+            forward_batch.seq_lens.add_(accept_length + 1)
+            
+            
+            verified_id = next_token_ids[accept_index_viewd]
+            out_cache_loc_back_up = forward_batch.out_cache_loc.clone()
+            forward_batch.out_cache_loc = forward_batch.out_cache_loc[accept_index_viewd]
+            # accept_length_cpu = accept_length.tolist()
+            
+            
+            draft_input.hidden_states.copy_(logits_output.hidden_states[accept_index_viewd]) # we extend all tokens anyway, then we release reject tokens, outsiede cudagraph
+            # draft_input.hidden_states.copy_(logits_output.hidden_states)
+            draft_input.accept_length = accept_length
+            draft_input.verified_id = verified_id
+            # draft_input.seq_lens_for_draft_extend = forward_batch.seq_lens
+            # draft_input.req_pool_indices_for_draft_extend = forward_batch.req_pool_indices
+            return logits_output.next_token_logits, logits_output.hidden_states, next_token_ids, accept_index,accept_index_viewd, accept_length, draft_input
+            
 
         for _ in range(2):
             torch.cuda.synchronize()
@@ -513,7 +556,7 @@ class NaiveEAGLECudaGraphRunner:
 
         # Replay
         self.graphs[self.bs].replay()
-        next_token_logits, hidden_states, next_token_ids, accept_index = self.output_buffers[self.bs]
+        next_token_logits, hidden_states, next_token_ids, accept_index, accept_index_viewd, accept_length, draft_input = self.output_buffers[self.bs]
         logits_output = LogitsProcessorOutput(
             next_token_logits=next_token_logits[: self.raw_num_token],
             hidden_states=(
@@ -522,7 +565,7 @@ class NaiveEAGLECudaGraphRunner:
                 else None
             ),
         )
-        return logits_output, next_token_ids, accept_index
+        return logits_output, next_token_ids, accept_index, accept_index_viewd, accept_length, draft_input
 
     def get_spec_info(self):
         spec_info = None
