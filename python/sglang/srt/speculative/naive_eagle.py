@@ -266,21 +266,23 @@ class NaiveEagleWorker(TpModelWorker):
         )
         return logits_output, next_token_ids, model_worker_batch.bid
 
-    def forward_draft_extend_after_decode(self, batch: ScheduleBatch):
+    def forward_draft_extend_after_decode(self, batch: ScheduleBatch, accept_index):
         # Backup fileds that will be modified in-place
         seq_lens_backup = batch.seq_lens.clone()
         req_pool_indices_backup = batch.req_pool_indices
         accept_length_backup = batch.spec_info.accept_length
         return_logprob_backup = batch.return_logprob
         
+        # We extend anyway, but how can get the next logits_output?
+        
         # Prepare metadata
-        batch.forward_mode = ForwardMode.DRAFT_EXTEND
+        batch.forward_mode = ForwardMode.NAIVE_DRAFT_EXTEND
         batch.spec_info.prepare_extend_after_decode(
             batch,
             1,
         )
         # logger.info(f"[verify-prepare_extend_after_decode]{batch.spec_info=}")
-        batch.spec_info.capture_hidden_mode = CaptureHiddenMode.LAST
+        batch.spec_info.capture_hidden_mode = CaptureHiddenMode.FULL
         batch.return_logprob = False
         model_worker_batch = batch.get_model_worker_batch()
         forward_batch = ForwardBatch.init_new(
@@ -288,12 +290,17 @@ class NaiveEagleWorker(TpModelWorker):
         )
 
         # Run
-        # print(f"[forward_draft_extend_after_decode]{forward_batch=}")
+        logger.info(f'[draft decode forward]{batch.input_ids=}')
         logits_output = self.draft_model_runner.forward(forward_batch)
 
+        save_index = (accept_index[:, 1] != -1).to(torch.int32)
+        logger.info(f'{save_index=}, {accept_index=},{logits_output.hidden_states}')
+        logits_output.hidden_states = logits_output.hidden_states[save_index]
+        logits_output.next_token_logits = logits_output.next_token_logits[save_index]
+        
         self._detect_nan_if_needed(logits_output)
         self.capture_for_decode(logits_output, forward_batch.spec_info)
-        # logger.info(f"[draft decode done!]{logits_output=}, {forward_batch=}")
+        logger.info(f"[draft decode done!]{logits_output=}, {forward_batch=}")
 
         # Restore backup.
         # This is because `seq_lens` can be modified in `prepare_extend_after_decode`
@@ -338,7 +345,10 @@ class NaiveEagleWorker(TpModelWorker):
             input_idx = spec_info.accept_length.cumsum(dim=-1) - 1
             batch.input_ids = batch.input_ids[input_idx]
             
+        logger.info(f"[draft before stack]{batch.input_ids=},{spec_info.topk_index.squeeze(1)=}")
         batch.input_ids = torch.stack((batch.input_ids, spec_info.topk_index.squeeze(1)), dim=1).reshape(-1)
+        logger.info(f"[draft after stack ]{batch.input_ids=}")
+        
         positions = torch.stack([batch.seq_lens,  batch.seq_lens + 1], dim=1).reshape(-1)
         batch.spec_info = EagleVerifyInput(
             draft_token=batch.input_ids,
@@ -368,6 +378,9 @@ class NaiveEagleWorker(TpModelWorker):
         else:
             logits_output = self.draft_cuda_graph_1(forward_batch)
             next_token_ids = self.target_worker.model_runner.sample(logits_output, forward_batch)
+            
+            logger.info(f"[verified id!]{next_token_ids}")
+            
         
             accept_index = torch.full((num_seqs, 2), -1, dtype=torch.int32, device="cuda")
             accept_length = torch.zeros((num_seqs,), dtype=torch.int32, device="cuda")
@@ -381,43 +394,78 @@ class NaiveEagleWorker(TpModelWorker):
 
             mask = (draft_token == target_token)
             accept_index[:, 1] = torch.where(mask, 2 * indices + 1, accept_index[:, 1])
+            accept_index_viewd = accept_index[accept_index != -1]
 
             accept_length = torch.zeros((num_seqs,), dtype=torch.int32, device="cuda")
             for i in range(num_seqs):
                 accept_length[i] = 1 if accept_index[i][1] != -1 else 0
 
-            accept_index_viewd = accept_index[accept_index != -1]
+
+            # we set accept length to 1 of all reqs cause we extend all tokens anyway.
+
+            
+            logger.info(f"""[before assign]{forward_batch.req_pool_indices=},\n
+                        {forward_batch.req_to_token_pool.req_to_token[0][:20]=},\n
+                        {forward_batch.seq_lens=},\n
+                        {forward_batch.seq_lens + accept_length + 1=},
+                        {forward_batch.out_cache_loc=},\n
+                        {accept_index_viewd=}""")
+
             assign_req_to_token_pool[(num_seqs,)](
-                    forward_batch.req_pool_indices,
-                    forward_batch.req_to_token_pool.req_to_token,
-                    forward_batch.seq_lens,
-                    forward_batch.seq_lens + accept_length + 1,
-                    forward_batch.out_cache_loc[accept_index_viewd],
-                    forward_batch.req_to_token_pool.req_to_token.shape[1],
+                    batch.req_pool_indices,
+                    batch.req_to_token_pool.req_to_token,
+                    batch.seq_lens,
+                    batch.seq_lens + accept_length + 1,
+                    batch.out_cache_loc,
+                    # forward_batch.out_cache_loc,
+                    batch.req_to_token_pool.req_to_token.shape[1],
                     next_power_of_2(num_seqs),
                 )
             
-            
-            forward_batch.spec_info.hidden_states = logits_output.hidden_states
-            forward_batch.seq_lens.add_(accept_length + 1)
-            out_cache_loc_back_up = batch.out_cache_loc.clone()
-            batch.out_cache_loc = batch.out_cache_loc[accept_index_viewd]
+            accept_length = torch.ones((num_seqs,), dtype=torch.int32, device="cuda")
             accept_length_cpu = accept_length.tolist()
+            batch.spec_info.hidden_states = logits_output.hidden_states
+            # out_cache_loc_back_up = batch.out_cache_loc.clone()
+            # batch.out_cache_loc = batch.out_cache_loc[accept_index_viewd]
+            
             
             draft_input = EagleDraftInput()
-            draft_input.hidden_states = logits_output.hidden_states[accept_index_viewd]
+            # draft_input.hidden_states = logits_output.hidden_states[accept_index_viewd]
+            draft_input.hidden_states = logits_output.hidden_states
             draft_input.accept_length = accept_length
             draft_input.accept_length_cpu = accept_length_cpu
-            draft_input.verified_id = next_token_ids[accept_index_viewd]
-            draft_input.seq_lens_for_draft_extend = batch.seq_lens
+            # draft_input.verified_id = next_token_ids[accept_index_viewd]
+            
+            
+            draft_input.verified_id = next_token_ids
+            draft_input.seq_lens_for_draft_extend = batch.seq_lens + (accept_length + 1)
             draft_input.req_pool_indices_for_draft_extend = batch.req_pool_indices
             
             batch.spec_info = draft_input
             
-            self.forward_draft_extend_after_decode(batch)
+            self.forward_draft_extend_after_decode(batch, accept_index)
+            # batch.out_cache_loc = out_cache_loc_back_up
+
+
+
         
-            batch.out_cache_loc = out_cache_loc_back_up
+        accept_length = torch.zeros((num_seqs,), dtype=torch.int32, device="cuda")
+        for i in range(num_seqs):
+            accept_length[i] = 1 if accept_index[i][1] != -1 else 0
+        accept_length_cpu = accept_length.tolist()
+        
+        # for next decode
+        logger.info(f"[next decode]{batch.input_ids=}, {accept_index_viewd=},{len(accept_index_viewd)=}") # 要accpet的后面一个
+        if len(accept_index_viewd) > 1:
+            batch.input_ids = batch.input_ids[accept_index_viewd[1:]] # signgle batch
+        else:
+            batch.input_ids = batch.input_ids[accept_index_viewd] # signgle batch
             
+        
+        batch.spec_info.accept_length = accept_length
+        batch.spec_info.accept_length_cpu = accept_length_cpu
+        batch.seq_lens.add_(accept_length + 1)
+        
         verified_id = next_token_ids[accept_index_viewd]
         logits_output.next_token_logits = logits_output.next_token_logits[accept_index_viewd]
         logits_output.hidden_states = logits_output.hidden_states[accept_index_viewd]
@@ -460,8 +508,9 @@ class NaiveEagleWorker(TpModelWorker):
             # TODO: align_evict_mask_to_page_size, see eagle_utils.py/align_evict_mask_to_page_size 
             pass
         
-        
         self.token_to_kv_pool_allocator.free(batch.out_cache_loc[evict_mask])
+        
+        logger.info(f'[free]{batch.out_cache_loc[evict_mask]=}')
         
         if not has_finished:
             batch.out_cache_loc = batch.out_cache_loc[accept_index]
@@ -582,7 +631,7 @@ class NaiveEagleWorker(TpModelWorker):
         self, logits_output: LogitsProcessorOutput, draft_input: EagleDraftInput
     ):
         probs = torch.softmax(logits_output.next_token_logits, dim=-1)
-        draft_input.topk_p, draft_input.topk_index = fast_topk(probs, self.topk, dim=-1)
+        draft_input.topk_p, draft_input.topk_index = fast_topk(probs, 1, dim=-1)
         
         # logger.info(f"[capture_for_decode]{draft_input.topk_index}")
         draft_input.hidden_states = logits_output.hidden_states

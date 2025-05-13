@@ -142,7 +142,7 @@ class EagleDraftInput:
             req_to_token.size(1),
         )
 
-        # logger.info(f"[eagleDraftInput output]{kv_indices=},{cum_kv_seq_len=},{qo_indptr=}")
+        logger.info(f"[eagleDraftInput output]\n{req_to_token[0][:20]=}\n{req_pool_indices=},\n{kv_indices=},\n{cum_kv_seq_len=},{qo_indptr=}")
         return kv_indices, cum_kv_seq_len, qo_indptr, None
 
     def filter_batch(self, new_indices: torch.Tensor):
@@ -355,7 +355,7 @@ class EagleVerifyInput:
         if batch.sampling_info.is_all_greedy:
             target_predict = torch.argmax(logits_output.next_token_logits, dim=-1)
             target_predict = target_predict.reshape(bs, self.draft_token_num)
-
+            logger.info(f"[verified id!]{target_predict}")
             verify_tree_greedy(
                 predicts=predict,  # mutable
                 accept_index=accept_index,  # mutable
@@ -476,9 +476,15 @@ class EagleVerifyInput:
             )
 
         token_to_kv_pool_allocator.free(batch.out_cache_loc[evict_mask])
-
+        logger.info(f'[free]{batch.out_cache_loc[evict_mask]=}')
         # Construct EagleVerifyOutput
         if not has_finished:
+            logger.info(f"""[before assign]{batch.req_pool_indices=},\n
+            {batch.req_to_token_pool.req_to_token[0][:20]=},\n
+            {batch.seq_lens=},\n
+            {batch.seq_lens + accept_length + 1=},
+            {batch.out_cache_loc=},\n
+            {accept_index=}""")
             batch.out_cache_loc = batch.out_cache_loc[accept_index]
             assign_req_to_token_pool[(bs,)](
                 batch.req_pool_indices,

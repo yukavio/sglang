@@ -498,6 +498,7 @@ class EAGLEWorker(TpModelWorker):
         batch.spec_info = spec_info
         # logger.info(f"[after draft, before verify]{batch=}")
         model_worker_batch = batch.get_model_worker_batch()
+        logger.info(f"[forward target verify]{batch.input_ids=}")
         logits_output, _ = self.target_worker.forward_batch_generation(
             model_worker_batch, skip_sample=True
         )# target计算了3的hidden stats
@@ -646,11 +647,12 @@ class EAGLEWorker(TpModelWorker):
 
         # Run
         # print(f"[forward_draft_extend_after_decode]{forward_batch=}")
+        logger.info(f'[draft decode forward]{batch.input_ids=}')
         logits_output = self.draft_model_runner.forward(forward_batch)
 
         self._detect_nan_if_needed(logits_output)
         self.capture_for_decode(logits_output, forward_batch.spec_info)
-        # logger.info(f"[draft decode done!]{logits_output=}, {forward_batch=}")
+        logger.info(f"[draft decode done!]{logits_output=}, {forward_batch=}")
 
         # Restore backup.
         # This is because `seq_lens` can be modified in `prepare_extend_after_decode`

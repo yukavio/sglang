@@ -83,6 +83,7 @@ class ReqToTokenPool:
         return select_index
 
     def free(self, free_index: Union[int, List[int]]):
+        logger.info(f"[ReqToTokenPool free]{free_index=}")
         if isinstance(free_index, (int,)):
             self.free_slots.append(free_index)
         else:
@@ -180,6 +181,7 @@ class TokenToKVPoolAllocator:
             self.free_group.append(free_index)
 
     def free_group_begin(self):
+        logger.info("free.....")
         self.is_not_in_free_group = False
         self.free_group = []
 
@@ -376,9 +378,9 @@ class MHATokenToKVPool(KVCache):
             current_stream.wait_stream(self.alt_stream)
         else:
             # if layer_id == 0:
-                # logger.info(f'{layer_id=},{loc=},{cache_k.shape=},{cache_v.shape=},{self.k_buffer[layer_id].data_ptr()=},{self.k_buffer[layer_id].shape}')
-                # logger.info(f"{self.k_buffer[layer_id][loc]=}")
-                # logger.info(f'{cache_k=}')
+            #     logger.info(f'{self.layer_num=},{loc=},{cache_k.shape=},{cache_v.shape=},{self.k_buffer[layer_id].data_ptr()=},{self.k_buffer[layer_id].shape}')
+            #     logger.info(f"{self.k_buffer[layer_id][loc]=}")
+            #     logger.info(f'{cache_k=}')
             self.k_buffer[layer_id][loc] = cache_k
             # if layer_id == 0:
                 # logger.info(f"[after assign:]{self.k_buffer[layer_id][loc]}")
