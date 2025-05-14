@@ -46,7 +46,7 @@ class TestEAGLEEngine(CustomTestCase):
         "mem_fraction_static": 0.7,
         "cuda_graph_max_bs": 2,
         "disable_cuda_graph": False,
-        "disable_cuda_graph": True,
+        # "disable_cuda_graph": True,
         "disable_overlap_schedule": True,
     }
     NUM_CONFIGS = 1

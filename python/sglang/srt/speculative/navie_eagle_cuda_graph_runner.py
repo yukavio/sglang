@@ -416,18 +416,6 @@ class NaiveEAGLECudaGraphRunner:
             accept_index[:, 1] = torch.where(mask, 2 * indices + 1, accept_index[:, 1])
             accept_index_viewd.copy_(accept_index.view(-1))
             accept_length.copy_((accept_index[:, 1] != -1).to(torch.int32))
-            
-            # assign_req_to_token_pool_for_naive_cuda[(bs,)](
-            #         req_pool_indices,
-            #         self.draft_model_runner.req_to_token_pool.req_to_token,
-            #         seq_lens,
-            #         seq_lens + accept_length + 1,
-            #         out_cache_loc,
-            #         accept_index,
-            #         self.draft_model_runner.req_to_token_pool.req_to_token.shape[1],
-            #         next_power_of_2(bs),
-            #     )
-            
             assign_req_to_token_pool[(bs,)](
                     req_pool_indices,
                     self.draft_model_runner.req_to_token_pool.req_to_token,
@@ -437,22 +425,6 @@ class NaiveEAGLECudaGraphRunner:
                     self.draft_model_runner.req_to_token_pool.req_to_token.shape[1],
                     next_power_of_2(bs),
                 )
-            forward_batch.spec_info.hidden_states = logits_output.hidden_states
-            forward_batch.seq_lens.add_(accept_length + 1)
-            
-            
-            verified_id = next_token_ids[accept_index_viewd]
-            out_cache_loc_back_up = forward_batch.out_cache_loc.clone()
-            forward_batch.out_cache_loc = forward_batch.out_cache_loc[accept_index_viewd]
-            # accept_length_cpu = accept_length.tolist()
-            
-            
-            draft_input.hidden_states.copy_(logits_output.hidden_states[accept_index_viewd]) # we extend all tokens anyway, then we release reject tokens, outsiede cudagraph
-            # draft_input.hidden_states.copy_(logits_output.hidden_states)
-            draft_input.accept_length = accept_length
-            draft_input.verified_id = verified_id
-            # draft_input.seq_lens_for_draft_extend = forward_batch.seq_lens
-            # draft_input.req_pool_indices_for_draft_extend = forward_batch.req_pool_indices
             return logits_output.next_token_logits, logits_output.hidden_states, next_token_ids, accept_index,accept_index_viewd, accept_length, draft_input
             
 
