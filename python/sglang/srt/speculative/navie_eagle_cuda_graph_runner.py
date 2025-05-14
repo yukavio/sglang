@@ -350,6 +350,8 @@ class NaiveEAGLECudaGraphRunner:
                 spec_info.capture_hidden_mode if spec_info else CaptureHiddenMode.NULL
             )
 
+        
+
         forward_batch = ForwardBatch(
             forward_mode=self.capture_forward_mode,
             batch_size=bs,
