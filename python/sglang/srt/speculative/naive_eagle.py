@@ -385,8 +385,6 @@ class NaiveEagleWorker(TpModelWorker):
         else:
             logits_output = self.draft_cuda_graph_1(forward_batch)
             next_token_ids = self.target_worker.model_runner.sample(logits_output, forward_batch)
-            
-            
         
             accept_index = torch.full((num_seqs, 2), -1, dtype=torch.int32, device="cuda")
             accept_length = torch.zeros((num_seqs,), dtype=torch.int32, device="cuda")
@@ -406,8 +404,6 @@ class NaiveEagleWorker(TpModelWorker):
             for i in range(num_seqs):
                 accept_length[i] = 1 if accept_index[i][1] != -1 else 0
 
-
-            # we set accept length to 1 of all reqs cause we extend all tokens anyway.
             assign_req_to_token_pool[(num_seqs,)](
                     batch.req_pool_indices,
                     batch.req_to_token_pool.req_to_token,
@@ -419,45 +415,22 @@ class NaiveEagleWorker(TpModelWorker):
                     next_power_of_2(num_seqs),
                 )
             
-            accept_length = torch.ones((num_seqs,), dtype=torch.int32, device="cuda")
-            accept_length_cpu = accept_length.tolist()
-            batch.spec_info.hidden_states = logits_output.hidden_states
-            # out_cache_loc_back_up = batch.out_cache_loc.clone()
-            # batch.out_cache_loc = batch.out_cache_loc[accept_index_viewd]
+            # we pass accept length to 1 of all reqs cause we extend all tokens anyway.
+            accept_length_for_draft_extend = torch.ones((num_seqs,), dtype=torch.int32, device="cuda")
+            accept_length_cpu_for_draft_extend = accept_length_for_draft_extend.tolist()
             
-            
+            # here, we extend draft tokens anyway cause we want to adopt to cuda graph.
             draft_input = EagleDraftInput()
-            # draft_input.hidden_states = logits_output.hidden_states[accept_index_viewd]
             draft_input.hidden_states = logits_output.hidden_states
-            draft_input.accept_length = accept_length
-            draft_input.accept_length_cpu = accept_length_cpu
-            # draft_input.verified_id = next_token_ids[accept_index_viewd]
-            
-            
+            draft_input.accept_length = accept_length_for_draft_extend
+            draft_input.accept_length_cpu = accept_length_cpu_for_draft_extend
             draft_input.verified_id = next_token_ids
-            draft_input.seq_lens_for_draft_extend = batch.seq_lens + (accept_length + 1)
+            draft_input.seq_lens_for_draft_extend = batch.seq_lens + (accept_length_for_draft_extend + 1)
             draft_input.req_pool_indices_for_draft_extend = batch.req_pool_indices
-            
             batch.spec_info = draft_input
-            
             self.forward_draft_extend_after_decode(batch, accept_index)
-            # batch.out_cache_loc = out_cache_loc_back_up
 
-
-
-        
-        accept_length = torch.zeros((num_seqs,), dtype=torch.int32, device="cuda")
-        for i in range(num_seqs):
-            accept_length[i] = 1 if accept_index[i][1] != -1 else 0
         accept_length_cpu = accept_length.tolist()
-        
-        # for next decode
-        logger.info(f"[next decode]{batch.input_ids=}, {accept_index_viewd=},{len(accept_index_viewd)=}") # 要accpet的后面一个
-        # if len(accept_index_viewd) > 1:
-            # batch.input_ids = batch.input_ids[accept_index_viewd[1:]] # signgle batch
-        # else:
-            
-        
         batch.spec_info.accept_length = accept_length
         batch.spec_info.accept_length_cpu = accept_length_cpu
         batch.seq_lens.add_(accept_length + 1)
@@ -497,20 +470,18 @@ class NaiveEagleWorker(TpModelWorker):
         if has_finished:
             accept_length = (accept_index != -1).sum(dim=1) - 1
         
-        accept_index = accept_index[accept_index != -1]
         evict_mask = torch.full((num_seqs * 2,), True, dtype=torch.bool)
-        evict_mask[accept_index] = False
+        evict_mask[accept_index_viewd] = False
         if self.page_size != 1:
             # TODO: align_evict_mask_to_page_size, see eagle_utils.py/align_evict_mask_to_page_size 
             pass
         
         self.token_to_kv_pool_allocator.free(batch.out_cache_loc[evict_mask])
         
-        logger.info(f'[free]{batch.out_cache_loc[evict_mask]=}')
         
         if not has_finished:
             batch.input_ids = batch.input_ids[accept_index_viewd] # signgle batch
-            batch.out_cache_loc = batch.out_cache_loc[accept_index]
+            batch.out_cache_loc = batch.out_cache_loc[accept_index_viewd]
         else:
             if len(new_accept_index) > 0:
                 new_accept_index = torch.tensor(new_accept_index, device="cuda")
