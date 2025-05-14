@@ -181,7 +181,6 @@ class TokenToKVPoolAllocator:
             self.free_group.append(free_index)
 
     def free_group_begin(self):
-        logger.info("free.....")
         self.is_not_in_free_group = False
         self.free_group = []
 

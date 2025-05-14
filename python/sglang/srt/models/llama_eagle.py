@@ -89,7 +89,7 @@ class LlamaModel(nn.Module):
         forward_batch: ForwardBatch,
         input_embeds: torch.Tensor = None,
     ) -> torch.Tensor:
-        logger.info(f"Eagle forward, {input_ids=}, {positions=}, {forward_batch=}, {input_embeds=}")
+        # logger.info(f"Eagle forward, {input_ids=}, {positions=}, {forward_batch=}, {input_embeds=}")
         if input_embeds is None:
             hidden_states = self.embed_tokens(input_ids)
         else:
@@ -102,14 +102,14 @@ class LlamaModel(nn.Module):
         residual = None
         for i in range(len(self.layers)):
             layer = self.layers[i]
-            logger.info(f'eagle input={hidden_states=}')
+            # logger.info(f'eagle input={hidden_states=}')
             hidden_states, residual = layer(
                 positions,
                 hidden_states,
                 forward_batch,
                 residual,
             )
-            logger.info(f'eagle output={hidden_states=}')
+            # logger.info(f'eagle output={hidden_states=}')
         return hidden_states + residual
 
 

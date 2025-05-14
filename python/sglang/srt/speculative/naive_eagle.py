@@ -290,19 +290,19 @@ class NaiveEagleWorker(TpModelWorker):
         )
 
         # Run
-        logger.info(f'[draft decode forward]{batch.input_ids=}')
+        # logger.info(f'[draft decode forward]{batch.input_ids=}')
         logits_output = self.draft_model_runner.forward(forward_batch)
 
         last = accept_index[:, 1]
         first = accept_index[:, 0]
         save_index = torch.where(last != -1, last, first)
-        logger.info(f'{save_index=}, {accept_index=},{logits_output.hidden_states}')
+        # logger.info(f'{save_index=}, {accept_index=},{logits_output.hidden_states}')
         logits_output.hidden_states = logits_output.hidden_states[save_index]
         logits_output.next_token_logits = logits_output.next_token_logits[save_index]
         
         self._detect_nan_if_needed(logits_output)
         self.capture_for_decode(logits_output, forward_batch.spec_info)
-        logger.info(f"[draft decode done!]{logits_output=}, {forward_batch=}")
+        # logger.info(f"[draft decode done!]{logits_output=}, {forward_batch=}")
 
         # Restore backup.
         # This is because `seq_lens` can be modified in `prepare_extend_after_decode`
@@ -351,11 +351,9 @@ class NaiveEagleWorker(TpModelWorker):
                 # accept length is 0 or 1
                 input_idx[i] = ptr + spec_info.accept_length[i]
                 ptr += (spec_info.accept_length[i] + 1)
-            logger.info(f"[preprae input_ids1]{spec_info.accept_length=},{batch.input_ids=},{input_idx=},{batch.input_ids[input_idx]=}")
             batch.input_ids = batch.input_ids[input_idx]
             
         batch.input_ids = torch.stack((batch.input_ids, spec_info.topk_index.squeeze(1)), dim=1).reshape(-1)
-        logger.info(f'[preprae input_ids2]{batch.input_ids=}')
         positions = torch.stack([batch.seq_lens,  batch.seq_lens + 1], dim=1).reshape(-1)
         batch.spec_info = EagleVerifyInput(
             draft_token=batch.input_ids,
