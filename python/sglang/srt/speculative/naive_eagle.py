@@ -287,9 +287,8 @@ class NaiveEagleWorker(TpModelWorker):
         save_index = torch.where(last != -1, last, first)
         logits_output.hidden_states = logits_output.hidden_states[save_index]
         logits_output.next_token_logits = logits_output.next_token_logits[save_index]
-        
-        self._detect_nan_if_needed(logits_output)
-        self.capture_for_decode(logits_output, forward_batch.spec_info)
+        return logits_output
+
 
  
     def draft_cuda_graph_1(self, forward_batch: ForwardBatch):
@@ -357,7 +356,7 @@ class NaiveEagleWorker(TpModelWorker):
             forward_batch
         )
         if can_cuda_graph:
-            logits_output, next_token_ids,accept_index, accept_index_viewd, accept_length, draft_input = self.cuda_graph_runner.replay(forward_batch)
+            logits_output, next_token_ids,accept_index, accept_index_viewd, accept_length, draft_logits_output = self.cuda_graph_runner.replay(forward_batch)
             logger.info(f"[cuda graph]{logits_output=}, {next_token_ids=},{accept_index_viewd=}")
             logger.info(f"[cuda graph]{accept_index=}, {accept_length=}, {draft_input=}")
             # accept_index_viewd = accept_index[accept_index != -1]
@@ -393,24 +392,26 @@ class NaiveEagleWorker(TpModelWorker):
                     forward_batch.req_to_token_pool.req_to_token.shape[1],
                     next_power_of_2(num_seqs),
                 )
-        logger.info(f"[cuda graph check!]{logits_output=}\n, {next_token_ids=}\n,{accept_index=}\n, {accept_index_viewd=}\n, {accept_length=}\n")
-        # we pass accept length to 1 of all reqs cause we extend all tokens anyway.
-        accept_length_for_draft_extend = torch.ones((num_seqs,), dtype=torch.int32, device="cuda")
-        accept_length_cpu_for_draft_extend = accept_length_for_draft_extend.tolist()
+            # we pass accept length to 1 of all reqs cause we extend all tokens anyway.
+            accept_length_for_draft_extend = torch.ones((num_seqs,), dtype=torch.int32, device="cuda")
+            accept_length_cpu_for_draft_extend = accept_length_for_draft_extend.tolist()
+            
+            # here, we extend draft tokens anyway cause we want to adopt to cuda graph.
+            draft_input = EagleDraftInput()
+            draft_input.hidden_states = logits_output.hidden_states
+            draft_input.accept_length = accept_length_for_draft_extend
+            draft_input.accept_length_cpu = accept_length_cpu_for_draft_extend
+            draft_input.verified_id = next_token_ids
+            draft_input.seq_lens_for_draft_extend = forward_batch.seq_lens + (accept_length_for_draft_extend + 1)
+            draft_input.req_pool_indices_for_draft_extend = forward_batch.req_pool_indices
+            
+            
+            forward_batch.spec_info = draft_input
+            draft_logits_output = self.forward_draft_extend_after_decode(forward_batch, accept_index)
+            
+        self._detect_nan_if_needed(draft_logits_output)
+        self.capture_for_decode(draft_logits_output, forward_batch.spec_info)
         
-        # here, we extend draft tokens anyway cause we want to adopt to cuda graph.
-        draft_input = EagleDraftInput()
-        draft_input.hidden_states = logits_output.hidden_states
-        draft_input.accept_length = accept_length_for_draft_extend
-        draft_input.accept_length_cpu = accept_length_cpu_for_draft_extend
-        draft_input.verified_id = next_token_ids
-        draft_input.seq_lens_for_draft_extend = forward_batch.seq_lens + (accept_length_for_draft_extend + 1)
-        draft_input.req_pool_indices_for_draft_extend = forward_batch.req_pool_indices
-        
-        
-        forward_batch.spec_info = draft_input
-        self.forward_draft_extend_after_decode(forward_batch, accept_index)
-
         batch.spec_info = draft_input
         batch.extend_lens = forward_batch.extend_seq_lens
         batch.extend_num_tokens = forward_batch.extend_num_tokens
