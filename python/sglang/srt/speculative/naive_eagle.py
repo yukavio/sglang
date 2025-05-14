@@ -266,48 +266,31 @@ class NaiveEagleWorker(TpModelWorker):
         )
         return logits_output, next_token_ids, model_worker_batch.bid
 
-    def forward_draft_extend_after_decode(self, batch: ForwardBatch, accept_index):
-        # Backup fileds that will be modified in-place
-        # seq_lens_backup = batch.seq_lens.clone()
-        # req_pool_indices_backup = batch.req_pool_indices
-        # accept_length_backup = batch.spec_info.accept_length
-        # return_logprob_backup = batch.return_logprob
-        
+    def forward_draft_extend_after_decode(self, forward_batch: ForwardBatch, accept_index):
         # Prepare metadata
-        batch.forward_mode = ForwardMode.NAIVE_DRAFT_EXTEND
-        batch.spec_info.prepare_extend_after_decode(
-            batch,
+        forward_batch.forward_mode = ForwardMode.NAIVE_DRAFT_EXTEND
+        forward_batch.spec_info.prepare_extend_after_decode(
+            forward_batch,
             1,
         )
-        # logger.info(f"[verify-prepare_extend_after_decode]{batch.spec_info=}")
-        batch.spec_info.capture_hidden_mode = CaptureHiddenMode.FULL
-        batch.return_logprob = False
-        batch.req_to_token_pool = self.draft_model_runner.req_to_token_pool
-        batch.token_to_kv_pool = self.draft_model_runner.token_to_kv_pool
-        batch.attn_backend = self.draft_model_runner.attn_backend
-        batch.positions = batch.spec_info.positions
+        forward_batch.spec_info.capture_hidden_mode = CaptureHiddenMode.FULL
+        forward_batch.return_logprob = False
+        forward_batch.req_to_token_pool = self.draft_model_runner.req_to_token_pool
+        forward_batch.token_to_kv_pool = self.draft_model_runner.token_to_kv_pool
+        forward_batch.attn_backend = self.draft_model_runner.attn_backend
+        forward_batch.positions = forward_batch.spec_info.positions
         # Run
-        # logger.info(f'[draft decode forward]{batch.input_ids=}')
-        logits_output = self.draft_model_runner.forward(batch)
+        logits_output = self.draft_model_runner.forward(forward_batch)
 
         last = accept_index[:, 1]
         first = accept_index[:, 0]
         save_index = torch.where(last != -1, last, first)
-        # logger.info(f'{save_index=}, {accept_index=},{logits_output.hidden_states}')
         logits_output.hidden_states = logits_output.hidden_states[save_index]
         logits_output.next_token_logits = logits_output.next_token_logits[save_index]
         
         self._detect_nan_if_needed(logits_output)
-        self.capture_for_decode(logits_output, batch.spec_info)
-        # logger.info(f"[draft decode done!]{logits_output=}, {forward_batch=}")
+        self.capture_for_decode(logits_output, forward_batch.spec_info)
 
-        # Restore backup.
-        # This is because `seq_lens` can be modified in `prepare_extend_after_decode`
-        # batch.forward_mode = ForwardMode.DECODE
-        # batch.seq_lens = seq_lens_backup
-        # batch.req_pool_indices = req_pool_indices_backup
-        # batch.spec_info.accept_length = accept_length_backup
-        # batch.return_logprob = return_logprob_backup
  
     def draft_cuda_graph_1(self, forward_batch: ForwardBatch):
         logits_output = self.target_worker.model_runner.forward(forward_batch)
@@ -429,11 +412,11 @@ class NaiveEagleWorker(TpModelWorker):
         self.forward_draft_extend_after_decode(forward_batch, accept_index)
 
         batch.spec_info = draft_input
-        batch.forward_mode = ForwardMode.DECODE
         batch.extend_lens = forward_batch.extend_seq_lens
         batch.extend_num_tokens = forward_batch.extend_num_tokens
         batch.seq_lens_sum = forward_batch.seq_lens_sum
         batch.input_ids = forward_batch.input_ids
+        batch.forward_mode = ForwardMode.DECODE
         # cuda graph done here, post process
         
         accept_length_cpu = accept_length.tolist()
