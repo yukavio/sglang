@@ -39,7 +39,7 @@ class TestEAGLEEngine(CustomTestCase):
         "model_path": DEFAULT_EAGLE_TARGET_MODEL_FOR_TEST,
         "speculative_draft_model_path": DEFAULT_EAGLE_DRAFT_MODEL_FOR_TEST,
         "speculative_algorithm": "EAGLE",
-        "speculative_algorithm": "NAIVE_EAGLE",
+        # "speculative_algorithm": "NAIVE_EAGLE",
         "speculative_num_steps": 1,
         "speculative_eagle_topk": 1,
         "speculative_num_draft_tokens": 2,
@@ -93,15 +93,15 @@ class TestEAGLEEngine(CustomTestCase):
     def _test_batch_generation(self, engine):
         prompts = [
             "Hello The",
-            # "One hamster", 
-            # "The president of the United States is",
-            # "The capital of France is",
-            # "The future of come is A",
-            # "The future of come is A B C D E F G H I J K L M N O P Q R S T U V W X Y Z",
-            # "I am testing Eagle!!!! NoW!!",
-            # "How old are you?",
-            # "近年来，随着中国农业现代化进程的不断推进，智能温室作为现代设施农业的重要组成部分，受到政策和产业界的高度重视。针对当前温室管理中存在的效率低、资源利用率不高等问题，本文提出并设计了一种基于物联网与云计算技术的智能温室控制系统。该系统集成了环境数据实时监测、多因子协调控制算法、远程设备管理以及数据分析与智能预警等功能模块，能够实现对温室内外多项环境参数（如温湿度、光照、CO₂浓度、pH值等）的精准采集与智能调控。系统采用软硬件协同设计，硬件部分基于ARM架构的嵌入式平台，软件部分采用SpringBoot与Vue框架开发，并结合MQTT协议实现高效的数据通信。实验结果表明，该系统能够有效提升温室环境管理的自动化与智能化水平，显著提高农业生产效率和资源利用率。该研究为现代农业实体提供了一种高效、智能的温室管理解决方案，对推动农业生产的可持续发展具有重要意义。",
-            # "In recent years, with the continuous advancement of agricultural modernization in China, intelligent greenhouses have become a crucial component of modern facility agriculture and have attracted significant attention from both policymakers and industry. To address issues such as low management efficiency and suboptimal resource utilization in traditional greenhouse operations, this paper proposes and designs an intelligent greenhouse control system based on Internet of Things (IoT) and cloud computing technologies. The system integrates real-time environmental data monitoring, multi-factor coordinated control algorithms, remote device management, as well as data analysis and intelligent warning modules, enabling precise acquisition and intelligent regulation of various environmental parameters (such as temperature, humidity, light intensity, CO₂ concentration, and pH value) inside and outside the greenhouse. The system adopts a collaborative design of hardware and software, with the hardware based on an ARM-architecture embedded platform, and the software developed using SpringBoot and Vue frameworks, combined with the MQTT protocol for efficient data communication. Experimental results demonstrate that the system effectively enhances the automation and intelligence level of greenhouse environmental management, significantly improving agricultural production efficiency and resource utilization. This research provides an efficient and intelligent greenhouse management solution for modern agricultural entities and holds significant implications for promoting the sustainable development of agricultural production.",
+            "One hamster", 
+            "The president of the United States is",
+            "The capital of France is",
+            "The future of come is A",
+            "The future of come is A B C D E F G H I J K L M N O P Q R S T U V W X Y Z",
+            "I am testing Eagle!!!! NoW!!",
+            "How old are you?",
+            "近年来，随着中国农业现代化进程的不断推进，智能温室作为现代设施农业的重要组成部分，受到政策和产业界的高度重视。针对当前温室管理中存在的效率低、资源利用率不高等问题，本文提出并设计了一种基于物联网与云计算技术的智能温室控制系统。该系统集成了环境数据实时监测、多因子协调控制算法、远程设备管理以及数据分析与智能预警等功能模块，能够实现对温室内外多项环境参数（如温湿度、光照、CO₂浓度、pH值等）的精准采集与智能调控。系统采用软硬件协同设计，硬件部分基于ARM架构的嵌入式平台，软件部分采用SpringBoot与Vue框架开发，并结合MQTT协议实现高效的数据通信。实验结果表明，该系统能够有效提升温室环境管理的自动化与智能化水平，显著提高农业生产效率和资源利用率。该研究为现代农业实体提供了一种高效、智能的温室管理解决方案，对推动农业生产的可持续发展具有重要意义。",
+            "In recent years, with the continuous advancement of agricultural modernization in China, intelligent greenhouses have become a crucial component of modern facility agriculture and have attracted significant attention from both policymakers and industry. To address issues such as low management efficiency and suboptimal resource utilization in traditional greenhouse operations, this paper proposes and designs an intelligent greenhouse control system based on Internet of Things (IoT) and cloud computing technologies. The system integrates real-time environmental data monitoring, multi-factor coordinated control algorithms, remote device management, as well as data analysis and intelligent warning modules, enabling precise acquisition and intelligent regulation of various environmental parameters (such as temperature, humidity, light intensity, CO₂ concentration, and pH value) inside and outside the greenhouse. The system adopts a collaborative design of hardware and software, with the hardware based on an ARM-architecture embedded platform, and the software developed using SpringBoot and Vue frameworks, combined with the MQTT protocol for efficient data communication. Experimental results demonstrate that the system effectively enhances the automation and intelligence level of greenhouse environmental management, significantly improving agricultural production efficiency and resource utilization. This research provides an efficient and intelligent greenhouse management solution for modern agricultural entities and holds significant implications for promoting the sustainable development of agricultural production.",
         ]
         params = {"temperature": 0, "max_new_tokens": 50}
 

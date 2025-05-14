@@ -293,7 +293,9 @@ class NaiveEagleWorker(TpModelWorker):
         logger.info(f'[draft decode forward]{batch.input_ids=}')
         logits_output = self.draft_model_runner.forward(forward_batch)
 
-        save_index = (accept_index[:, 1] != -1).to(torch.int32)
+        last = accept_index[:, 1]
+        first = accept_index[:, 0]
+        save_index = torch.where(last != -1, last, first)
         logger.info(f'{save_index=}, {accept_index=},{logits_output.hidden_states}')
         logits_output.hidden_states = logits_output.hidden_states[save_index]
         logits_output.next_token_logits = logits_output.next_token_logits[save_index]
@@ -342,13 +344,18 @@ class NaiveEagleWorker(TpModelWorker):
         if spec_info.accept_length is None:
             batch.input_ids = batch.output_ids # first decode.
         else:
-            input_idx = spec_info.accept_length.cumsum(dim=-1) - 1
+            input_idx = torch.empty_like(spec_info.accept_length)
+            
+            ptr = 0
+            for i in range(len(spec_info.accept_length)):
+                # accept length is 0 or 1
+                input_idx[i] = ptr + spec_info.accept_length[i]
+                ptr += (spec_info.accept_length[i] + 1)
+            logger.info(f"[preprae input_ids1]{spec_info.accept_length=},{batch.input_ids=},{input_idx=},{batch.input_ids[input_idx]=}")
             batch.input_ids = batch.input_ids[input_idx]
             
-        logger.info(f"[draft before stack]{batch.input_ids=},{spec_info.topk_index.squeeze(1)=}")
         batch.input_ids = torch.stack((batch.input_ids, spec_info.topk_index.squeeze(1)), dim=1).reshape(-1)
-        logger.info(f"[draft after stack ]{batch.input_ids=}")
-        
+        logger.info(f'[preprae input_ids2]{batch.input_ids=}')
         positions = torch.stack([batch.seq_lens,  batch.seq_lens + 1], dim=1).reshape(-1)
         batch.spec_info = EagleVerifyInput(
             draft_token=batch.input_ids,
@@ -379,7 +386,6 @@ class NaiveEagleWorker(TpModelWorker):
             logits_output = self.draft_cuda_graph_1(forward_batch)
             next_token_ids = self.target_worker.model_runner.sample(logits_output, forward_batch)
             
-            logger.info(f"[verified id!]{next_token_ids}")
             
         
             accept_index = torch.full((num_seqs, 2), -1, dtype=torch.int32, device="cuda")
@@ -402,21 +408,12 @@ class NaiveEagleWorker(TpModelWorker):
 
 
             # we set accept length to 1 of all reqs cause we extend all tokens anyway.
-
-            
-            logger.info(f"""[before assign]{forward_batch.req_pool_indices=},\n
-                        {forward_batch.req_to_token_pool.req_to_token[0][:20]=},\n
-                        {forward_batch.seq_lens=},\n
-                        {forward_batch.seq_lens + accept_length + 1=},
-                        {forward_batch.out_cache_loc=},\n
-                        {accept_index_viewd=}""")
-
             assign_req_to_token_pool[(num_seqs,)](
                     batch.req_pool_indices,
                     batch.req_to_token_pool.req_to_token,
                     batch.seq_lens,
                     batch.seq_lens + accept_length + 1,
-                    batch.out_cache_loc,
+                    batch.out_cache_loc[accept_index_viewd],
                     # forward_batch.out_cache_loc,
                     batch.req_to_token_pool.req_to_token.shape[1],
                     next_power_of_2(num_seqs),
@@ -456,10 +453,9 @@ class NaiveEagleWorker(TpModelWorker):
         
         # for next decode
         logger.info(f"[next decode]{batch.input_ids=}, {accept_index_viewd=},{len(accept_index_viewd)=}") # 要accpet的后面一个
-        if len(accept_index_viewd) > 1:
-            batch.input_ids = batch.input_ids[accept_index_viewd[1:]] # signgle batch
-        else:
-            batch.input_ids = batch.input_ids[accept_index_viewd] # signgle batch
+        # if len(accept_index_viewd) > 1:
+            # batch.input_ids = batch.input_ids[accept_index_viewd[1:]] # signgle batch
+        # else:
             
         
         batch.spec_info.accept_length = accept_length
@@ -513,6 +509,7 @@ class NaiveEagleWorker(TpModelWorker):
         logger.info(f'[free]{batch.out_cache_loc[evict_mask]=}')
         
         if not has_finished:
+            batch.input_ids = batch.input_ids[accept_index_viewd] # signgle batch
             batch.out_cache_loc = batch.out_cache_loc[accept_index]
         else:
             if len(new_accept_index) > 0:
@@ -520,6 +517,7 @@ class NaiveEagleWorker(TpModelWorker):
                 unfinished_index_device = torch.tensor(unfinished_index, device="cuda")
                 batch.spec_info.accept_length_cpu = [accept_length_cpu[i] for i in unfinished_index]
                 batch.spec_info.accept_length = accept_length[unfinished_index_device]
+                batch.input_ids = batch.input_ids[new_accept_index]
             batch.out_cache_loc = batch.out_cache_loc[new_accept_index]
             
 
