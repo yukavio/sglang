@@ -416,7 +416,9 @@ class NaiveEAGLECudaGraphRunner:
 
             mask = (draft_token == target_token)
             accept_index[:, 1] = torch.where(mask, 2 * indices + 1, accept_index[:, 1])
-            accept_index_viewd.copy_(accept_index.view(-1))
+            
+            
+            accept_index_viewd.copy_(accept_index[accept_index != -1])
             accept_length.copy_((accept_index[:, 1] != -1).to(torch.int32))
             assign_req_to_token_pool[(bs,)](
                     req_pool_indices,

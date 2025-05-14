@@ -393,7 +393,7 @@ class NaiveEagleWorker(TpModelWorker):
                     forward_batch.req_to_token_pool.req_to_token.shape[1],
                     next_power_of_2(num_seqs),
                 )
-            
+        logger.info(f"[cuda graph check!]{logits_output=}\n, {next_token_ids=}\n,{accept_index=}\n, {accept_index_viewd=}\n, {accept_length=}\n")
         # we pass accept length to 1 of all reqs cause we extend all tokens anyway.
         accept_length_for_draft_extend = torch.ones((num_seqs,), dtype=torch.int32, device="cuda")
         accept_length_cpu_for_draft_extend = accept_length_for_draft_extend.tolist()
