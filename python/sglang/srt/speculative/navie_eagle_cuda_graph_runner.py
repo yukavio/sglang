@@ -38,7 +38,7 @@ from sglang.srt.patch_torch import monkey_patch_torch_compile
 from sglang.srt.utils import get_available_gpu_memory, is_hip, fast_topk, next_power_of_2
 from sglang.srt.speculative.eagle_utils import (
     EagleDraftInput,
-    assign_req_to_token_pool_for_naive_cuda,
+    assign_req_to_token_pool_for_naive_eagle,
     assign_req_to_token_pool,
 )
 
@@ -204,6 +204,7 @@ class NaiveEAGLECudaGraphRunner:
         self.max_bs = max(self.capture_bs)
         self.max_num_token = self.max_bs * self.num_tokens_per_bs
         self.model_runner.attn_backend.init_cuda_graph_state(self.max_num_token)
+        self.draft_model_runner.attn_backend.init_cuda_graph_state(self.max_num_token)
         self.seq_len_fill_value = (
             self.model_runner.attn_backend.get_cuda_graph_seq_len_fill_value()
         )
@@ -233,8 +234,6 @@ class NaiveEAGLECudaGraphRunner:
             # NOTE:Add for naive eagle
             self.accept_index = torch.full((self.max_bs, 2), -1, dtype=torch.int32, device="cuda")
             self.accept_length = torch.zeros((self.max_bs,), dtype=torch.int32, device="cuda")
-            self.accept_index_viewd = torch.full((self.max_bs * 2, ), -1, dtype=torch.int32, device="cuda")
-            self.draft_hidden_states = torch.zeros_like(self.hidden_states)
 
         # Capture
         try:
@@ -343,13 +342,13 @@ class NaiveEAGLECudaGraphRunner:
         out_cache_loc = self.out_cache_loc[:num_tokens]
         positions = self.positions[:num_tokens]
         mrope_positions = self.mrope_positions[:, :bs]
+        
 
-        spec_info = self.get_spec_info()
+        verify_spec_info, draft_spec_info = self.get_spec_info()
         if self.capture_hidden_mode != CaptureHiddenMode.FULL:
             self.capture_hidden_mode = (
-                spec_info.capture_hidden_mode if spec_info else CaptureHiddenMode.NULL
+                verify_spec_info.capture_hidden_mode if verify_spec_info else CaptureHiddenMode.NULL
             )
-
         
 
         forward_batch = ForwardBatch(
@@ -368,7 +367,7 @@ class NaiveEAGLECudaGraphRunner:
             positions=positions,
             mrope_positions=mrope_positions,
             spec_algorithm=self.model_runner.spec_algorithm,
-            spec_info=spec_info,
+            spec_info=verify_spec_info,
             capture_hidden_mode=self.capture_hidden_mode,
         )
         
@@ -384,23 +383,39 @@ class NaiveEAGLECudaGraphRunner:
             forward_batch.spec_info,
             True, # is naive
         )
-
-        # Next, we add some infos for capture codes after `self.model_runner.forward`
-        draft_hidden_states = self.draft_hidden_states[:num_tokens]
-        draft_input = EagleDraftInput(
-            hidden_states=draft_hidden_states
-        )
         
-        accept_index = self.accept_index[:bs]
+
+        # Draft Attention backend
         accept_length = self.accept_length[:bs]
-        accept_index_viewd = self.accept_index_viewd[:num_tokens]
+        draft_spec_info.accept_length = accept_length
+        draft_spec_info.cuda_graph = True
+        
+        forward_batch.forward_mode = ForwardMode.NAIVE_DRAFT_EXTEND
+        forward_batch.spec_info = draft_spec_info
+        self.draft_model_runner.attn_backend.init_forward_metadata_capture_cuda_graph(
+            bs,
+            num_tokens,
+            req_pool_indices,
+            seq_lens,
+            None,
+            forward_batch.forward_mode,
+            forward_batch.spec_info,
+            True, # is naive
+        )
+        forward_batch.forward_mode = self.capture_forward_mode
+        forward_batch.spec_info = verify_spec_info
+        
+        draft_spec_info.cuda_graph = False
+
+        # we add some infos for capture codes after `self.model_runner.forward`
+        accept_index = self.accept_index[:bs]
         
         # Run and capture
         def run_once():
             # Clean intermediate result cache for DP attention
             forward_batch.dp_local_start_pos = forward_batch.dp_local_num_tokens = None
-
             logits_output = self.model_runner.forward(forward_batch, skip_attn_backend_init=True) # target model verify
+            
             
             probs = torch.softmax(logits_output.next_token_logits, dim=-1)
             _, indices = fast_topk(probs, topk=1, dim=-1)
@@ -418,36 +433,46 @@ class NaiveEAGLECudaGraphRunner:
             accept_index[:, 1] = torch.where(mask, 2 * indices + 1, accept_index[:, 1])
             
             
-            accept_index_viewd.copy_(accept_index[accept_index != -1])
             accept_length.copy_((accept_index[:, 1] != -1).to(torch.int32))
-            assign_req_to_token_pool[(bs,)](
+            
+            assign_req_to_token_pool_for_naive_eagle[(bs,)](
                     req_pool_indices,
                     self.draft_model_runner.req_to_token_pool.req_to_token,
                     seq_lens,
                     seq_lens + accept_length + 1,
-                    out_cache_loc[accept_index_viewd],
+                    out_cache_loc,
+                    accept_index,
                     self.draft_model_runner.req_to_token_pool.req_to_token.shape[1],
                     next_power_of_2(bs),
                 )
             accept_length_for_draft_extend = torch.ones((bs,), dtype=torch.int32, device="cuda")
-            draft_input = EagleDraftInput()
-            draft_input.hidden_states = logits_output.hidden_states
-            draft_input.accept_length = accept_length_for_draft_extend
-            # draft_input.accept_length_cpu = accept_length_cpu_for_draft_extend
-            draft_input.verified_id = next_token_ids
-            draft_input.seq_lens_for_draft_extend = forward_batch.seq_lens + (accept_length_for_draft_extend + 1)
-            draft_input.req_pool_indices_for_draft_extend = forward_batch.req_pool_indices
-            forward_batch.spec_info = draft_input
+            
+            draft_spec_info.hidden_states = logits_output.hidden_states
+            draft_spec_info.accept_length = accept_length_for_draft_extend
+            draft_spec_info.verified_id = next_token_ids
+            draft_spec_info.seq_lens_for_draft_extend = forward_batch.seq_lens + (accept_length_for_draft_extend + 1)
+            draft_spec_info.req_pool_indices_for_draft_extend = forward_batch.req_pool_indices
+            forward_batch.spec_info = draft_spec_info
             draft_logits_output = self.forward_draft_extend_after_decode_cuda_graph(forward_batch, accept_index)
             
-            return logits_output.next_token_logits, logits_output.hidden_states, next_token_ids, accept_index,accept_index_viewd, accept_length, draft_logits_output
+            return logits_output.next_token_logits, logits_output.hidden_states, next_token_ids, accept_index, draft_logits_output, draft_spec_info
             
 
         for _ in range(2):
             torch.cuda.synchronize()
             self.model_runner.tp_group.barrier()
-
+            verify_spec_info_backup = forward_batch.spec_info
+            seq_lens_back_up = forward_batch.seq_lens
+            positions_backup = forward_batch.positions
+            input_ids_backup = forward_batch.input_ids
             run_once()
+            forward_batch.spec_info = verify_spec_info_backup
+            forward_batch.positions = positions_backup
+            forward_batch.input_ids = input_ids_backup
+            forward_batch.seq_lens = seq_lens_back_up
+            forward_batch.req_to_token_pool = self.model_runner.req_to_token_pool
+            forward_batch.token_to_kv_pool = self.model_runner.token_to_kv_pool
+            forward_batch.attn_backend = self.model_runner.attn_backend
 
         global global_graph_memory_pool
         with torch.cuda.graph(graph, pool=global_graph_memory_pool, stream=stream):
@@ -525,6 +550,28 @@ class NaiveEAGLECudaGraphRunner:
             forward_batch.spec_info,
             seq_lens_cpu=self.seq_lens_cpu,
         )
+        
+        self.verify_input = forward_batch.spec_info
+        draft_input = EagleDraftInput()
+        accept_length_for_draft_extend = torch.ones((raw_bs,), dtype=torch.int32, device="cuda") + 1 # always 2 tokens
+        draft_input.accept_length = accept_length_for_draft_extend
+        # Draft Attention backend
+        forward_batch.forward_mode = ForwardMode.NAIVE_DRAFT_EXTEND
+        # draft_spec_info.cuda_graph = True
+        forward_batch.spec_info = draft_input
+        self.draft_model_runner.attn_backend.init_forward_metadata_replay_cuda_graph(
+            bs,
+            self.req_pool_indices,
+            self.seq_lens + 2, # +2 because we always extend 2 tokens
+            (forward_batch.seq_lens_sum + 2 * bs) + (bs - raw_bs),
+            None,
+            forward_batch.forward_mode,
+            forward_batch.spec_info,
+            seq_lens_cpu=self.seq_lens_cpu,
+        )
+        forward_batch.forward_mode = self.capture_forward_mode
+        forward_batch.spec_info = self.verify_input
+        # draft_spec_info.cuda_graph = False
 
         # Store fields
         self.raw_bs = raw_bs
@@ -542,8 +589,9 @@ class NaiveEAGLECudaGraphRunner:
             self.positions[: self.raw_num_token].copy_(forward_batch.positions)
 
         # Replay
+        logger.info(f"[replay][{forward_batch=}]")
         self.graphs[self.bs].replay()
-        next_token_logits, hidden_states, next_token_ids, accept_index, accept_index_viewd, accept_length, draft_logits_output = self.output_buffers[self.bs]
+        next_token_logits, hidden_states, next_token_ids, accept_index, draft_logits_output, draft_input = self.output_buffers[self.bs]
         logits_output = LogitsProcessorOutput(
             next_token_logits=next_token_logits[: self.raw_num_token],
             hidden_states=(
@@ -552,13 +600,14 @@ class NaiveEAGLECudaGraphRunner:
                 else None
             ),
         )
-        return logits_output, next_token_ids, accept_index, accept_index_viewd, accept_length, draft_logits_output
+        return logits_output, next_token_ids, accept_index, draft_logits_output, draft_input
 
     def get_spec_info(self):
-        spec_info = None
+        verify_spec_info = None
+        draft_spec_info = None
         if self.model_runner.spec_algorithm.is_naive_eagle():
-            from sglang.srt.speculative.eagle_utils import EagleVerifyInput
-            spec_info = EagleVerifyInput(
+            from sglang.srt.speculative.eagle_utils import EagleVerifyInput, EagleDraftInput
+            verify_spec_info = EagleVerifyInput(
                 draft_token=None,
                 custom_mask=None, 
                 positions=None,
@@ -570,13 +619,21 @@ class NaiveEAGLECudaGraphRunner:
                 spec_steps=1,
                 capture_hidden_mode=CaptureHiddenMode.FULL,
             )
+            draft_spec_info = EagleDraftInput(
+                topk_p=None,
+                topk_index=None,
+                hidden_states=None,
+                accept_length=None,
+                accept_length_cpu=None,
+                capture_hidden_mode=CaptureHiddenMode.FULL,
+            )
 
-        return spec_info
+        return verify_spec_info, draft_spec_info
 
     def forward_draft_extend_after_decode_cuda_graph(self, forward_batch: ForwardBatch, accept_index):
         # Prepare metadata
-        forward_batch.forward_mode = ForwardMode.NAIVE_DRAFT_EXTEND
-        forward_batch.spec_info.prepare_extend_after_decode(
+        # forward_batch.forward_mode = ForwardMode.TARGET_VERIFY
+        forward_batch.spec_info.prepare_extend_after_decode_for_naive_eagle(
             forward_batch,
             1,
         )
@@ -587,7 +644,7 @@ class NaiveEAGLECudaGraphRunner:
         forward_batch.attn_backend = self.draft_model_runner.attn_backend
         forward_batch.positions = forward_batch.spec_info.positions
         # Run
-        logits_output = self.draft_model_runner.forward(forward_batch)
+        logits_output = self.draft_model_runner.forward(forward_batch, skip_attn_backend_init=True)
 
         last = accept_index[:, 1]
         first = accept_index[:, 0]

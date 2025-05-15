@@ -321,7 +321,7 @@ class FlashInferAttnBackend(AttentionBackend):
                 decode_wrappers[i].begin_forward = partial(
                     fast_decode_plan, decode_wrappers[i]
                 )
-        elif forward_mode.is_target_verify():
+        elif forward_mode.is_target_verify() or forward_mode.is_naive_draft():
             prefill_wrappers = []
             for i in range(self.num_wrappers):
                 if not is_naive_eagle:
@@ -378,7 +378,7 @@ class FlashInferAttnBackend(AttentionBackend):
                 encoder_lens=encoder_lens[:bs] if encoder_lens is not None else None,
                 spec_info=spec_info,
             )
-        elif forward_mode.is_target_verify():
+        elif forward_mode.is_target_verify() or forward_mode.is_naive_draft():
             self.indices_updater_prefill.update(
                 req_pool_indices[:bs],
                 seq_lens[:bs],

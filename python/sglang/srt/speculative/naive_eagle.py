@@ -183,7 +183,7 @@ class NaiveEagleWorker(TpModelWorker):
         logger.info(
             f"Capture draft cuda graph begin. This can take up to several minutes. avail mem={before_mem:.2f} GB"
         )
-        self.cuda_graph_runner = NaiveEAGLECudaGraphRunner(self.target_worker.model_runner, self.draft_model_runner)
+        self.cuda_graph_runner = NaiveEAGLECudaGraphRunner(self.target_worker.model_runner, self.model_runner)
         after_mem = get_available_gpu_memory(self.device, self.gpu_id)
         logger.info(
             f"Capture draft cuda graph end. Time elapsed: {time.time() - tic:.2f} s. avail mem={after_mem:.2f} GB. mem usage={(before_mem - after_mem):.2f} GB."
@@ -280,6 +280,7 @@ class NaiveEagleWorker(TpModelWorker):
         forward_batch.attn_backend = self.draft_model_runner.attn_backend
         forward_batch.positions = forward_batch.spec_info.positions
         # Run
+        logger.info(f"[forward_draft_extend_after_decode]{len(forward_batch.input_ids)=}")
         logits_output = self.draft_model_runner.forward(forward_batch)
 
         last = accept_index[:, 1]
@@ -287,8 +288,10 @@ class NaiveEagleWorker(TpModelWorker):
         save_index = torch.where(last != -1, last, first)
         logits_output.hidden_states = logits_output.hidden_states[save_index]
         logits_output.next_token_logits = logits_output.next_token_logits[save_index]
+        
         return logits_output
-
+        # self._detect_nan_if_needed(logits_output)
+        # self.capture_for_decode(logits_output, forward_batch.spec_info)
 
  
     def draft_cuda_graph_1(self, forward_batch: ForwardBatch):
@@ -356,11 +359,16 @@ class NaiveEagleWorker(TpModelWorker):
             forward_batch
         )
         if can_cuda_graph:
-            logits_output, next_token_ids,accept_index, accept_index_viewd, accept_length, draft_logits_output = self.cuda_graph_runner.replay(forward_batch)
-            logger.info(f"[cuda graph]{logits_output=}, {next_token_ids=},{accept_index_viewd=}")
-            logger.info(f"[cuda graph]{accept_index=}, {accept_length=}, {draft_input=}")
-            # accept_index_viewd = accept_index[accept_index != -1]
+            logits_output, next_token_ids,accept_index, draft_logits_output, draft_input = self.cuda_graph_runner.replay(forward_batch)
+
+            accept_index_viewd = accept_index[accept_index != -1]
+            accept_length = torch.zeros((num_seqs,), dtype=torch.int32, device="cuda")
+            for i in range(num_seqs):
+                accept_length[i] = 1 if accept_index[i][1] != -1 else 0
+            forward_batch.input_ids = next_token_ids
+            logger.info(f"with cuda graph:\n{logits_output=}\n,{next_token_ids=},\n{accept_index=},\n{accept_length=}\n{draft_input=}\n{draft_logits_output=}") 
         else:
+            logger.info(f"[replay][{forward_batch=}]")
             logits_output = self.draft_cuda_graph_1(forward_batch)
             next_token_ids = self.target_worker.model_runner.sample(logits_output, forward_batch)
         
@@ -404,14 +412,11 @@ class NaiveEagleWorker(TpModelWorker):
             draft_input.verified_id = next_token_ids
             draft_input.seq_lens_for_draft_extend = forward_batch.seq_lens + (accept_length_for_draft_extend + 1)
             draft_input.req_pool_indices_for_draft_extend = forward_batch.req_pool_indices
-            
-            
             forward_batch.spec_info = draft_input
             draft_logits_output = self.forward_draft_extend_after_decode(forward_batch, accept_index)
-            
+            logger.info(f"without cuda graph:\n{logits_output=}\n,{next_token_ids=},\n{accept_index=},\n{accept_length=}\n{draft_input=}\n{draft_logits_output=}")       
         self._detect_nan_if_needed(draft_logits_output)
-        self.capture_for_decode(draft_logits_output, forward_batch.spec_info)
-        
+        self.capture_for_decode(draft_logits_output, draft_input)
         batch.spec_info = draft_input
         batch.extend_lens = forward_batch.extend_seq_lens
         batch.extend_num_tokens = forward_batch.extend_num_tokens
@@ -424,6 +429,7 @@ class NaiveEagleWorker(TpModelWorker):
         batch.spec_info.accept_length = accept_length
         batch.spec_info.accept_length_cpu = accept_length_cpu
         batch.seq_lens.add_(accept_length + 1)
+        batch.seq_lens_sum = batch.seq_lens.sum().item()
         
         verified_id = next_token_ids[accept_index_viewd]
         logits_output.next_token_logits = logits_output.next_token_logits[accept_index_viewd]
