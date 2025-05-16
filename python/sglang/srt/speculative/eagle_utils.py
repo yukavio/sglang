@@ -180,7 +180,7 @@ class EagleDraftInput:
                 req_to_token.size(1),
             )
 
-            logger.info(f"[eagleDraftInput output]\n{req_to_token[0][:20]=}\n{req_to_token[1][:20]=}\n{req_pool_indices=},\n{kv_indices=},\n{cum_kv_seq_len=},{qo_indptr=}")
+            logger.info(f"[eagleDraftInput output]\n{paged_kernel_lens=}\n{req_to_token[2][:200]=}\n\n{req_pool_indices=},\n{kv_indices=},\n{cum_kv_seq_len=},{qo_indptr=}")
             return kv_indices, cum_kv_seq_len, qo_indptr, None
         else:
             batch_size = len(req_pool_indices)
@@ -213,7 +213,7 @@ class EagleDraftInput:
                 req_to_token.size(1),
             )
             
-            logger.info(f"[eagleDraftInput output cuda graph]\n{req_to_token[0][:20]=}\n{req_to_token[1][:20]=}\n{req_pool_indices=},\n{kv_indices=},\n{cum_kv_seq_len=},{qo_indptr=}")
+            logger.info(f"[eagleDraftInput output cuda graph]\n{req_to_token[2][:20]=}\n{req_pool_indices=},\n{kv_indices=},\n{cum_kv_seq_len=},{qo_indptr=}")
             return kv_indices, cum_kv_seq_len, qo_indptr, None
 
     def filter_batch(self, new_indices: torch.Tensor):
@@ -708,7 +708,7 @@ def assign_req_to_token_pool_for_naive_eagle(
     BLOCK_SIZE: tl.constexpr = 32
     pid = tl.program_id(axis=0)
     
-    acc_idx = tl.load(accept_index + pid)
+    acc_idx = tl.load(accept_index + pid * 2 + 1)
     if acc_idx == -1:
         return
     

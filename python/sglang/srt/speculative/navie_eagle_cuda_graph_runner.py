@@ -434,7 +434,6 @@ class NaiveEAGLECudaGraphRunner:
             
             
             accept_length.copy_((accept_index[:, 1] != -1).to(torch.int32))
-            
             assign_req_to_token_pool_for_naive_eagle[(bs,)](
                     req_pool_indices,
                     self.draft_model_runner.req_to_token_pool.req_to_token,
@@ -445,7 +444,7 @@ class NaiveEAGLECudaGraphRunner:
                     self.draft_model_runner.req_to_token_pool.req_to_token.shape[1],
                     next_power_of_2(bs),
                 )
-            accept_length_for_draft_extend = torch.ones((bs,), dtype=torch.int32, device="cuda")
+            accept_length_for_draft_extend = torch.ones_like(accept_length, dtype=torch.int32, device="cuda")
             
             draft_spec_info.hidden_states = logits_output.hidden_states
             draft_spec_info.accept_length = accept_length_for_draft_extend
@@ -557,8 +556,9 @@ class NaiveEAGLECudaGraphRunner:
         draft_input.accept_length = accept_length_for_draft_extend
         # Draft Attention backend
         forward_batch.forward_mode = ForwardMode.NAIVE_DRAFT_EXTEND
-        # draft_spec_info.cuda_graph = True
         forward_batch.spec_info = draft_input
+        
+        # please check this!
         self.draft_model_runner.attn_backend.init_forward_metadata_replay_cuda_graph(
             bs,
             self.req_pool_indices,
@@ -571,7 +571,6 @@ class NaiveEAGLECudaGraphRunner:
         )
         forward_batch.forward_mode = self.capture_forward_mode
         forward_batch.spec_info = self.verify_input
-        # draft_spec_info.cuda_graph = False
 
         # Store fields
         self.raw_bs = raw_bs
@@ -589,7 +588,7 @@ class NaiveEAGLECudaGraphRunner:
             self.positions[: self.raw_num_token].copy_(forward_batch.positions)
 
         # Replay
-        logger.info(f"[replay][{forward_batch=}]")
+        logger.info(f"[cuda replay][{forward_batch=}]")
         self.graphs[self.bs].replay()
         next_token_logits, hidden_states, next_token_ids, accept_index, draft_logits_output, draft_input = self.output_buffers[self.bs]
         logits_output = LogitsProcessorOutput(

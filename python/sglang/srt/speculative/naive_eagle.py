@@ -400,6 +400,7 @@ class NaiveEagleWorker(TpModelWorker):
                     forward_batch.req_to_token_pool.req_to_token.shape[1],
                     next_power_of_2(num_seqs),
                 )
+            logger.info(f"[after assign req to token pool]{forward_batch.req_to_token_pool.req_to_token[2][:200]}")
             # we pass accept length to 1 of all reqs cause we extend all tokens anyway.
             accept_length_for_draft_extend = torch.ones((num_seqs,), dtype=torch.int32, device="cuda")
             accept_length_cpu_for_draft_extend = accept_length_for_draft_extend.tolist()
@@ -418,8 +419,11 @@ class NaiveEagleWorker(TpModelWorker):
         self._detect_nan_if_needed(draft_logits_output)
         self.capture_for_decode(draft_logits_output, draft_input)
         batch.spec_info = draft_input
-        batch.extend_lens = forward_batch.extend_seq_lens
-        batch.extend_num_tokens = forward_batch.extend_num_tokens
+        
+
+        
+
+        
         batch.seq_lens_sum = forward_batch.seq_lens_sum
         batch.input_ids = forward_batch.input_ids
         batch.forward_mode = ForwardMode.DECODE
@@ -430,6 +434,10 @@ class NaiveEagleWorker(TpModelWorker):
         batch.spec_info.accept_length_cpu = accept_length_cpu
         batch.seq_lens.add_(accept_length + 1)
         batch.seq_lens_sum = batch.seq_lens.sum().item()
+        
+        batch.extend_lens = [x + 1 for x in accept_length_cpu]
+        batch.extend_num_tokens = forward_batch.extend_num_tokens
+        batch.extend_num_tokens = sum(batch.extend_lens)
         
         verified_id = next_token_ids[accept_index_viewd]
         logits_output.next_token_logits = logits_output.next_token_logits[accept_index_viewd]
