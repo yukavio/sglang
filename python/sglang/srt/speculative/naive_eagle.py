@@ -187,7 +187,7 @@ class NaiveEagleWorker(TpModelWorker):
         logger.info(
             f"Capture draft cuda graph begin. This can take up to several minutes. avail mem={before_mem:.2f} GB"
         )
-        self.cuda_graph_runner = NaiveEAGLECudaGraphRunner(self.target_worker.model_runner, self.model_runner, reuqest_all_greedy=self.request_all_greedy)
+        self.cuda_graph_runner = NaiveEAGLECudaGraphRunner(self.target_worker.model_runner, self.model_runner, request_all_greedy=self.request_all_greedy)
         after_mem = get_available_gpu_memory(self.device, self.gpu_id)
         logger.info(
             f"Capture draft cuda graph end. Time elapsed: {time.time() - tic:.2f} s. avail mem={after_mem:.2f} GB. mem usage={(before_mem - after_mem):.2f} GB."
@@ -384,7 +384,9 @@ class NaiveEagleWorker(TpModelWorker):
             indices = torch.arange(num_seqs, device="cuda", dtype=torch.int32)
             accept_index[:, 0] = indices * 2
             if forward_batch.sampling_info.is_all_greedy:
-                next_token_ids = self.target_worker.model_runner.sample(logits_output, forward_batch)
+                probs = torch.softmax(logits_output.next_token_logits, dim=-1)
+                _, token_indices = fast_topk(probs, topk=1, dim=-1)
+                next_token_ids = token_indices.squeeze(-1)
                 draft_token = forward_batch.input_ids[2 * indices + 1]
                 target_token = next_token_ids[2 * indices]
 
