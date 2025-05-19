@@ -67,8 +67,6 @@ class EagleDraftInput:
     
     # ADD: get next token idx
     next_token_idx: torch.Tensor = None
-    # NOTE: for cuda graph
-    cuda_graph: bool = False
 
     def prepare_for_extend(self, batch: ScheduleBatch):
         # Prefill only generate 1 token.
@@ -158,63 +156,29 @@ class EagleDraftInput:
         paged_kernel_lens_sum: int,
         req_to_token: torch.Tensor,
     ):
-        if not self.cuda_graph:
-            bs = self.accept_length.numel()
+        bs = self.accept_length.numel()
 
-            qo_indptr = torch.zeros((bs + 1,), dtype=torch.int32, device="cuda")
-            qo_indptr[1:] = torch.cumsum(self.accept_length, dim=0)
+        qo_indptr = torch.zeros((bs + 1,), dtype=torch.int32, device="cuda")
+        qo_indptr[1:] = torch.cumsum(self.accept_length, dim=0)
 
-            cum_kv_seq_len = torch.zeros((bs + 1,), dtype=torch.int32, device="cuda")
-            cum_kv_seq_len[1:] = torch.cumsum(paged_kernel_lens, dim=0)
+        cum_kv_seq_len = torch.zeros((bs + 1,), dtype=torch.int32, device="cuda")
+        cum_kv_seq_len[1:] = torch.cumsum(paged_kernel_lens, dim=0)
 
-            # TODO: replace cum_kv_seq_len[-1] with paged_kernel_lens_sum to avoid the device sync.
-            kv_indices = torch.empty(cum_kv_seq_len[-1], dtype=torch.int32, device="cuda")
+        # TODO: replace cum_kv_seq_len[-1] with paged_kernel_lens_sum to avoid the device sync.
+        kv_indices = torch.empty(cum_kv_seq_len[-1], dtype=torch.int32, device="cuda")
 
-            create_flashinfer_kv_indices_triton[(bs,)](
-                req_to_token,
-                req_pool_indices,
-                paged_kernel_lens,
-                cum_kv_seq_len,
-                None,
-                kv_indices,
-                req_to_token.size(1),
-            )
+        create_flashinfer_kv_indices_triton[(bs,)](
+            req_to_token,
+            req_pool_indices,
+            paged_kernel_lens,
+            cum_kv_seq_len,
+            None,
+            kv_indices,
+            req_to_token.size(1),
+        )
 
-            logger.info(f"[eagleDraftInput output]\n{paged_kernel_lens=}\n{req_to_token[2][:200]=}\n\n{req_pool_indices=},\n{kv_indices=},\n{cum_kv_seq_len=},{qo_indptr=}")
-            return kv_indices, cum_kv_seq_len, qo_indptr, None
-        else:
-            batch_size = len(req_pool_indices)
-            qo_indptr = torch.arange(
-                0,
-                (1 + batch_size) * 2,
-                step=2,
-                dtype=torch.int32,
-                device="cuda",
-            )
-            cum_kv_seq_len = torch.zeros(
-                (batch_size + 1,), dtype=torch.int32, device="cuda"
-            )
-
-            paged_kernel_lens = paged_kernel_lens + 2
-            cum_kv_seq_len[1:] = torch.cumsum(paged_kernel_lens, dim=0)
-
-            kv_indices = torch.empty(
-                paged_kernel_lens_sum + 2 * batch_size,
-                dtype=torch.int32,
-                device="cuda",
-            )
-            create_flashinfer_kv_indices_triton[(batch_size,)](
-                req_to_token,
-                req_pool_indices,
-                paged_kernel_lens,
-                cum_kv_seq_len,
-                None,
-                kv_indices,
-                req_to_token.size(1),
-            )
-            
-            logger.info(f"[eagleDraftInput output cuda graph]\n{req_to_token[2][:20]=}\n{req_pool_indices=},\n{kv_indices=},\n{cum_kv_seq_len=},{qo_indptr=}")
-            return kv_indices, cum_kv_seq_len, qo_indptr, None
+        # logger.info(f"[eagleDraftInput output]\n{paged_kernel_lens=}\n{req_to_token[2][:200]=}\n\n{req_pool_indices=},\n{kv_indices=},\n{cum_kv_seq_len=},{qo_indptr=}")
+        return kv_indices, cum_kv_seq_len, qo_indptr, None
 
     def filter_batch(self, new_indices: torch.Tensor):
         self.topk_p = self.topk_p[: len(new_indices)]
@@ -378,8 +342,7 @@ class EagleVerifyInput:
             kv_indices,
             req_to_token.size(1),
         )
-        
-        # logger.info(f"[eagleVerifyInput output]\n{req_to_token[0][:20]=}\n{req_to_token[1][:20]=}\n{req_pool_indices=},\n{kv_indices=},\n{cum_kv_seq_len=},{qo_indptr=}")
+        # logger.info(f"[eagleVerifyInput output]\n{paged_kernel_lens=}\n{req_to_token[1][:200]=}\n\n{req_pool_indices=},\n{kv_indices=},\n{cum_kv_seq_len=},{qo_indptr=}")
         return kv_indices, cum_kv_seq_len, qo_indptr, self.custom_mask
 
     def verify(
@@ -693,46 +656,7 @@ def assign_req_to_token_pool(
         tl.store(token_pool + save_offset, data, mask=mask)
         save_offset += BLOCK_SIZE
         load_offset += BLOCK_SIZE
-        
-@triton.jit
-def assign_req_to_token_pool_for_naive_eagle(
-    req_pool_indices,
-    req_to_token,
-    start_offset,
-    end_offset,
-    out_cache_loc,
-    accept_index, 
-    pool_len: tl.constexpr,
-    bs_upper: tl.constexpr,
-):
-    BLOCK_SIZE: tl.constexpr = 32
-    pid = tl.program_id(axis=0)
-    
-    acc_idx = tl.load(accept_index + pid * 2 + 1)
-    if acc_idx == -1:
-        return
-    
-    kv_start = tl.load(start_offset + pid)
-    kv_end = tl.load(end_offset + pid)
-    token_pool = req_to_token + tl.load(req_pool_indices + pid) * pool_len
 
-    length_offset = tl.arange(0, bs_upper)
-    start = tl.load(start_offset + length_offset, mask=length_offset < pid)
-    end = tl.load(end_offset + length_offset, mask=length_offset < pid)
-    out_offset = tl.sum(end - start, axis=0)
-
-    out_cache_ptr = out_cache_loc + out_offset
-
-    save_offset = tl.arange(0, BLOCK_SIZE) + kv_start
-    load_offset = tl.arange(0, BLOCK_SIZE)
-
-    num_loop = tl.cdiv(kv_end - kv_start, BLOCK_SIZE)
-    for _ in range(num_loop):
-        mask = save_offset < kv_end
-        data = tl.load(out_cache_ptr + load_offset, mask=mask)
-        tl.store(token_pool + save_offset, data, mask=mask)
-        save_offset += BLOCK_SIZE
-        load_offset += BLOCK_SIZE
 
 @triton.jit
 def assign_draft_cache_locs(

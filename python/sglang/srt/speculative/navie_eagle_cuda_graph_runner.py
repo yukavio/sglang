@@ -38,8 +38,6 @@ from sglang.srt.patch_torch import monkey_patch_torch_compile
 from sglang.srt.utils import get_available_gpu_memory, is_hip, fast_topk, next_power_of_2
 from sglang.srt.speculative.eagle_utils import (
     EagleDraftInput,
-    assign_req_to_token_pool_for_naive_eagle,
-    assign_req_to_token_pool,
 )
 
 
@@ -387,8 +385,7 @@ class NaiveEAGLECudaGraphRunner:
 
         # Draft Attention backend
         accept_length = self.accept_length[:bs]
-        draft_spec_info.accept_length = accept_length
-        draft_spec_info.cuda_graph = True
+        draft_spec_info.accept_length = accept_length + 2
         
         forward_batch.forward_mode = ForwardMode.NAIVE_DRAFT_EXTEND
         forward_batch.spec_info = draft_spec_info
@@ -396,7 +393,7 @@ class NaiveEAGLECudaGraphRunner:
             bs,
             num_tokens,
             req_pool_indices,
-            seq_lens,
+            seq_lens + 2,
             None,
             forward_batch.forward_mode,
             forward_batch.spec_info,
@@ -405,8 +402,6 @@ class NaiveEAGLECudaGraphRunner:
         forward_batch.forward_mode = self.capture_forward_mode
         forward_batch.spec_info = verify_spec_info
         
-        draft_spec_info.cuda_graph = False
-
         # we add some infos for capture codes after `self.model_runner.forward`
         accept_index = self.accept_index[:bs]
         
@@ -434,16 +429,6 @@ class NaiveEAGLECudaGraphRunner:
             
             
             accept_length.copy_((accept_index[:, 1] != -1).to(torch.int32))
-            assign_req_to_token_pool_for_naive_eagle[(bs,)](
-                    req_pool_indices,
-                    self.draft_model_runner.req_to_token_pool.req_to_token,
-                    seq_lens,
-                    seq_lens + accept_length + 1,
-                    out_cache_loc,
-                    accept_index,
-                    self.draft_model_runner.req_to_token_pool.req_to_token.shape[1],
-                    next_power_of_2(bs),
-                )
             accept_length_for_draft_extend = torch.ones_like(accept_length, dtype=torch.int32, device="cuda")
             
             draft_spec_info.hidden_states = logits_output.hidden_states

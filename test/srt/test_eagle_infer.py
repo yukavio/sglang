@@ -44,9 +44,9 @@ class TestEAGLEEngine(CustomTestCase):
         "speculative_eagle_topk": 1,
         "speculative_num_draft_tokens": 2,
         "mem_fraction_static": 0.7,
-        "cuda_graph_max_bs": 4,
+        "cuda_graph_max_bs": 8,
         "disable_cuda_graph": False,
-        # "disable_cuda_graph": True,
+        # "disable_cuda_graph": True, 
         "disable_overlap_schedule": True,
     }
     NUM_CONFIGS = 1

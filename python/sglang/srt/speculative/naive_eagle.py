@@ -309,6 +309,7 @@ class NaiveEagleWorker(TpModelWorker):
             # logger.info(f"[draft batch]{batch.out_cache_loc=},{batch.seq_lens=}")
             end_offset = batch.seq_lens + 2 # assign 2 tokens
             # self.check_kv_cache("[before assign_req_to_token_pool]")
+            # logger.info(f"[assign input]{batch.req_pool_indices=}\n{batch.req_to_token_pool.req_to_token[1][:200]}\n{batch.seq_lens=}\n{end_offset=}\n{batch.out_cache_loc=}")
             assign_req_to_token_pool[(num_seqs,)](
                 batch.req_pool_indices,
                 batch.req_to_token_pool.req_to_token,
@@ -319,6 +320,7 @@ class NaiveEagleWorker(TpModelWorker):
                 next_power_of_2(num_seqs),
             )
             # self.check_kv_cache("[after assign_req_to_token_pool]")
+            logger.info(f"[[1]after assign req to token pool]{batch.req_to_token_pool.req_to_token[1][:200]}")
         else:
             raise NotImplementedError("josephyou: Page size > 1 not supported yet")
         
@@ -366,6 +368,7 @@ class NaiveEagleWorker(TpModelWorker):
             for i in range(num_seqs):
                 accept_length[i] = 1 if accept_index[i][1] != -1 else 0
             forward_batch.input_ids = next_token_ids
+            logger.info(f"[[3]after assign req to token pool]{batch.req_to_token_pool.req_to_token[1][:200]}")
             logger.info(f"with cuda graph:\n{logits_output=}\n,{next_token_ids=},\n{accept_index=},\n{accept_length=}\n{draft_input=}\n{draft_logits_output=}") 
         else:
             logger.info(f"[replay][{forward_batch=}]")
@@ -390,17 +393,9 @@ class NaiveEagleWorker(TpModelWorker):
             for i in range(num_seqs):
                 accept_length[i] = 1 if accept_index[i][1] != -1 else 0
 
-            assign_req_to_token_pool[(num_seqs,)](
-                    forward_batch.req_pool_indices,
-                    forward_batch.req_to_token_pool.req_to_token,
-                    forward_batch.seq_lens,
-                    forward_batch.seq_lens + accept_length + 1,
-                    forward_batch.out_cache_loc[accept_index_viewd],
-                    # forward_batch.out_cache_loc,
-                    forward_batch.req_to_token_pool.req_to_token.shape[1],
-                    next_power_of_2(num_seqs),
-                )
-            logger.info(f"[after assign req to token pool]{forward_batch.req_to_token_pool.req_to_token[2][:200]}")
+
+            # NOTE: We do not assign here, becasue the res here is same as first assign
+            
             # we pass accept length to 1 of all reqs cause we extend all tokens anyway.
             accept_length_for_draft_extend = torch.ones((num_seqs,), dtype=torch.int32, device="cuda")
             accept_length_cpu_for_draft_extend = accept_length_for_draft_extend.tolist()
