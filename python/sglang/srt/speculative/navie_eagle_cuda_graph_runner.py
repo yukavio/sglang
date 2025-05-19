@@ -21,6 +21,7 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING, Callable
 
 import torch
+import torch.nn.functional as F
 import tqdm
 
 from sglang.srt.custom_op import CustomOp
@@ -35,11 +36,14 @@ from sglang.srt.model_executor.forward_batch_info import (
     ForwardMode,
 )
 from sglang.srt.patch_torch import monkey_patch_torch_compile
-from sglang.srt.utils import get_available_gpu_memory, is_hip, fast_topk, next_power_of_2
+from sglang.srt.utils import get_available_gpu_memory, is_hip, fast_topk, is_cuda
 from sglang.srt.speculative.eagle_utils import (
     EagleDraftInput,
 )
-
+if is_cuda():
+    from sgl_kernel import (
+        top_k_renorm_prob,
+        top_p_renorm_prob,)
 
 if TYPE_CHECKING:
     from sglang.srt.model_executor.model_runner import ModelRunner
@@ -176,10 +180,11 @@ def set_global_graph_memory_pool(val):
 class NaiveEAGLECudaGraphRunner:
     """A CudaGraphRunner runs the forward pass of a model with cuda graph and torch.compile."""
 
-    def __init__(self, model_runner: ModelRunner, draft_model_runner: ModelRunner):
+    def __init__(self, model_runner: ModelRunner, draft_model_runner: ModelRunner, request_all_greedy: bool):
         # Parse args
         self.model_runner = model_runner
         self.draft_model_runner = draft_model_runner
+        self.request_all_greedy = request_all_greedy
         self.graphs = {}
         self.output_buffers = {}
         self.enable_torch_compile = model_runner.server_args.enable_torch_compile
@@ -410,23 +415,54 @@ class NaiveEAGLECudaGraphRunner:
             # Clean intermediate result cache for DP attention
             forward_batch.dp_local_start_pos = forward_batch.dp_local_num_tokens = None
             logits_output = self.model_runner.forward(forward_batch, skip_attn_backend_init=True) # target model verify
-            
-            
-            probs = torch.softmax(logits_output.next_token_logits, dim=-1)
-            _, indices = fast_topk(probs, topk=1, dim=-1)
-            next_token_ids = indices.squeeze(-1)
-            
+
             # verify
             indices = torch.arange(bs, device="cuda", dtype=torch.int32)
             accept_index[:, 0] = indices * 2
             accept_index[:, 1] = -1 # init it 
 
-            draft_token = input_ids[2 * indices + 1]
-            target_token = next_token_ids[2 * indices]
+            if self.request_all_greedy:
+                probs = torch.softmax(logits_output.next_token_logits, dim=-1)
+                _, indices = fast_topk(probs, topk=1, dim=-1)
+                next_token_ids = indices.squeeze(-1)
+                
+                draft_token = input_ids[2 * indices + 1]
+                target_token = next_token_ids[2 * indices]
+                mask = (draft_token == target_token)
+                accept_index[:, 1] = torch.where(mask, 2 * indices + 1, accept_index[:, 1])
+            else:
+                # apply temperature and get target probs
+                expanded_temperature = torch.repeat_interleave(
+                    forward_batch.sampling_info.temperatures, 2, dim=0
+                )  # (bs * draft_token_num, 1)
 
-            mask = (draft_token == target_token)
-            accept_index[:, 1] = torch.where(mask, 2 * indices + 1, accept_index[:, 1])
-            
+                target_probs = F.softmax(
+                    logits_output.next_token_logits / expanded_temperature, dim=-1
+                )  # (bs * draft_token_num, vocab_size)
+                target_probs = top_k_renorm_prob(
+                    target_probs,
+                    torch.repeat_interleave(
+                        forward_batch.sampling_info.top_ks, 2, dim=0
+                    ),
+                )  # (bs * draft_token_num, vocab_size)
+                target_probs = top_p_renorm_prob(
+                    target_probs,
+                    torch.repeat_interleave(
+                        forward_batch.sampling_info.top_ps, 2, dim=0
+                    ),
+                )
+                
+                target_verify_probs = target_probs[indices * 2]
+                draft_probs = forward_batch.spec_info.draft_probs
+                assert draft_probs.shape == target_verify_probs.shape, f"draft and target probs should have the same shape,but got {draft_probs.shape} and {target_verify_probs.shape}"
+                coins = torch.rand_like(draft_probs, dtype=torch.float32, device="cuda")
+                
+                accept_mask = (coins < (torch.min(torch.tensor([1], device=target_verify_probs.device), target_verify_probs / draft_probs)))
+                mask = torch.sum(accept_mask, dim=-1) > 1
+                accept_index[:, 1] = torch.where(mask, 2 * indices + 1, accept_index[:, 1])
+                
+                # prepare next_token_ids
+                next_token_ids = torch.multinomial(target_probs, num_samples=1).squeeze(-1)
             
             accept_length.copy_((accept_index[:, 1] != -1).to(torch.int32))
             accept_length_for_draft_extend = torch.ones_like(accept_length, dtype=torch.int32, device="cuda")
@@ -543,7 +579,6 @@ class NaiveEAGLECudaGraphRunner:
         forward_batch.forward_mode = ForwardMode.NAIVE_DRAFT_EXTEND
         forward_batch.spec_info = draft_input
         
-        # please check this!
         self.draft_model_runner.attn_backend.init_forward_metadata_replay_cuda_graph(
             bs,
             self.req_pool_indices,

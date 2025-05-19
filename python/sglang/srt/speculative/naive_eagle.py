@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from typing import List, Optional, Tuple
 
 import torch
+import torch.nn.functional as F
 from huggingface_hub import snapshot_download
 
 from sglang.srt.distributed import GroupCoordinator, patch_tensor_parallel_group
@@ -38,7 +39,9 @@ from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
 from sglang.srt.utils import empty_context, fast_topk, get_available_gpu_memory, is_cuda, next_power_of_2
 
 if is_cuda():
-    from sgl_kernel import segment_packbits
+    from sgl_kernel import (
+        top_k_renorm_prob,
+        top_p_renorm_prob,)
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +165,7 @@ class NaiveEagleWorker(TpModelWorker):
             draft_tp_context if server_args.enable_dp_attention else empty_context
         )
         with self.draft_tp_context(self.draft_model_runner.tp_group):
+            self.request_all_greedy = True
             self.init_cuda_graphs()
             
         self.exit_cnt = 1
@@ -183,7 +187,7 @@ class NaiveEagleWorker(TpModelWorker):
         logger.info(
             f"Capture draft cuda graph begin. This can take up to several minutes. avail mem={before_mem:.2f} GB"
         )
-        self.cuda_graph_runner = NaiveEAGLECudaGraphRunner(self.target_worker.model_runner, self.model_runner)
+        self.cuda_graph_runner = NaiveEAGLECudaGraphRunner(self.target_worker.model_runner, self.model_runner, reuqest_all_greedy=self.request_all_greedy)
         after_mem = get_available_gpu_memory(self.device, self.gpu_id)
         logger.info(
             f"Capture draft cuda graph end. Time elapsed: {time.time() - tic:.2f} s. avail mem={after_mem:.2f} GB. mem usage={(before_mem - after_mem):.2f} GB."
@@ -280,7 +284,6 @@ class NaiveEagleWorker(TpModelWorker):
         forward_batch.attn_backend = self.draft_model_runner.attn_backend
         forward_batch.positions = forward_batch.spec_info.positions
         # Run
-        logger.info(f"[forward_draft_extend_after_decode]{len(forward_batch.input_ids)=}")
         logits_output = self.draft_model_runner.forward(forward_batch)
 
         last = accept_index[:, 1]
@@ -302,6 +305,7 @@ class NaiveEagleWorker(TpModelWorker):
         self.run_cnt += 1
         num_seqs = batch.batch_size()
         spec_info = batch.spec_info
+        # logger.info(f"[darftInputSpecInfo]{spec_info=}")
         if self.page_size == 1:
             batch.out_cache_loc = batch.alloc_token_slots(
                 num_seqs * 2, backup_state=False # hard code, 1 for target preill, 1 for draft
@@ -320,7 +324,7 @@ class NaiveEagleWorker(TpModelWorker):
                 next_power_of_2(num_seqs),
             )
             # self.check_kv_cache("[after assign_req_to_token_pool]")
-            logger.info(f"[[1]after assign req to token pool]{batch.req_to_token_pool.req_to_token[1][:200]}")
+            # logger.info(f"[[1]after assign req to token pool]{batch.req_to_token_pool.req_to_token[1][:200]}")
         else:
             raise NotImplementedError("josephyou: Page size > 1 not supported yet")
         
@@ -329,7 +333,6 @@ class NaiveEagleWorker(TpModelWorker):
             batch.input_ids = batch.output_ids # first decode.
         else:
             input_idx = torch.empty_like(spec_info.accept_length)
-            
             
             ptr = 0
             for i in range(len(spec_info.accept_length)):
@@ -361,9 +364,9 @@ class NaiveEagleWorker(TpModelWorker):
             forward_batch
         )
         if can_cuda_graph:
+            forward_batch.draft_probs = spec_info.probs
             logits_output, next_token_ids,accept_index, draft_logits_output, draft_input = self.cuda_graph_runner.replay(forward_batch)
 
-            accept_index_viewd = accept_index[accept_index != -1]
             accept_length = torch.zeros((num_seqs,), dtype=torch.int32, device="cuda")
             for i in range(num_seqs):
                 accept_length[i] = 1 if accept_index[i][1] != -1 else 0
@@ -373,21 +376,59 @@ class NaiveEagleWorker(TpModelWorker):
         else:
             logger.info(f"[replay][{forward_batch=}]")
             logits_output = self.draft_cuda_graph_1(forward_batch)
-            next_token_ids = self.target_worker.model_runner.sample(logits_output, forward_batch)
-        
+            
+            
             accept_index = torch.full((num_seqs, 2), -1, dtype=torch.int32, device="cuda")
             accept_length = torch.zeros((num_seqs,), dtype=torch.int32, device="cuda")
-            
             # verify
             indices = torch.arange(num_seqs, device="cuda", dtype=torch.int32)
             accept_index[:, 0] = indices * 2
+            if forward_batch.sampling_info.is_all_greedy:
+                next_token_ids = self.target_worker.model_runner.sample(logits_output, forward_batch)
+                draft_token = forward_batch.input_ids[2 * indices + 1]
+                target_token = next_token_ids[2 * indices]
 
-            draft_token = forward_batch.input_ids[2 * indices + 1]
-            target_token = next_token_ids[2 * indices]
+                mask = (draft_token == target_token)
+                accept_index[:, 1] = torch.where(mask, 2 * indices + 1, accept_index[:, 1])
+                logger.info(f"{next_token_ids=}\n,{accept_index=}\n,{batch.input_ids=}")
+            else:
+                # apply temperature and get target probs
+                expanded_temperature = torch.repeat_interleave(
+                    forward_batch.sampling_info.temperatures, 2, dim=0
+                )  # (bs * draft_token_num, 1)
 
-            mask = (draft_token == target_token)
-            accept_index[:, 1] = torch.where(mask, 2 * indices + 1, accept_index[:, 1])
-            accept_index_viewd = accept_index[accept_index != -1]
+                target_probs = F.softmax(
+                    logits_output.next_token_logits / expanded_temperature, dim=-1
+                )  # (bs * draft_token_num, vocab_size)
+                target_probs = top_k_renorm_prob(
+                    target_probs,
+                    torch.repeat_interleave(
+                        forward_batch.sampling_info.top_ks, 2, dim=0
+                    ),
+                )  # (bs * draft_token_num, vocab_size)
+                target_probs = top_p_renorm_prob(
+                    target_probs,
+                    torch.repeat_interleave(
+                        forward_batch.sampling_info.top_ps, 2, dim=0
+                    ),
+                )
+                
+                target_verify_probs = target_probs[indices * 2]
+                draft_probs = spec_info.probs
+                logger.info(f"target_probs:{target_probs},draft_probs:{draft_probs}")
+                assert draft_probs.shape == target_verify_probs.shape, f"draft and target probs should have the same shape,but got {draft_probs.shape} and {target_verify_probs.shape}"
+                coins = torch.rand_like(draft_probs, dtype=torch.float32, device="cuda")
+                
+                accept_mask = (coins < (torch.min(torch.tensor([1], device=target_verify_probs.device), target_verify_probs / draft_probs)))
+                mask = torch.sum(accept_mask, dim=-1) > 1
+                accept_index[:, 1] = torch.where(mask, 2 * indices + 1, accept_index[:, 1])
+                
+                # prepare next_token_ids
+                next_token_ids = torch.multinomial(target_probs, num_samples=1).squeeze(-1)
+                logger.info(f"{next_token_ids=}\n,{accept_index=}\n,{batch.input_ids=}")
+                
+            # logger.info(f"[nexttoken_ids]={next_token_ids},[draft probs]:{draft_probs},{torch.argmax(draft_probs,dim=-1)=}\n[target_probs]:{target_probs},{torch.argmax(target_probs,dim=-1)=}")
+            
 
             accept_length = torch.zeros((num_seqs,), dtype=torch.int32, device="cuda")
             for i in range(num_seqs):
@@ -410,15 +451,11 @@ class NaiveEagleWorker(TpModelWorker):
             draft_input.req_pool_indices_for_draft_extend = forward_batch.req_pool_indices
             forward_batch.spec_info = draft_input
             draft_logits_output = self.forward_draft_extend_after_decode(forward_batch, accept_index)
-            logger.info(f"without cuda graph:\n{logits_output=}\n,{next_token_ids=},\n{accept_index=},\n{accept_length=}\n{draft_input=}\n{draft_logits_output=}")       
+
         self._detect_nan_if_needed(draft_logits_output)
         self.capture_for_decode(draft_logits_output, draft_input)
         batch.spec_info = draft_input
-        
 
-        
-
-        
         batch.seq_lens_sum = forward_batch.seq_lens_sum
         batch.input_ids = forward_batch.input_ids
         batch.forward_mode = ForwardMode.DECODE
@@ -434,6 +471,7 @@ class NaiveEagleWorker(TpModelWorker):
         batch.extend_num_tokens = forward_batch.extend_num_tokens
         batch.extend_num_tokens = sum(batch.extend_lens)
         
+        accept_index_viewd = accept_index[accept_index != -1]
         verified_id = next_token_ids[accept_index_viewd]
         logits_output.next_token_logits = logits_output.next_token_logits[accept_index_viewd]
         logits_output.hidden_states = logits_output.hidden_states[accept_index_viewd]
@@ -572,9 +610,6 @@ class NaiveEagleWorker(TpModelWorker):
             hidden_states: Hidden states from the target model forward
             next_token_ids: Next token ids generated from the target forward.
         """
-        # logger.info(f"check kv: {self.req_to_token_pool=}, {self.token_to_kv_pool_allocator=},{self.token_to_kv_pool_allocator.get_kvcache().get_key_buffer(0)=}")
-        # logger.info(f"check kv: {self.target_worker.get_memory_pool()=},{self.target_worker.get_memory_pool()[1].get_kvcache().get_key_buffer(0)=}")
-        # self.check_kv_cache("forward_draft_extend before")
         batch.spec_info = EagleDraftInput(
             hidden_states=hidden_states,
             verified_id=next_token_ids,
@@ -586,14 +621,11 @@ class NaiveEagleWorker(TpModelWorker):
             model_worker_batch, self.draft_model_runner
         )
         forward_batch.return_logprob = False
-        # logger.info(f"[forward_draft_extend batch]{forward_batch=}")
         logits_output = self.draft_model_runner.forward(forward_batch)
         self._detect_nan_if_needed(logits_output)
         assert isinstance(forward_batch.spec_info, EagleDraftInput)
         assert forward_batch.spec_info is batch.spec_info
-        # print(f'{logits_output.hidden_states.shape=}')
         self.capture_for_decode(logits_output, forward_batch.spec_info)
-        # self.check_kv_cache("forward_draft_extend after")
 
     def capture_for_decode(
         self, logits_output: LogitsProcessorOutput, draft_input: EagleDraftInput
@@ -601,8 +633,8 @@ class NaiveEagleWorker(TpModelWorker):
         probs = torch.softmax(logits_output.next_token_logits, dim=-1)
         draft_input.topk_p, draft_input.topk_index = fast_topk(probs, 1, dim=-1)
         
-        # logger.info(f"[capture_for_decode]{draft_input.topk_index}")
         draft_input.hidden_states = logits_output.hidden_states
+        draft_input.probs = probs
 
     def _detect_nan_if_needed(self, logits_output: LogitsProcessorOutput):
         if self.enable_nan_detection:
