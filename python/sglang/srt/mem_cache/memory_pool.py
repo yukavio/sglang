@@ -67,7 +67,7 @@ class ReqToTokenPool:
         self.free_slots = list(range(size))
 
     def write(self, indices, values):
-        logger.info(f"[ReqToTokenPool write]:{indices=},{values=}")
+        # logger.info(f"[ReqToTokenPool write]:{indices=},{values=}")
         self.req_to_token[indices] = values
 
     def available_size(self):

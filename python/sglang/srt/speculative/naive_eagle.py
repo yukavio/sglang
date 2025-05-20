@@ -168,7 +168,8 @@ class NaiveEagleWorker(TpModelWorker):
             self.requests_all_greedy = server_args.requests_all_greedy
             logger.info(f"[init cuda graph with requests_all_greedy:{self.requests_all_greedy}]")
             self.init_cuda_graphs()
-            
+        
+        self.last_state = ForwardMode.DECODE
         self.exit_cnt = 1
         self.run_cnt = 0
         
@@ -227,6 +228,8 @@ class NaiveEagleWorker(TpModelWorker):
                 self.forward_draft_extend(
                     batch, logits_output.hidden_states, next_token_ids
                 )
+            self.last_state = ForwardMode.EXTEND
+            logger.info(f"[Prefill]{next_token_ids=}")
             return logits_output, next_token_ids, bid, 0
 
     def check_kv_cache(self, msg):
@@ -311,10 +314,7 @@ class NaiveEagleWorker(TpModelWorker):
             batch.out_cache_loc = batch.alloc_token_slots(
                 num_seqs * 2, backup_state=False # hard code, 1 for target preill, 1 for draft
             )
-            # logger.info(f"[draft batch]{batch.out_cache_loc=},{batch.seq_lens=}")
             end_offset = batch.seq_lens + 2 # assign 2 tokens
-            # self.check_kv_cache("[before assign_req_to_token_pool]")
-            # logger.info(f"[assign input]{batch.req_pool_indices=}\n{batch.req_to_token_pool.req_to_token[1][:200]}\n{batch.seq_lens=}\n{end_offset=}\n{batch.out_cache_loc=}")
             assign_req_to_token_pool[(num_seqs,)](
                 batch.req_pool_indices,
                 batch.req_to_token_pool.req_to_token,
@@ -324,24 +324,39 @@ class NaiveEagleWorker(TpModelWorker):
                 batch.req_to_token_pool.req_to_token.shape[1],
                 next_power_of_2(num_seqs),
             )
-            # self.check_kv_cache("[after assign_req_to_token_pool]")
-            # logger.info(f"[[1]after assign req to token pool]{batch.req_to_token_pool.req_to_token[1][:200]}")
         else:
             raise NotImplementedError("josephyou: Page size > 1 not supported yet")
         
-        batch.forward_mode = ForwardMode.TARGET_VERIFY
+        
+        # logger.info(f"[decode]{batch.input_ids=}")
+        # if len(batch.input_ids) == len(batch.output_ids) and (batch.input_ids == batch.output_ids).all():
+        #     logger.info("There is no new requests")
+        # else:
+        #     logger.info(f'{spec_info.accept_length=}')
+        #     logger.info("There are new requests")
+        
+        # logger.info(f"[info]{batch.output_ids=},{batch.input_ids=},{spec_info.accept_length=}")
+
+
+        
         if spec_info.accept_length is None:
             batch.input_ids = batch.output_ids # first decode.
         else:
             input_idx = torch.empty_like(spec_info.accept_length)
-            
             ptr = 0
             for i in range(len(spec_info.accept_length)):
                 # accept length is 0 or 1
                 input_idx[i] = ptr + spec_info.accept_length[i]
                 ptr += (spec_info.accept_length[i] + 1)
             batch.input_ids = batch.input_ids[input_idx]
-            
+        
+        if self.last_state == ForwardMode.EXTEND and spec_info.accept_length is not None:
+            batch.input_ids = torch.cat((batch.input_ids, batch.output_ids[sum(spec_info.accept_length + 1):]))
+        
+        
+        self.last_state = ForwardMode.DECODE
+        batch.forward_mode = ForwardMode.TARGET_VERIFY
+        
         batch.input_ids = torch.stack((batch.input_ids, spec_info.topk_index.squeeze(1)), dim=1).reshape(-1)
         positions = torch.stack([batch.seq_lens,  batch.seq_lens + 1], dim=1).reshape(-1)
         batch.spec_info = EagleVerifyInput(
@@ -375,9 +390,9 @@ class NaiveEagleWorker(TpModelWorker):
                 accept_length[i] = 1 if accept_index[i][1] != -1 else 0
             forward_batch.input_ids = next_token_ids
             # logger.info(f"[[3]after assign req to token pool]{batch.req_to_token_pool.req_to_token[1][:200]}")
-            logger.info(f"with cuda graph:\n{logits_output=}\n,{next_token_ids=},\n{accept_index=},\n{accept_length=}\n{draft_input=}\n{draft_logits_output=}") 
+            # logger.info(f"with cuda graph:\n{logits_output=}\n,{next_token_ids=},\n{accept_index=},\n{accept_length=}\n{draft_input=}\n{draft_logits_output=}") 
         else:
-            logger.info(f"[replay][{forward_batch=}]")
+            # logger.info(f"[replay][{forward_batch=}]")
             logits_output = self.draft_cuda_graph_1(forward_batch)
             
             
@@ -519,15 +534,19 @@ class NaiveEagleWorker(TpModelWorker):
             batch.out_cache_loc = batch.out_cache_loc[accept_index_viewd]
         else:
             if len(new_accept_index) > 0:
+                logger.info("happe.....")
                 new_accept_index = torch.tensor(new_accept_index, device="cuda")
                 unfinished_index_device = torch.tensor(unfinished_index, device="cuda")
                 batch.spec_info.accept_length_cpu = [accept_length_cpu[i] for i in unfinished_index]
                 batch.spec_info.accept_length = accept_length[unfinished_index_device]
+                batch.spec_info.topk_index = batch.spec_info.topk_index[unfinished_index_device]
+                batch.spec_info.topk_p = batch.spec_info.topk_p[unfinished_index_device]
                 batch.input_ids = batch.input_ids[new_accept_index]
             batch.out_cache_loc = batch.out_cache_loc[new_accept_index]
             
 
         # return output ids for next decode.
+        
         return (
                 logits_output,
                 verified_id,

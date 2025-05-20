@@ -1320,7 +1320,6 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             # `forward_batch_speculative_generation` after running draft models.
             return
 
-        logger.info("Preparing for decode...")
         if self.sampling_info.penalizer_orchestrator.is_required:
             if self.enable_overlap:
                 # TODO: this can be slow, optimize this.
