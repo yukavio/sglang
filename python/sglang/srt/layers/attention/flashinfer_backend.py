@@ -286,6 +286,7 @@ class FlashInferAttnBackend(AttentionBackend):
         encoder_lens: Optional[torch.Tensor],
         forward_mode: ForwardMode,
         spec_info: Optional[Union[EagleDraftInput, EagleVerifyInput]],
+        is_naive_eagle: Optional[bool]=False, 
     ):
         if forward_mode.is_decode_or_idle():
             decode_wrappers = []
@@ -318,9 +319,14 @@ class FlashInferAttnBackend(AttentionBackend):
                 decode_wrappers[i].begin_forward = partial(
                     fast_decode_plan, decode_wrappers[i]
                 )
-        elif forward_mode.is_target_verify():
+        elif forward_mode.is_target_verify() or forward_mode.is_naive_draft():
             prefill_wrappers = []
             for i in range(self.num_wrappers):
+                if not is_naive_eagle:
+                    custom_mask_buf = self.cuda_graph_custom_mask
+                else:
+                    custom_mask_buf = None
+                
                 prefill_wrappers.append(
                     BatchPrefillWithPagedKVCacheWrapper(
                         self.workspace_buffer,
@@ -330,7 +336,7 @@ class FlashInferAttnBackend(AttentionBackend):
                         paged_kv_indptr_buf=self.kv_indptr[i][: bs + 1],
                         paged_kv_indices_buf=self.cuda_graph_kv_indices[i],
                         paged_kv_last_page_len_buf=self.kv_last_page_len[:bs],
-                        custom_mask_buf=self.cuda_graph_custom_mask,
+                        custom_mask_buf=custom_mask_buf,
                         mask_indptr_buf=self.cuda_graph_qk_indptr[i][: bs + 1],
                     )
                 )
@@ -370,7 +376,7 @@ class FlashInferAttnBackend(AttentionBackend):
                 encoder_lens=encoder_lens[:bs] if encoder_lens is not None else None,
                 spec_info=spec_info,
             )
-        elif forward_mode.is_target_verify():
+        elif forward_mode.is_target_verify() or forward_mode.is_naive_draft():
             self.indices_updater_prefill.update(
                 req_pool_indices[:bs],
                 seq_lens[:bs],
@@ -902,20 +908,37 @@ class FlashInferIndicesUpdaterPrefill:
             )
 
         # cached part
-        wrapper_paged.begin_forward(
-            qo_indptr,
-            kv_indptr,
-            kv_indices,
-            self.kv_last_page_len[:bs],
-            self.num_qo_heads,
-            self.num_kv_heads,
-            self.head_dim,
-            1,
-            q_data_type=self.q_data_type,
-            kv_data_type=self.data_type,
-            custom_mask=custom_mask,
-            non_blocking=True,
-        )
+        if custom_mask is not None:
+            wrapper_paged.begin_forward(
+                qo_indptr,
+                kv_indptr,
+                kv_indices,
+                self.kv_last_page_len[:bs],
+                self.num_qo_heads,
+                self.num_kv_heads,
+                self.head_dim,
+                1,
+                q_data_type=self.q_data_type,
+                kv_data_type=self.data_type,
+                custom_mask=custom_mask,
+                non_blocking=True,
+            )
+        else:
+            wrapper_paged.begin_forward(
+                qo_indptr,
+                kv_indptr,
+                kv_indices,
+                self.kv_last_page_len[:bs],
+                self.num_qo_heads,
+                self.num_kv_heads,
+                self.head_dim,
+                1,
+                q_data_type=self.q_data_type,
+                kv_data_type=self.data_type,
+                custom_mask=None,
+                causal=True, # for naive speculative
+                non_blocking=True,
+            )
 
 
 # Use as a fast path to override the indptr in flashinfer's plan function

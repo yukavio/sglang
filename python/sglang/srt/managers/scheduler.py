@@ -267,7 +267,18 @@ class Scheduler(
         )
 
         # Launch a draft worker for speculative decoding
-        if self.spec_algorithm.is_eagle():
+        if self.spec_algorithm.is_eagle() and self.spec_algorithm.is_naive_eagle():
+            from sglang.srt.speculative.naive_eagle import NaiveEagleWorker
+
+            self.draft_worker = NaiveEagleWorker(
+                gpu_id=gpu_id,
+                tp_rank=tp_rank,
+                server_args=server_args,
+                nccl_port=port_args.nccl_port,
+                target_worker=self.tp_worker,
+                dp_rank=dp_rank,
+            )
+        elif self.spec_algorithm.is_eagle():
             from sglang.srt.speculative.eagle_worker import EAGLEWorker
 
             self.draft_worker = EAGLEWorker(
@@ -617,6 +628,7 @@ class Scheduler(
             self.cur_batch = batch
 
             if batch:
+                # logger.info(f"[input batch]={batch.input_ids=},{batch.forward_mode=}")
                 result = self.run_batch(batch)
                 self.process_batch_result(batch, result)
             else:
@@ -1155,7 +1167,6 @@ class Scheduler(
         # Handle DP attention
         if self.server_args.enable_dp_attention or self.server_args.enable_sp_layernorm:
             ret, _ = self.prepare_dp_attn_batch(ret)
-
         return ret
 
     def get_new_batch_prefill(self) -> Optional[ScheduleBatch]:
@@ -1406,9 +1417,12 @@ class Scheduler(
         result: Union[GenerationBatchResult, EmbeddingBatchResult],
     ):
         if batch.forward_mode.is_decode():
+            # logger.info(f"[in decode]{batch=}")
             self.process_batch_result_decode(batch, result)
         elif batch.forward_mode.is_extend():
+            # logger.info(f"[in prefill before], {batch.input_ids=},{batch.output_ids=}")
             self.process_batch_result_prefill(batch, result)
+            # logger.info(f"[in prefill done], {batch.input_ids=},{batch.output_ids=}")
         elif batch.forward_mode.is_idle():
             if self.enable_overlap:
                 self.tp_worker.resolve_batch_result(result.bid)

@@ -208,7 +208,12 @@ class ModelRunner:
         if self.device == "cuda":
             self.init_cublas()
             self.init_attention_backend()
-            self.init_cuda_graphs()
+            
+            # NOTE: hard code, we init target model cuda graphs in naive_eagle
+            if self.spec_algorithm.is_naive_eagle():
+                logger.info("We init target model cuda graphs in naive eagle....")
+            else:
+                self.init_cuda_graphs()
         else:
             self.cuda_graph_runner = None
             self.init_attention_backend()
@@ -870,7 +875,7 @@ class ModelRunner:
                 )
 
                 # Init streams
-                if self.server_args.speculative_algorithm == "EAGLE":
+                if self.server_args.speculative_algorithm == "EAGLE" or self.server_args.speculative_algorithm == "NAIVE_EAGLE":
                     self.plan_stream_for_flashinfer = torch.cuda.Stream()
                 self.attn_backend = FlashInferAttnBackend(self)
             else:
@@ -1019,6 +1024,7 @@ class ModelRunner:
     ) -> LogitsProcessorOutput:
         if (
             forward_batch.forward_mode.is_cuda_graph()
+            and not self.spec_algorithm.is_naive_eagle() # Naive eagle use own cuda graph in naive_eagle_cuda_graph_runner
             and self.cuda_graph_runner
             and self.cuda_graph_runner.can_run(forward_batch)
         ):

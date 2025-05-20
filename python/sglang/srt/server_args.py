@@ -140,6 +140,7 @@ class ServerArgs:
     speculative_accept_threshold_single: float = 1.0
     speculative_accept_threshold_acc: float = 1.0
     speculative_token_map: Optional[str] = None
+    requests_all_greedy: Optional[bool] = True
 
     # Double Sparsity
     enable_double_sparsity: bool = False
@@ -335,7 +336,7 @@ class ServerArgs:
 
         if (
             self.speculative_algorithm == "EAGLE"
-            or self.speculative_algorithm == "EAGLE3"
+            or self.speculative_algorithm == "EAGLE3" or self.speculative_algorithm == "NAIVE_EAGLE"
         ):
             if self.max_running_requests is None:
                 self.max_running_requests = 48
@@ -872,7 +873,7 @@ class ServerArgs:
         parser.add_argument(
             "--speculative-algorithm",
             type=str,
-            choices=["EAGLE", "EAGLE3", "NEXTN"],
+            choices=["EAGLE", "EAGLE3", "NEXTN", "NAIVE_EAGLE"],
             help="Speculative algorithm.",
         )
         parser.add_argument(
@@ -915,6 +916,13 @@ class ServerArgs:
             type=str,
             help="The path of the draft model's small vocab table.",
             default=ServerArgs.speculative_token_map,
+        )
+        
+        parser.add_argument(
+            "--requests-all-greedy",
+            type=bool,
+            help="The path of the draft model's small vocab table.",
+            default=ServerArgs.requests_all_greedy,
         )
 
         # Double Sparsity
