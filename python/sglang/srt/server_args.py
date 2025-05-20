@@ -140,6 +140,7 @@ class ServerArgs:
     speculative_accept_threshold_single: float = 1.0
     speculative_accept_threshold_acc: float = 1.0
     speculative_token_map: Optional[str] = None
+    requests_all_greedy: Optional[bool] = True
 
     # Double Sparsity
     enable_double_sparsity: bool = False
@@ -915,6 +916,13 @@ class ServerArgs:
             type=str,
             help="The path of the draft model's small vocab table.",
             default=ServerArgs.speculative_token_map,
+        )
+        
+        parser.add_argument(
+            "--requests-all-greedy",
+            type=bool,
+            help="The path of the draft model's small vocab table.",
+            default=ServerArgs.requests_all_greedy,
         )
 
         # Double Sparsity

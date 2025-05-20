@@ -165,7 +165,8 @@ class NaiveEagleWorker(TpModelWorker):
             draft_tp_context if server_args.enable_dp_attention else empty_context
         )
         with self.draft_tp_context(self.draft_model_runner.tp_group):
-            self.request_all_greedy = True
+            self.requests_all_greedy = server_args.requests_all_greedy
+            logger.info(f"[init cuda graph with requests_all_greedy:{self.requests_all_greedy}]")
             self.init_cuda_graphs()
             
         self.exit_cnt = 1
@@ -187,7 +188,7 @@ class NaiveEagleWorker(TpModelWorker):
         logger.info(
             f"Capture draft cuda graph begin. This can take up to several minutes. avail mem={before_mem:.2f} GB"
         )
-        self.cuda_graph_runner = NaiveEAGLECudaGraphRunner(self.target_worker.model_runner, self.model_runner, request_all_greedy=self.request_all_greedy)
+        self.cuda_graph_runner = NaiveEAGLECudaGraphRunner(self.target_worker.model_runner, self.model_runner, requests_all_greedy=self.requests_all_greedy)
         after_mem = get_available_gpu_memory(self.device, self.gpu_id)
         logger.info(
             f"Capture draft cuda graph end. Time elapsed: {time.time() - tic:.2f} s. avail mem={after_mem:.2f} GB. mem usage={(before_mem - after_mem):.2f} GB."
@@ -364,14 +365,16 @@ class NaiveEagleWorker(TpModelWorker):
             forward_batch
         )
         if can_cuda_graph:
-            forward_batch.draft_probs = spec_info.probs
+            # logger.info(f"[replay]{forward_batch=}")
+            forward_batch.spec_info_topk_index = spec_info.topk_index
+            forward_batch.spec_info_topk_p = spec_info.topk_p
+            
             logits_output, next_token_ids,accept_index, draft_logits_output, draft_input = self.cuda_graph_runner.replay(forward_batch)
-
             accept_length = torch.zeros((num_seqs,), dtype=torch.int32, device="cuda")
             for i in range(num_seqs):
                 accept_length[i] = 1 if accept_index[i][1] != -1 else 0
             forward_batch.input_ids = next_token_ids
-            logger.info(f"[[3]after assign req to token pool]{batch.req_to_token_pool.req_to_token[1][:200]}")
+            # logger.info(f"[[3]after assign req to token pool]{batch.req_to_token_pool.req_to_token[1][:200]}")
             logger.info(f"with cuda graph:\n{logits_output=}\n,{next_token_ids=},\n{accept_index=},\n{accept_length=}\n{draft_input=}\n{draft_logits_output=}") 
         else:
             logger.info(f"[replay][{forward_batch=}]")
@@ -392,7 +395,6 @@ class NaiveEagleWorker(TpModelWorker):
 
                 mask = (draft_token == target_token)
                 accept_index[:, 1] = torch.where(mask, 2 * indices + 1, accept_index[:, 1])
-                logger.info(f"{next_token_ids=}\n,{accept_index=}\n,{batch.input_ids=}")
             else:
                 # apply temperature and get target probs
                 expanded_temperature = torch.repeat_interleave(
@@ -416,20 +418,14 @@ class NaiveEagleWorker(TpModelWorker):
                 )
                 
                 target_verify_probs = target_probs[indices * 2]
-                draft_probs = spec_info.probs
-                logger.info(f"target_probs:{target_probs},draft_probs:{draft_probs}")
-                assert draft_probs.shape == target_verify_probs.shape, f"draft and target probs should have the same shape,but got {draft_probs.shape} and {target_verify_probs.shape}"
-                coins = torch.rand_like(draft_probs, dtype=torch.float32, device="cuda")
+                coins = torch.rand((num_seqs), dtype=torch.float32, device="cuda")
+                draft_p = spec_info.topk_p.squeeze()
                 
-                accept_mask = (coins < (torch.min(torch.tensor([1], device=target_verify_probs.device), target_verify_probs / draft_probs)))
-                mask = torch.sum(accept_mask, dim=-1) > 1
+                target_p = torch.gather(target_verify_probs, dim=1, index=spec_info.topk_index).squeeze(1)
+                mask = coins < torch.min(torch.tensor([1], device=target_verify_probs.device), target_p / draft_p)
                 accept_index[:, 1] = torch.where(mask, 2 * indices + 1, accept_index[:, 1])
-                
                 # prepare next_token_ids
                 next_token_ids = torch.multinomial(target_probs, num_samples=1).squeeze(-1)
-                logger.info(f"{next_token_ids=}\n,{accept_index=}\n,{batch.input_ids=}")
-                
-            # logger.info(f"[nexttoken_ids]={next_token_ids},[draft probs]:{draft_probs},{torch.argmax(draft_probs,dim=-1)=}\n[target_probs]:{target_probs},{torch.argmax(target_probs,dim=-1)=}")
             
 
             accept_length = torch.zeros((num_seqs,), dtype=torch.int32, device="cuda")
@@ -636,7 +632,6 @@ class NaiveEagleWorker(TpModelWorker):
         draft_input.topk_p, draft_input.topk_index = fast_topk(probs, 1, dim=-1)
         
         draft_input.hidden_states = logits_output.hidden_states
-        draft_input.probs = probs
 
     def _detect_nan_if_needed(self, logits_output: LogitsProcessorOutput):
         if self.enable_nan_detection:

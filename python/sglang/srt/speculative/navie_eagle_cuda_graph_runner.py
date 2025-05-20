@@ -21,6 +21,7 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING, Callable
 
 import torch
+import torch.nn.functional as F
 import tqdm
 
 from sglang.srt.custom_op import CustomOp
@@ -36,10 +37,15 @@ from sglang.srt.model_executor.forward_batch_info import (
 )
 from sglang.srt.sampling.sampling_batch_info import SamplingBatchInfo
 from sglang.srt.patch_torch import monkey_patch_torch_compile
-from sglang.srt.utils import get_available_gpu_memory, is_hip, fast_topk, next_power_of_2
+from sglang.srt.utils import get_available_gpu_memory, is_hip, fast_topk, is_cuda
 from sglang.srt.speculative.eagle_utils import (
     EagleDraftInput,
 )
+
+if is_cuda():
+    from sgl_kernel import (
+        top_k_renorm_prob,
+        top_p_renorm_prob,)
 
 
 if TYPE_CHECKING:
@@ -177,11 +183,11 @@ def set_global_graph_memory_pool(val):
 class NaiveEAGLECudaGraphRunner:
     """A CudaGraphRunner runs the forward pass of a model with cuda graph and torch.compile."""
 
-    def __init__(self, model_runner: ModelRunner, draft_model_runner: ModelRunner, request_all_greedy: bool):
+    def __init__(self, model_runner: ModelRunner, draft_model_runner: ModelRunner, requests_all_greedy: bool):
         # Parse args
         self.model_runner = model_runner
         self.draft_model_runner = draft_model_runner
-        self.request_all_greedy = request_all_greedy
+        self.requests_all_greedy = requests_all_greedy
         self.graphs = {}
         self.output_buffers = {}
         self.enable_torch_compile = model_runner.server_args.enable_torch_compile
@@ -232,9 +238,13 @@ class NaiveEAGLECudaGraphRunner:
             )
             
             # NOTE:Add for naive eagle
-            self.accept_index = torch.full((self.max_bs, 2), -1, dtype=torch.int32, device="cuda")
-            self.accept_length = torch.zeros((self.max_bs,), dtype=torch.int32, device="cuda")
+            self.accept_index = torch.full((self.max_bs, 2), -1, dtype=torch.int32)
+            self.accept_length = torch.zeros((self.max_bs,), dtype=torch.int32)
 
+            # NOTE: Add for no greedy requests
+            self.one_tensor = torch.tensor([1])
+            self.spec_info_topk_p = torch.zeros((self.max_bs, 1), dtype=torch.float32)
+            self.spec_info_topk_index = torch.zeros((self.max_bs, 1), dtype=torch.int64)
         # Capture
         try:
             with self.model_capture_mode():
@@ -343,15 +353,27 @@ class NaiveEAGLECudaGraphRunner:
         positions = self.positions[:num_tokens]
         mrope_positions = self.mrope_positions[:, :bs]
         
-
+        spec_info_topk_p = self.spec_info_topk_p[:bs]
+        spec_info_topk_index = self.spec_info_topk_index[:bs]
+        
         verify_spec_info, draft_spec_info = self.get_spec_info()
         if self.capture_hidden_mode != CaptureHiddenMode.FULL:
             self.capture_hidden_mode = (
                 verify_spec_info.capture_hidden_mode if verify_spec_info else CaptureHiddenMode.NULL
             )
-        # sampling_info = SamplingBatchInfo(
-            # 
-        # )
+        
+        temperatures = torch.ones((bs, 1), dtype=torch.float32, device="cuda")
+        top_ps = torch.ones((bs,), dtype=torch.float32, device="cuda")
+        top_ks = torch.ones((bs,), dtype=torch.int32, device="cuda")
+        sampling_info = SamplingBatchInfo(
+            temperatures=temperatures,
+            top_ps=top_ps,
+            top_ks=top_ks,
+            min_ps=None,
+            is_all_greedy=False,
+            need_min_p_sampling=None,
+            vocab_size=None
+        )
 
         forward_batch = ForwardBatch(
             forward_mode=self.capture_forward_mode,
@@ -371,6 +393,7 @@ class NaiveEAGLECudaGraphRunner:
             spec_algorithm=self.model_runner.spec_algorithm,
             spec_info=verify_spec_info,
             capture_hidden_mode=self.capture_hidden_mode,
+            sampling_info=sampling_info,
         )
         
 
@@ -414,14 +437,11 @@ class NaiveEAGLECudaGraphRunner:
             # Clean intermediate result cache for DP attention
             forward_batch.dp_local_start_pos = forward_batch.dp_local_num_tokens = None
             logits_output = self.model_runner.forward(forward_batch, skip_attn_backend_init=True) # target model verify
-            
-            
-            
             # verify
             indices = torch.arange(bs, device="cuda", dtype=torch.int32)
             accept_index[:, 0] = indices * 2
             accept_index[:, 1] = -1 # init it 
-            if self.request_all_greedy:
+            if self.requests_all_greedy:
                 probs = torch.softmax(logits_output.next_token_logits, dim=-1)
                 _, token_indices = fast_topk(probs, topk=1, dim=-1)
                 next_token_ids = token_indices.squeeze(-1)
@@ -432,7 +452,38 @@ class NaiveEAGLECudaGraphRunner:
                 mask = (draft_token == target_token)
                 accept_index[:, 1] = torch.where(mask, 2 * indices + 1, accept_index[:, 1])
             else:
-                pass
+                # apply temperature and get target probs
+                expanded_temperature = torch.repeat_interleave(
+                    forward_batch.sampling_info.temperatures, 2, dim=0
+                )  # (bs * draft_token_num, 1)
+
+                target_probs = F.softmax(
+                    logits_output.next_token_logits / expanded_temperature, dim=-1
+                )  # (bs * draft_token_num, vocab_size)
+                target_probs = top_k_renorm_prob(
+                    target_probs,
+                    torch.repeat_interleave(
+                        forward_batch.sampling_info.top_ks, 2, dim=0
+                    ),
+                )  # (bs * draft_token_num, vocab_size)
+                target_probs = top_p_renorm_prob(
+                    target_probs,
+                    torch.repeat_interleave(
+                        forward_batch.sampling_info.top_ps, 2, dim=0
+                    ),
+                )
+                target_verify_probs = target_probs[indices * 2]
+                coins = torch.rand((bs), dtype=torch.float32, device="cuda")
+                draft_p = spec_info_topk_p.squeeze()
+                target_p = torch.gather(target_verify_probs, dim=1, index=spec_info_topk_index).squeeze(1)
+                
+                mask = coins < torch.min(self.one_tensor, target_p / draft_p)
+                
+                
+                accept_index[:, 1] = torch.where(mask, 2 * indices + 1, accept_index[:, 1])
+                
+                # prepare next_token_ids
+                next_token_ids = torch.multinomial(target_probs, num_samples=1).squeeze(-1)
             
             accept_length.copy_((accept_index[:, 1] != -1).to(torch.int32))
             accept_length_for_draft_extend = torch.ones_like(accept_length, dtype=torch.int32, device="cuda")
@@ -514,6 +565,11 @@ class NaiveEAGLECudaGraphRunner:
         self.seq_lens[:raw_bs].copy_(forward_batch.seq_lens)
         self.out_cache_loc[:raw_num_token].copy_(forward_batch.out_cache_loc)
         self.positions[:raw_num_token].copy_(forward_batch.positions)
+        
+        self.spec_info_topk_index[:raw_bs].copy_(forward_batch.spec_info_topk_index)
+        self.spec_info_topk_p[:raw_bs].copy_(forward_batch.spec_info_topk_p)
+        
+        
         if forward_batch.seq_lens_cpu is not None:
             if bs != raw_bs:
                 self.seq_lens_cpu.fill_(1)
@@ -549,7 +605,6 @@ class NaiveEAGLECudaGraphRunner:
         forward_batch.forward_mode = ForwardMode.NAIVE_DRAFT_EXTEND
         forward_batch.spec_info = draft_input
         
-        # please check this!
         self.draft_model_runner.attn_backend.init_forward_metadata_replay_cuda_graph(
             bs,
             self.req_pool_indices,
@@ -579,7 +634,6 @@ class NaiveEAGLECudaGraphRunner:
             self.positions[: self.raw_num_token].copy_(forward_batch.positions)
 
         # Replay
-        logger.info(f"[cuda replay][{forward_batch=}]")
         self.graphs[self.bs].replay()
         next_token_logits, hidden_states, next_token_ids, accept_index, draft_logits_output, draft_input = self.output_buffers[self.bs]
         logits_output = LogitsProcessorOutput(

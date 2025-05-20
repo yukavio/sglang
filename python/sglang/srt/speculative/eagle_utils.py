@@ -186,7 +186,6 @@ class EagleDraftInput:
         self.topk_index = self.topk_index[: len(new_indices)]
         self.hidden_states = self.hidden_states[: len(new_indices)]
         self.verified_id = self.verified_id[: len(new_indices)]
-        self.probs = self.probs[: len(new_indices)]
 
     def merge_batch(self, spec_info: EagleDraftInput):
         if self.hidden_states is None:
@@ -203,7 +202,6 @@ class EagleDraftInput:
         self.verified_id = torch.cat([self.verified_id, spec_info.verified_id], axis=0)
         self.topk_p = torch.cat([self.topk_p, spec_info.topk_p])
         self.topk_index = torch.cat([self.topk_index, spec_info.topk_index])
-        self.probs = torch.cat([self.probs, spec_info.probs])
 
 
 @dataclass
