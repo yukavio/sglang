@@ -348,15 +348,20 @@ class ServerArgs:
 
             # Auto choose parameters
             if self.speculative_num_steps is None:
-                assert (
-                    self.speculative_eagle_topk is None
-                    and self.speculative_num_draft_tokens is None
-                )
-                (
-                    self.speculative_num_steps,
-                    self.speculative_eagle_topk,
-                    self.speculative_num_draft_tokens,
-                ) = auto_choose_speculative_params(self)
+                if self.speculative_algorithm != "NAIVE_EAGLE":
+                    assert (
+                        self.speculative_eagle_topk is None
+                        and self.speculative_num_draft_tokens is None
+                    )
+                    (
+                        self.speculative_num_steps,
+                        self.speculative_eagle_topk,
+                        self.speculative_num_draft_tokens,
+                    ) = auto_choose_speculative_params(self)
+                else:
+                    self.speculative_num_steps = 1
+                    self.speculative_eagle_topk = 1
+                    self.speculative_num_draft_tokens = 2
 
             if self.page_size > 1 and self.speculative_eagle_topk > 1:
                 self.speculative_eagle_topk = 1

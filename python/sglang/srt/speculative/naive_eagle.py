@@ -169,10 +169,6 @@ class NaiveEagleWorker(TpModelWorker):
             logger.info(f"[init cuda graph with requests_all_greedy:{self.requests_all_greedy}]")
             self.init_cuda_graphs()
         
-        self.last_state = ForwardMode.DECODE
-        self.exit_cnt = 1
-        self.run_cnt = 0
-        
     def init_cuda_graphs(self):
         """Capture cuda graphs."""
         self.cuda_graph_runner = None
@@ -228,13 +224,7 @@ class NaiveEagleWorker(TpModelWorker):
                 self.forward_draft_extend(
                     batch, logits_output.hidden_states, next_token_ids
                 )
-            self.last_state = ForwardMode.EXTEND
             return logits_output, next_token_ids, bid, 0
-    
-    
-    def check_exit(self, exit_cnt=1):
-        if self.run_cnt == exit_cnt:
-            exit(-1)
     
     def forward_target_extend(
         self, batch: ScheduleBatch
@@ -281,16 +271,8 @@ class NaiveEagleWorker(TpModelWorker):
         logits_output.next_token_logits = logits_output.next_token_logits[save_index]
         
         return logits_output
-        # self._detect_nan_if_needed(logits_output)
-        # self.capture_for_decode(logits_output, forward_batch.spec_info)
-
- 
-    def draft_cuda_graph_1(self, forward_batch: ForwardBatch):
-        logits_output = self.target_worker.model_runner.forward(forward_batch)
-        return logits_output
 
     def draft(self, batch: ScheduleBatch):
-        self.run_cnt += 1
         num_seqs = batch.batch_size()
         spec_info = batch.spec_info
         if self.page_size == 1:
@@ -310,26 +292,10 @@ class NaiveEagleWorker(TpModelWorker):
         else:
             raise NotImplementedError("josephyou: Page size > 1 not supported yet")
         
-        if spec_info.accept_length is None:
-            batch.input_ids = batch.output_ids # first decode.
-        else:
-            input_idx = torch.empty_like(spec_info.accept_length)
-            ptr = 0
-            for i in range(len(spec_info.accept_length)):
-                # accept length is 0 or 1
-                input_idx[i] = ptr + spec_info.accept_length[i]
-                ptr += (spec_info.accept_length[i] + 1)
-            batch.input_ids = batch.input_ids[input_idx]
-        
-        if self.last_state == ForwardMode.EXTEND and spec_info.accept_length is not None:
-            batch.input_ids = torch.cat((batch.input_ids, batch.output_ids[sum(spec_info.accept_length + 1):]))
-        
-        
-        self.last_state = ForwardMode.DECODE
         batch.forward_mode = ForwardMode.TARGET_VERIFY
-        
-        batch.input_ids = torch.stack((batch.input_ids, spec_info.topk_index.squeeze(1)), dim=1).reshape(-1)
+        batch.input_ids = torch.stack((batch.output_ids, spec_info.topk_index.squeeze(1)), dim=1).reshape(-1)
         positions = torch.stack([batch.seq_lens,  batch.seq_lens + 1], dim=1).reshape(-1)
+        
         batch.spec_info = EagleVerifyInput(
             draft_token=batch.input_ids,
             custom_mask=None, 
@@ -360,7 +326,7 @@ class NaiveEagleWorker(TpModelWorker):
                 accept_length[i] = 1 if accept_index[i][1] != -1 else 0
             forward_batch.input_ids = next_token_ids
         else:
-            logits_output = self.draft_cuda_graph_1(forward_batch)
+            logits_output = self.target_worker.model_runner.forward(forward_batch)
             accept_index = torch.full((num_seqs, 2), -1, dtype=torch.int32, device="cuda")
             accept_length = torch.zeros((num_seqs,), dtype=torch.int32, device="cuda")
             # verify
@@ -407,7 +373,6 @@ class NaiveEagleWorker(TpModelWorker):
                 # prepare next_token_ids
                 next_token_ids = torch.multinomial(target_probs, num_samples=1).squeeze(-1)
             
-
             accept_length = torch.zeros((num_seqs,), dtype=torch.int32, device="cuda")
             for i in range(num_seqs):
                 accept_length[i] = 1 if accept_index[i][1] != -1 else 0
@@ -437,7 +402,6 @@ class NaiveEagleWorker(TpModelWorker):
         batch.seq_lens_sum = forward_batch.seq_lens_sum
         batch.input_ids = forward_batch.input_ids
         batch.forward_mode = ForwardMode.DECODE
-        # cuda graph done here, post process
         
         accept_length_cpu = accept_length.tolist()
         batch.spec_info.accept_length = accept_length
@@ -492,10 +456,18 @@ class NaiveEagleWorker(TpModelWorker):
             pass
         
         self.token_to_kv_pool_allocator.free(batch.out_cache_loc[evict_mask])
-        
+
+        # return output ids for next decode.
+        output_idx = torch.empty_like(batch.spec_info.accept_length)
+        ptr = 0
+        for i in range(len(batch.spec_info.accept_length)):
+            # accept length is 0 or 1
+            output_idx[i] = ptr + batch.spec_info.accept_length[i]
+            ptr += (batch.spec_info.accept_length[i] + 1)
+        output_ids = verified_id[output_idx]
         
         if not has_finished:
-            batch.input_ids = batch.input_ids[accept_index_viewd] # signgle batch
+            batch.input_ids = batch.input_ids[accept_index_viewd]
             batch.out_cache_loc = batch.out_cache_loc[accept_index_viewd]
         else:
             if len(new_accept_index) > 0:
@@ -508,12 +480,9 @@ class NaiveEagleWorker(TpModelWorker):
                 batch.input_ids = batch.input_ids[new_accept_index]
             batch.out_cache_loc = batch.out_cache_loc[new_accept_index]
             
-
-        # return output ids for next decode.
-        
         return (
                 logits_output,
-                verified_id,
+                output_ids,
                 model_worker_batch.bid,
                 sum(accept_length_cpu),
             )
