@@ -48,8 +48,6 @@ srt = [
     "sglang[runtime_common]",
     "sgl-kernel==0.0.9.post2",
     "flashinfer_python==0.2.3",
-    "torch==2.6.0",
-    "torchvision==0.21.0",
     "cuda-python",
     "outlines>=0.0.44,<=0.1.11",
     "partial_json_parser",
@@ -59,8 +57,6 @@ srt = [
 blackwell = [
     "sglang[runtime_common]",
     "sgl-kernel",
-    "torch",
-    "torchvision",
     "cuda-python",
     "outlines>=0.0.44,<=0.1.11",
     "partial_json_parser",
@@ -71,7 +67,6 @@ blackwell = [
 # => base docker rocm/vllm-dev:20250114, not from public vllm whl
 srt_hip = [
     "sglang[runtime_common]",
-    "torch",
     "vllm==0.6.7.dev2",
     "outlines==0.1.11"
 ]
