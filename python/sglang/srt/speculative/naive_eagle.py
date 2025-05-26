@@ -166,7 +166,6 @@ class NaiveEagleWorker(TpModelWorker):
         )
         with self.draft_tp_context(self.draft_model_runner.tp_group):
             self.requests_all_greedy = server_args.requests_all_greedy
-            logger.info(f"[init cuda graph with requests_all_greedy:{self.requests_all_greedy}]")
             self.init_cuda_graphs()
         
     def init_cuda_graphs(self):
