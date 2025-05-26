@@ -14,8 +14,6 @@ from sglang.srt.layers.logits_processor import LogitsProcessorOutput
 from sglang.srt.layers.sampler import get_token_ids_logprobs, get_top_logprobs
 from sglang.srt.managers.schedule_batch import (
     ScheduleBatch,
-    get_last_loc,
-    global_server_args_dict,
 )
 from sglang.srt.managers.tp_worker import TpModelWorker
 from sglang.srt.model_executor.forward_batch_info import (
@@ -31,8 +29,6 @@ from sglang.srt.speculative.eagle_utils import (
     EagleDraftInput,
     EagleVerifyInput,
     EagleVerifyOutput,
-    assign_draft_cache_locs,
-    select_top_k_tokens,
     assign_req_to_token_pool,
 )
 from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
