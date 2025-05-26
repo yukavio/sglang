@@ -42,6 +42,7 @@ class TestNaiveEAGLEEngine(CustomTestCase):
         "cuda_graph_max_bs": 4,
         # "disable_cuda_graph": True,
         "requests_all_greedy": True,
+        "attention_backend": "flashinfer",
     }
     NUM_CONFIGS = 2
 
@@ -171,6 +172,8 @@ class TestNaiveEAGLEServer(CustomTestCase):
                 128,
                 "--max-running-requests",
                 8,
+                "--attention-backend",
+                "flashinfer",
             ],
         )
 
@@ -470,6 +473,8 @@ class TestNaiveEAGLERetract(TestNaiveEAGLEServer):
                 128,
                 "--max-running-requests",
                 64,
+                "--attention-backend",
+                "flashinfer",
             ],
         )
 
