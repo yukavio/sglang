@@ -88,14 +88,11 @@ class EagleDraftInput:
         batch.extend_num_tokens = sum(batch.extend_lens)
         batch.seq_lens = batch.spec_info.seq_lens_for_draft_extend
         batch.req_pool_indices = batch.spec_info.req_pool_indices_for_draft_extend
-        # seq_lens_cpu = batch.seq_lens.tolist()
 
         self.positions = torch.empty_like(self.verified_id, dtype=torch.long)
-        # logger.info(f'[prepare_extend_after_decode]{self.positions=}')
         new_verified_id = torch.empty_like(self.accept_length, dtype=torch.int32)
         
 
-        # logger.info(f"[prepare_extend_after_decode before!!!!]{self.positions=},{batch.seq_lens=},{self.accept_length=}")
         create_extend_spec_info[(self.accept_length.numel(),)](
             self.verified_id,
             batch.seq_lens,
@@ -105,7 +102,6 @@ class EagleDraftInput:
             new_verified_id,
             next_power_of_2(speculative_num_steps + 1),
         )
-        # logger.info(f"[prepare_extend_after_decode after!!!!]{self.positions=},{batch.seq_lens=},{self.accept_length=}")
 
         batch.seq_lens_sum = sum(batch.seq_lens)
         batch.input_ids = self.verified_id
