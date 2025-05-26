@@ -290,7 +290,7 @@ class NaiveEagleWorker(TpModelWorker):
                 next_power_of_2(num_seqs),
             )
         else:
-            raise NotImplementedError("josephyou: Page size > 1 not supported yet")
+            raise NotImplementedError("TODO: Page size > 1 not supported yet")
         
         batch.forward_mode = ForwardMode.TARGET_VERIFY
         batch.input_ids = torch.stack((batch.output_ids, spec_info.topk_index.squeeze(1)), dim=1).reshape(-1)
