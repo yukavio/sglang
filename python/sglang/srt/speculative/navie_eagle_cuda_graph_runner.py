@@ -450,7 +450,7 @@ class NaiveEAGLECudaGraphRunner:
                 target_token = next_token_ids[2 * indices]
 
                 mask = (draft_token == target_token)
-                accept_index[:, 1] = torch.where(mask, 2 * indices + 1, accept_index[:, 1])
+                accept_index[:, 1] = torch.where(mask, 2 * indices + 1, -1)
             else:
                 # apply temperature and get target probs
                 expanded_temperature = torch.repeat_interleave(
@@ -496,7 +496,7 @@ class NaiveEAGLECudaGraphRunner:
             forward_batch.spec_info = draft_spec_info
             draft_logits_output = self.forward_draft_extend_after_decode_cuda_graph(forward_batch, accept_index)
             
-            return logits_output.next_token_logits, logits_output.hidden_states, next_token_ids, accept_index, draft_logits_output, draft_spec_info
+            return logits_output.next_token_logits, logits_output.hidden_states, next_token_ids, accept_index, draft_logits_output.hidden_states, draft_logits_output.next_token_logits, draft_spec_info
             
 
         for _ in range(2):
@@ -599,7 +599,7 @@ class NaiveEAGLECudaGraphRunner:
         
         self.verify_input = forward_batch.spec_info
         draft_input = EagleDraftInput()
-        accept_length_for_draft_extend = torch.ones((raw_bs,), dtype=torch.int32, device="cuda") + 1 # always 2 tokens
+        accept_length_for_draft_extend = torch.ones((bs,), dtype=torch.int32, device="cuda") + 1 # always 2 tokens
         draft_input.accept_length = accept_length_for_draft_extend
         # Draft Attention backend
         forward_batch.forward_mode = ForwardMode.NAIVE_DRAFT_EXTEND
@@ -609,7 +609,7 @@ class NaiveEAGLECudaGraphRunner:
             bs,
             self.req_pool_indices,
             self.seq_lens + 2, # +2 because we always extend 2 tokens
-            (forward_batch.seq_lens_sum + 2 * bs) + (bs - raw_bs),
+            (forward_batch.seq_lens_sum + 2 * bs) + (bs - raw_bs) * 2,
             None,
             forward_batch.forward_mode,
             forward_batch.spec_info,
@@ -635,7 +635,8 @@ class NaiveEAGLECudaGraphRunner:
 
         # Replay
         self.graphs[self.bs].replay()
-        next_token_logits, hidden_states, next_token_ids, accept_index, draft_logits_output, draft_input = self.output_buffers[self.bs]
+        next_token_logits, hidden_states, next_token_ids, accept_index, draft_hidden_states, draft_next_token_logits, draft_input = self.output_buffers[self.bs]
+        
         logits_output = LogitsProcessorOutput(
             next_token_logits=next_token_logits[: self.raw_num_token],
             hidden_states=(
@@ -644,6 +645,15 @@ class NaiveEAGLECudaGraphRunner:
                 else None
             ),
         )
+        
+        next_token_ids = next_token_ids[: self.raw_num_token]
+        accept_index = accept_index[: self.raw_bs]
+        draft_logits_output = LogitsProcessorOutput(
+            next_token_logits=draft_next_token_logits[: self.raw_bs],
+            hidden_states=draft_hidden_states[: self.raw_bs],
+        )
+        
+        
         return logits_output, next_token_ids, accept_index, draft_logits_output, draft_input
 
     def get_spec_info(self):
@@ -676,7 +686,7 @@ class NaiveEAGLECudaGraphRunner:
 
     def forward_draft_extend_after_decode_cuda_graph(self, forward_batch: ForwardBatch, accept_index):
         # Prepare metadata
-        # forward_batch.forward_mode = ForwardMode.TARGET_VERIFY
+        forward_batch.forward_mode = ForwardMode.NAIVE_DRAFT_EXTEND
         forward_batch.spec_info.prepare_extend_after_decode_for_naive_eagle(
             forward_batch,
             1,
