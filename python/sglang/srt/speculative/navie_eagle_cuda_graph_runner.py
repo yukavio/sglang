@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Callable
 import torch
 import torch.nn.functional as F
 import tqdm
+import triton
+import triton.language as tl
 
 from sglang.srt.custom_op import CustomOp
 from sglang.srt.distributed import get_tensor_model_parallel_rank
@@ -37,7 +39,7 @@ from sglang.srt.model_executor.forward_batch_info import (
 )
 from sglang.srt.sampling.sampling_batch_info import SamplingBatchInfo
 from sglang.srt.patch_torch import monkey_patch_torch_compile
-from sglang.srt.utils import get_available_gpu_memory, is_hip, fast_topk, is_cuda
+from sglang.srt.utils import get_available_gpu_memory, is_hip, fast_topk, is_cuda, next_power_of_2
 from sglang.srt.speculative.eagle_utils import (
     EagleDraftInput,
 )
@@ -178,6 +180,45 @@ def get_global_graph_memory_pool():
 def set_global_graph_memory_pool(val):
     global global_graph_memory_pool
     global_graph_memory_pool = val
+
+@triton.jit
+def create_draft_kv_indices(kv_indptr, kv_indices, req_pool, req_to_token, seq_lens,
+                            expand_factor: tl.constexpr, # only support ==2 currently
+                            row_stride: tl.constexpr,
+                            num_tokens_upper: tl.constexpr):
+    BLOCK_SIZE: tl.constexpr = 64
+    bid = tl.program_id(0)
+    source_row_id = tl.load(req_pool+bid)
+    batch_offset = tl.arange(0, num_tokens_upper)
+    seq_len_data = tl.load(seq_lens+batch_offset,
+                           mask=batch_offset < bid)
+    seq_len = tl.load(seq_lens+bid)
+    cum_seq_len = tl.sum(seq_len_data)
+    kv_offset = cum_seq_len * 2 - bid # only for expand_factor==1 currently
+    
+    kv_indices_ptr = kv_indices + kv_offset 
+    num_loop = tl.cdiv(seq_len, BLOCK_SIZE)
+    for i in range(num_loop):
+        offset = tl.arange(0, BLOCK_SIZE) + i * BLOCK_SIZE
+        mask = offset < seq_len-1
+        data = tl.load(
+            req_to_token + source_row_id * row_stride + offset, mask=mask
+        )
+        tl.store(kv_indices_ptr+offset, data, mask=mask)
+        tl.store(kv_indices_ptr+seq_len-1+offset, data, mask=mask)
+
+    data = tl.load(
+        req_to_token + source_row_id * row_stride + seq_len - 1
+    )
+    tl.store(kv_indices_ptr+seq_len*2-3, data)
+
+    tl.store(kv_indptr+bid*expand_factor+1, kv_offset+seq_len-1)
+    tl.store(kv_indptr+bid*expand_factor+2, kv_offset+seq_len*2-2)
+    if bid==0:
+        tl.store(kv_indptr, 0)
+
+
+
 
 
 class NaiveEAGLECudaGraphRunner:
@@ -585,12 +626,28 @@ class NaiveEAGLECudaGraphRunner:
         if hasattr(forward_batch.spec_info, "hidden_states"):
             self.hidden_states[:raw_num_token] = forward_batch.spec_info.hidden_states
 
+        print(forward_batch.req_to_token_pool.req_to_token[0, :20])
+        seq_lens_sum = forward_batch.seq_lens_sum + (bs - raw_bs)
+
+        print(forward_batch.seq_lens_sum, bs, raw_bs)
+        spec_info = forward_batch.spec_info
+        seq_lens = self.seq_lens + 2
+        draft_token_num = spec_info.draft_token_num
+        kv_indptr = torch.empty(size=[1+draft_token_num*bs], dtype=torch.int32, device='cuda')
+        kv_indices = torch.empty(size=[seq_lens_sum*draft_token_num+draft_token_num*bs], dtype=torch.int32, device='cuda')
+        req_to_token = forward_batch.req_to_token_pool.req_to_token
+        create_draft_kv_indices[(bs,)](kv_indptr, kv_indices, self.req_pool_indices, req_to_token, seq_lens, draft_token_num, req_to_token.shape[-1], next_power_of_2(bs))
+        print('***')
+        print(kv_indices)
+        print(kv_indptr)
+
+
         # Attention backend
         self.model_runner.attn_backend.init_forward_metadata_replay_cuda_graph(
             bs,
             self.req_pool_indices,
             self.seq_lens,
-            forward_batch.seq_lens_sum + (bs - raw_bs),
+            seq_lens_sum,
             None,
             forward_batch.forward_mode,
             forward_batch.spec_info,
@@ -608,7 +665,7 @@ class NaiveEAGLECudaGraphRunner:
         self.draft_model_runner.attn_backend.init_forward_metadata_replay_cuda_graph(
             bs,
             self.req_pool_indices,
-            self.seq_lens + 2, # +2 because we always extend 2 tokens
+            seq_lens, # +2 because we always extend 2 tokens
             (forward_batch.seq_lens_sum + 2 * bs) + (bs - raw_bs) * 2,
             None,
             forward_batch.forward_mode,
@@ -660,7 +717,10 @@ class NaiveEAGLECudaGraphRunner:
         verify_spec_info = None
         draft_spec_info = None
         if self.model_runner.spec_algorithm.is_naive_eagle():
-            from sglang.srt.speculative.eagle_utils import EagleVerifyInput, EagleDraftInput
+            from sglang.srt.speculative.eagle_utils import (
+                EagleDraftInput,
+                EagleVerifyInput,
+            )
             verify_spec_info = EagleVerifyInput(
                 draft_token=None,
                 custom_mask=None, 

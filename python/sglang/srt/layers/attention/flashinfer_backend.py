@@ -367,7 +367,7 @@ class FlashInferAttnBackend(AttentionBackend):
         spec_info: Optional[Union[EagleDraftInput, EagleVerifyInput]],
         seq_lens_cpu: Optional[torch.Tensor],
     ):
-        if forward_mode.is_decode_or_idle():
+        if forward_mode.is_decode_or_idle() or forward_mode.is_naive_verify():
             self.indices_updater_decode.update(
                 req_pool_indices[:bs],
                 seq_lens[:bs],

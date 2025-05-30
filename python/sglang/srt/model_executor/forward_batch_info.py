@@ -66,6 +66,7 @@ class ForwardMode(IntEnum):
     # Used in speculative decoding: extend a batch in the draft model.
     DRAFT_EXTEND = auto()
     NAIVE_DRAFT_EXTEND = auto()
+    NAIVE_TARGET_VERIFY = auto()
     
 
     # A dummy first batch to start the pipeline for overlap scheduler.
@@ -125,6 +126,9 @@ class ForwardMode(IntEnum):
     
     def is_naive_draft(self):
         return self == ForwardMode.NAIVE_DRAFT_EXTEND
+    
+    def is_naive_verify(self):
+        return self == ForwardMode.NAIVE_TARGET_VERIFY
 
 
 class CaptureHiddenMode(IntEnum):

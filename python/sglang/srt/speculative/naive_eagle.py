@@ -205,6 +205,7 @@ class NaiveEagleWorker(TpModelWorker):
             the batch id (used for overlap schedule), and number of accepeted tokens.
         """
         if batch.forward_mode.is_decode():
+            print('*'*100)
             return self.draft(batch)
         elif batch.forward_mode.is_idle():
             model_worker_batch = batch.get_model_worker_batch()
