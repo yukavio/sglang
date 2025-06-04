@@ -233,6 +233,7 @@ class LogitsProcessor(nn.Module):
             logits_metadata.forward_mode.is_decode_or_idle()
             or logits_metadata.forward_mode.is_target_verify()
             or logits_metadata.forward_mode.is_naive_draft()
+            or logits_metadata.forward_mode.is_naive_verify()
         ):
             pruned_states = hidden_states
             if aux_hidden_states is not None:

@@ -37,9 +37,10 @@ from sglang.srt.model_executor.forward_batch_info import (
 )
 from sglang.srt.sampling.sampling_batch_info import SamplingBatchInfo
 from sglang.srt.patch_torch import monkey_patch_torch_compile
-from sglang.srt.utils import get_available_gpu_memory, is_hip, fast_topk, is_cuda
+from sglang.srt.utils import get_available_gpu_memory, is_hip, fast_topk, is_cuda, next_power_of_2
 from sglang.srt.speculative.eagle_utils import (
     EagleDraftInput,
+    create_draft_kv_indices
 )
 
 if is_cuda():
@@ -130,18 +131,10 @@ def get_batch_sizes_to_capture(model_runner: ModelRunner):
     capture_bs = server_args.cuda_graph_bs
 
     if capture_bs is None:
-        if server_args.speculative_algorithm is None:
-            if server_args.disable_cuda_graph_padding:
-                capture_bs = list(range(1, 33)) + list(range(40, 161, 16))
-            else:
-                capture_bs = [1, 2, 4, 8] + list(range(16, 161, 8))
+        if server_args.disable_cuda_graph_padding:
+            capture_bs = list(range(1, 33)) + list(range(40, server_args.cuda_graph_max_bs, 16))
         else:
-            # Since speculative decoding requires more cuda graph memory, we
-            # capture less.
-            capture_bs = (
-                list(range(1, 9)) + list(range(10, 33, 2)) + list(range(40, 161, 16))
-            )
-
+            capture_bs = [1, 2, 4, 8] + list(range(16, server_args.cuda_graph_max_bs, 8))
         if _is_hip:
             capture_bs += list(range(160, 257, 8))
 
@@ -204,7 +197,7 @@ class NaiveEAGLECudaGraphRunner:
         self.capture_hidden_mode = CaptureHiddenMode.NULL
         
         self.num_tokens_per_bs = 2
-        self.capture_forward_mode = ForwardMode.TARGET_VERIFY
+        self.capture_forward_mode = ForwardMode.NAIVE_TARGET_VERIFY
 
         # Attention backend
         self.max_bs = max(self.capture_bs)
@@ -395,8 +388,12 @@ class NaiveEAGLECudaGraphRunner:
             capture_hidden_mode=self.capture_hidden_mode,
             sampling_info=sampling_info,
         )
+        draft_token_num = 2
+        kv_indptr = torch.zeros(size=[1 + draft_token_num * bs], dtype=torch.int32, device='cuda')
+        kv_indices = torch.zeros(size=[forward_batch.seq_lens_sum * draft_token_num + (draft_token_num + 1) * bs], dtype=torch.int32, device='cuda')
+        forward_batch.spec_info.kv_indices = kv_indices
+        forward_batch.spec_info.kv_indptr = kv_indptr
         
-
         # Attention backend
         self.model_runner.attn_backend.init_forward_metadata_capture_cuda_graph(
             bs,
@@ -502,6 +499,7 @@ class NaiveEAGLECudaGraphRunner:
         for _ in range(2):
             torch.cuda.synchronize()
             self.model_runner.tp_group.barrier()
+            forward_batch.forward_mode = self.capture_forward_mode
             verify_spec_info_backup = forward_batch.spec_info
             seq_lens_back_up = forward_batch.seq_lens
             positions_backup = forward_batch.positions
@@ -514,6 +512,7 @@ class NaiveEAGLECudaGraphRunner:
             forward_batch.req_to_token_pool = self.model_runner.req_to_token_pool
             forward_batch.token_to_kv_pool = self.model_runner.token_to_kv_pool
             forward_batch.attn_backend = self.model_runner.attn_backend
+            forward_batch.forward_mode = self.capture_forward_mode
 
         global global_graph_memory_pool
         with torch.cuda.graph(graph, pool=global_graph_memory_pool, stream=stream):
@@ -585,12 +584,23 @@ class NaiveEAGLECudaGraphRunner:
         if hasattr(forward_batch.spec_info, "hidden_states"):
             self.hidden_states[:raw_num_token] = forward_batch.spec_info.hidden_states
 
+        forward_batch.forward_mode = self.capture_forward_mode
+        
+        seq_lens_sum = forward_batch.seq_lens_sum + (bs - raw_bs)
+        seq_lens = self.seq_lens + 2
+        draft_token_num = 2
+        kv_indptr = torch.empty(size=[1 + draft_token_num * bs], dtype=torch.int32, device='cuda')
+        kv_indices = torch.empty(size=[seq_lens_sum * draft_token_num + (draft_token_num + 1) * bs], dtype=torch.int32, device='cuda')
+        req_to_token = forward_batch.req_to_token_pool.req_to_token
+        create_draft_kv_indices[(bs,)](kv_indptr, kv_indices, self.req_pool_indices, req_to_token, seq_lens, draft_token_num, req_to_token.shape[-1], next_power_of_2(bs))
+        forward_batch.spec_info.kv_indptr = kv_indptr
+        forward_batch.spec_info.kv_indices = kv_indices
         # Attention backend
         self.model_runner.attn_backend.init_forward_metadata_replay_cuda_graph(
             bs,
             self.req_pool_indices,
             self.seq_lens,
-            forward_batch.seq_lens_sum + (bs - raw_bs),
+            seq_lens_sum,
             None,
             forward_batch.forward_mode,
             forward_batch.spec_info,
@@ -608,7 +618,7 @@ class NaiveEAGLECudaGraphRunner:
         self.draft_model_runner.attn_backend.init_forward_metadata_replay_cuda_graph(
             bs,
             self.req_pool_indices,
-            self.seq_lens + 2, # +2 because we always extend 2 tokens
+            self.seq_lens + 2, 
             (forward_batch.seq_lens_sum + 2 * bs) + (bs - raw_bs) * 2,
             None,
             forward_batch.forward_mode,
@@ -660,7 +670,10 @@ class NaiveEAGLECudaGraphRunner:
         verify_spec_info = None
         draft_spec_info = None
         if self.model_runner.spec_algorithm.is_naive_eagle():
-            from sglang.srt.speculative.eagle_utils import EagleVerifyInput, EagleDraftInput
+            from sglang.srt.speculative.eagle_utils import (
+                EagleDraftInput,
+                EagleVerifyInput,
+            )
             verify_spec_info = EagleVerifyInput(
                 draft_token=None,
                 custom_mask=None, 

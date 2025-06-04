@@ -190,7 +190,7 @@ class FlashInferAttnBackend(AttentionBackend):
         self.draft_extend_cuda_graph_metadata = {}  # For draft extend
 
     def init_forward_metadata(self, forward_batch: ForwardBatch):
-        if forward_batch.forward_mode.is_decode_or_idle():
+        if forward_batch.forward_mode.is_decode_or_idle() or forward_batch.forward_mode.is_naive_verify():
             self.indices_updater_decode.update(
                 forward_batch.req_pool_indices,
                 forward_batch.seq_lens,
@@ -288,7 +288,7 @@ class FlashInferAttnBackend(AttentionBackend):
         spec_info: Optional[Union[EagleDraftInput, EagleVerifyInput]],
         is_naive_eagle: Optional[bool]=False, 
     ):
-        if forward_mode.is_decode_or_idle():
+        if forward_mode.is_decode_or_idle() or forward_mode.is_naive_verify():
             decode_wrappers = []
             for i in range(self.num_wrappers):
                 decode_wrappers.append(
@@ -315,10 +315,11 @@ class FlashInferAttnBackend(AttentionBackend):
             )
             self.decode_cuda_graph_metadata[bs] = decode_wrappers
             self.forward_metadata = DecodeMetadata(decode_wrappers)
-            for i in range(self.num_wrappers):
-                decode_wrappers[i].begin_forward = partial(
-                    fast_decode_plan, decode_wrappers[i]
-                )
+            if not is_naive_eagle:
+                for i in range(self.num_wrappers):
+                    decode_wrappers[i].begin_forward = partial(
+                        fast_decode_plan, decode_wrappers[i]
+                    )
         elif forward_mode.is_target_verify() or forward_mode.is_naive_draft():
             prefill_wrappers = []
             for i in range(self.num_wrappers):
@@ -367,7 +368,7 @@ class FlashInferAttnBackend(AttentionBackend):
         spec_info: Optional[Union[EagleDraftInput, EagleVerifyInput]],
         seq_lens_cpu: Optional[torch.Tensor],
     ):
-        if forward_mode.is_decode_or_idle():
+        if forward_mode.is_decode_or_idle() or forward_mode.is_naive_verify():
             self.indices_updater_decode.update(
                 req_pool_indices[:bs],
                 seq_lens[:bs],

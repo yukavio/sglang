@@ -338,7 +338,7 @@ class ServerArgs:
             self.speculative_algorithm == "EAGLE"
             or self.speculative_algorithm == "EAGLE3" or self.speculative_algorithm == "NAIVE_EAGLE"
         ):
-            if self.max_running_requests is None:
+            if self.max_running_requests is None and self.speculative_algorithm != "NAIVE_EAGLE":
                 self.max_running_requests = 48
             self.disable_overlap_schedule = True
             logger.info(

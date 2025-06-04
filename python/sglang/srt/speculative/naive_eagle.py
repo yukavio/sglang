@@ -30,6 +30,7 @@ from sglang.srt.speculative.eagle_utils import (
     EagleVerifyInput,
     EagleVerifyOutput,
     assign_req_to_token_pool,
+    create_draft_kv_indices
 )
 from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
 from sglang.srt.utils import empty_context, fast_topk, get_available_gpu_memory, is_cuda, next_power_of_2
@@ -287,9 +288,8 @@ class NaiveEagleWorker(TpModelWorker):
         else:
             raise NotImplementedError("TODO: Page size > 1 not supported yet")
         
-        batch.forward_mode = ForwardMode.TARGET_VERIFY
-        batch.input_ids = torch.stack((batch.output_ids, spec_info.topk_index.squeeze(1)), dim=1).reshape(-1)
-        positions = torch.stack([batch.seq_lens,  batch.seq_lens + 1], dim=1).reshape(-1)
+        batch.input_ids = torch.column_stack((batch.output_ids, spec_info.topk_index.squeeze(1))).flatten()
+        positions = torch.column_stack((batch.seq_lens, batch.seq_lens + 1)).flatten()
         
         batch.spec_info = EagleVerifyInput(
             draft_token=batch.input_ids,
@@ -307,7 +307,11 @@ class NaiveEagleWorker(TpModelWorker):
         model_worker_batch = batch.get_model_worker_batch()
         
         forward_batch = ForwardBatch.init_new(model_worker_batch, self.target_worker.model_runner)
+        forward_batch.forward_mode = ForwardMode.NAIVE_TARGET_VERIFY
         
+        # logger.info(f"[before start]{kv_indptr=}{kv_indices=}")
+        
+        # logger.info(f"decode start:{forward_batch=}")
         can_cuda_graph = self.cuda_graph_runner and self.cuda_graph_runner.can_run(
             forward_batch
         )
@@ -316,11 +320,17 @@ class NaiveEagleWorker(TpModelWorker):
             forward_batch.spec_info_topk_p = spec_info.topk_p
             
             logits_output, next_token_ids,accept_index, draft_logits_output, draft_input = self.cuda_graph_runner.replay(forward_batch)
-            accept_length = torch.zeros((num_seqs,), dtype=torch.int32, device="cuda")
-            for i in range(num_seqs):
-                accept_length[i] = 1 if accept_index[i][1] != -1 else 0
+            accept_length = (accept_index[:, 1] != -1).to(torch.int32)
             forward_batch.input_ids = next_token_ids
         else:
+            draft_token_num = 2
+            kv_indptr = torch.empty(size=[1 + draft_token_num * num_seqs], dtype=torch.int32, device='cuda')
+            kv_indices = torch.empty(size=[forward_batch.seq_lens_sum * draft_token_num + (draft_token_num + 1) * num_seqs], dtype=torch.int32, device='cuda')
+            req_to_token = forward_batch.req_to_token_pool.req_to_token
+            create_draft_kv_indices[(num_seqs,)](kv_indptr, kv_indices, forward_batch.req_pool_indices, req_to_token, forward_batch.seq_lens + 2, 2, req_to_token.shape[-1], next_power_of_2(num_seqs))
+            forward_batch.spec_info.kv_indptr = kv_indptr
+            forward_batch.spec_info.kv_indices = kv_indices
+            
             logits_output = self.target_worker.model_runner.forward(forward_batch)
             accept_index = torch.full((num_seqs, 2), -1, dtype=torch.int32, device="cuda")
             accept_length = torch.zeros((num_seqs,), dtype=torch.int32, device="cuda")
@@ -452,13 +462,8 @@ class NaiveEagleWorker(TpModelWorker):
         
         self.token_to_kv_pool_allocator.free(batch.out_cache_loc[evict_mask])
 
-        # return output ids for next decode.
-        output_idx = torch.empty_like(batch.spec_info.accept_length)
-        ptr = 0
-        for i in range(len(batch.spec_info.accept_length)):
-            # accept length is 0 or 1
-            output_idx[i] = ptr + batch.spec_info.accept_length[i]
-            ptr += (batch.spec_info.accept_length[i] + 1)
+        cumsum = torch.cumsum(batch.spec_info.accept_length + 1, dim=0)
+        output_idx = cumsum - 1 
         output_ids = verified_id[output_idx]
         
         if not has_finished:

@@ -981,8 +981,9 @@ class ModelRunner:
         device_mesh = torch.distributed.init_device_mesh(self.device, (self.tp_size,))
         tensor_parallel(self.model, device_mesh)
 
-    def forward_decode(self, forward_batch: ForwardBatch):
-        self.attn_backend.init_forward_metadata(forward_batch)
+    def forward_decode(self, forward_batch: ForwardBatch, skip_attn_backend_init: bool = False):
+        if not skip_attn_backend_init:
+            self.attn_backend.init_forward_metadata(forward_batch)
         return self.model.forward(
             forward_batch.input_ids, forward_batch.positions, forward_batch
         )
@@ -1032,8 +1033,8 @@ class ModelRunner:
                 forward_batch, skip_attn_backend_init=skip_attn_backend_init
             )
 
-        if forward_batch.forward_mode.is_decode():
-            return self.forward_decode(forward_batch)
+        if forward_batch.forward_mode.is_decode() or forward_batch.forward_mode.is_naive_verify():
+            return self.forward_decode(forward_batch, skip_attn_backend_init=skip_attn_backend_init)
         elif forward_batch.forward_mode.is_extend():
             return self.forward_extend(
                 forward_batch, skip_attn_backend_init=skip_attn_backend_init
