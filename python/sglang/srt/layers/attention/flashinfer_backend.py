@@ -191,6 +191,9 @@ class FlashInferAttnBackend(AttentionBackend):
 
     def init_forward_metadata(self, forward_batch: ForwardBatch):
         if forward_batch.forward_mode.is_decode_or_idle() or forward_batch.forward_mode.is_naive_verify():
+            if forward_batch.forward_mode.is_naive_verify() and forward_batch.naive_skip_attn_backend_init:
+                return
+                
             self.indices_updater_decode.update(
                 forward_batch.req_pool_indices,
                 forward_batch.seq_lens,

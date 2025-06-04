@@ -387,6 +387,7 @@ class NaiveEAGLECudaGraphRunner:
             spec_info=verify_spec_info,
             capture_hidden_mode=self.capture_hidden_mode,
             sampling_info=sampling_info,
+            naive_skip_attn_backend_init=True,
         )
         draft_token_num = 2
         kv_indptr = torch.zeros(size=[1 + draft_token_num * bs], dtype=torch.int32, device='cuda')
@@ -431,7 +432,7 @@ class NaiveEAGLECudaGraphRunner:
         def run_once():
             # Clean intermediate result cache for DP attention
             forward_batch.dp_local_start_pos = forward_batch.dp_local_num_tokens = None
-            logits_output = self.model_runner.forward(forward_batch, skip_attn_backend_init=True) # target model verify
+            logits_output = self.model_runner.forward(forward_batch) # target model verify
             # verify
             indices = torch.arange(bs, device="cuda", dtype=torch.int32)
             accept_index[:, 0] = indices * 2

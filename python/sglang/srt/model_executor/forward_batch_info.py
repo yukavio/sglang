@@ -258,6 +258,7 @@ class ForwardBatch:
     spec_info: Optional[Union[EagleVerifyInput, EagleDraftInput]] = None
     spec_algorithm: SpeculativeAlgorithm = None
     capture_hidden_mode: CaptureHiddenMode = None
+    naive_skip_attn_backend_init: bool = False
 
     # For padding
     padded_static_len: int = -1  # -1 if not padded
