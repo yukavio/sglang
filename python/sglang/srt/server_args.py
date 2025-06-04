@@ -334,10 +334,7 @@ class ServerArgs:
             # NEXTN shares the same implementation of EAGLE
             self.speculative_algorithm = "EAGLE"
 
-        if (
-            self.speculative_algorithm == "EAGLE"
-            or self.speculative_algorithm == "EAGLE3" or self.speculative_algorithm == "NAIVE_EAGLE"
-        ):
+        if self.speculative_algorithm in ["EAGLE", "EAGLE3", "NAIVE_EAGLE"]:
             if self.max_running_requests is None and self.speculative_algorithm != "NAIVE_EAGLE":
                 self.max_running_requests = 48
             self.disable_overlap_schedule = True
@@ -926,7 +923,7 @@ class ServerArgs:
         parser.add_argument(
             "--requests-all-greedy",
             type=bool,
-            help="The path of the draft model's small vocab table.",
+            help="Check if all requests are greedy",
             default=ServerArgs.requests_all_greedy,
         )
 

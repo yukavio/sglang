@@ -286,7 +286,6 @@ class FlashInferAttnBackend(AttentionBackend):
         encoder_lens: Optional[torch.Tensor],
         forward_mode: ForwardMode,
         spec_info: Optional[Union[EagleDraftInput, EagleVerifyInput]],
-        is_naive_eagle: Optional[bool]=False, 
     ):
         if forward_mode.is_decode_or_idle() or forward_mode.is_naive_verify():
             decode_wrappers = []
@@ -315,7 +314,7 @@ class FlashInferAttnBackend(AttentionBackend):
             )
             self.decode_cuda_graph_metadata[bs] = decode_wrappers
             self.forward_metadata = DecodeMetadata(decode_wrappers)
-            if not is_naive_eagle:
+            if not forward_mode.is_naive_verify():
                 for i in range(self.num_wrappers):
                     decode_wrappers[i].begin_forward = partial(
                         fast_decode_plan, decode_wrappers[i]
@@ -323,7 +322,7 @@ class FlashInferAttnBackend(AttentionBackend):
         elif forward_mode.is_target_verify() or forward_mode.is_naive_draft():
             prefill_wrappers = []
             for i in range(self.num_wrappers):
-                if not is_naive_eagle:
+                if not forward_mode.is_naive_draft():
                     custom_mask_buf = self.cuda_graph_custom_mask
                 else:
                     custom_mask_buf = None

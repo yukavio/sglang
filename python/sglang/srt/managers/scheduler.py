@@ -267,7 +267,7 @@ class Scheduler(
         )
 
         # Launch a draft worker for speculative decoding
-        if self.spec_algorithm.is_eagle() and self.spec_algorithm.is_naive_eagle():
+        if self.spec_algorithm.is_naive_eagle():
             from sglang.srt.speculative.naive_eagle import NaiveEagleWorker
 
             self.draft_worker = NaiveEagleWorker(

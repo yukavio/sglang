@@ -403,7 +403,6 @@ class NaiveEAGLECudaGraphRunner:
             None,
             forward_batch.forward_mode,
             forward_batch.spec_info,
-            True, # is naive
         )
         
 
@@ -421,7 +420,6 @@ class NaiveEAGLECudaGraphRunner:
             None,
             forward_batch.forward_mode,
             forward_batch.spec_info,
-            True, # is naive
         )
         forward_batch.forward_mode = self.capture_forward_mode
         forward_batch.spec_info = verify_spec_info
