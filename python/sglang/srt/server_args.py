@@ -923,7 +923,7 @@ class ServerArgs:
         parser.add_argument(
             "--requests-all-greedy",
             type=bool,
-            help="Check if all requests are greedy",
+            help="Determine which type of cuda graph builds, all-greedy or all-sampling.",
             default=ServerArgs.requests_all_greedy,
         )
 
