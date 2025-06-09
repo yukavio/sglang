@@ -140,6 +140,7 @@ class ServerArgs:
     speculative_accept_threshold_single: float = 1.0
     speculative_accept_threshold_acc: float = 1.0
     speculative_token_map: Optional[str] = None
+    requests_all_greedy: Optional[bool] = True
 
     # Double Sparsity
     enable_double_sparsity: bool = False
@@ -333,11 +334,11 @@ class ServerArgs:
             # NEXTN shares the same implementation of EAGLE
             self.speculative_algorithm = "EAGLE"
 
-        if (
-            self.speculative_algorithm == "EAGLE"
-            or self.speculative_algorithm == "EAGLE3"
-        ):
-            if self.max_running_requests is None:
+        if self.speculative_algorithm in ["EAGLE", "EAGLE3", "NAIVE_EAGLE"]:
+            if (
+                self.max_running_requests is None
+                and self.speculative_algorithm != "NAIVE_EAGLE"
+            ):
                 self.max_running_requests = 48
             self.disable_overlap_schedule = True
             logger.info(
@@ -347,15 +348,20 @@ class ServerArgs:
 
             # Auto choose parameters
             if self.speculative_num_steps is None:
-                assert (
-                    self.speculative_eagle_topk is None
-                    and self.speculative_num_draft_tokens is None
-                )
-                (
-                    self.speculative_num_steps,
-                    self.speculative_eagle_topk,
-                    self.speculative_num_draft_tokens,
-                ) = auto_choose_speculative_params(self)
+                if self.speculative_algorithm != "NAIVE_EAGLE":
+                    assert (
+                        self.speculative_eagle_topk is None
+                        and self.speculative_num_draft_tokens is None
+                    )
+                    (
+                        self.speculative_num_steps,
+                        self.speculative_eagle_topk,
+                        self.speculative_num_draft_tokens,
+                    ) = auto_choose_speculative_params(self)
+                else:
+                    self.speculative_num_steps = 1
+                    self.speculative_eagle_topk = 1
+                    self.speculative_num_draft_tokens = 2
 
             if self.page_size > 1 and self.speculative_eagle_topk > 1:
                 self.speculative_eagle_topk = 1
@@ -872,7 +878,7 @@ class ServerArgs:
         parser.add_argument(
             "--speculative-algorithm",
             type=str,
-            choices=["EAGLE", "EAGLE3", "NEXTN"],
+            choices=["EAGLE", "EAGLE3", "NEXTN", "NAIVE_EAGLE"],
             help="Speculative algorithm.",
         )
         parser.add_argument(
@@ -915,6 +921,13 @@ class ServerArgs:
             type=str,
             help="The path of the draft model's small vocab table.",
             default=ServerArgs.speculative_token_map,
+        )
+
+        parser.add_argument(
+            "--requests-all-greedy",
+            type=bool,
+            help="Determine which type of cuda graph builds, all-greedy or all-sampling.",
+            default=ServerArgs.requests_all_greedy,
         )
 
         # Double Sparsity
