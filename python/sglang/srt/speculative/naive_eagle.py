@@ -188,11 +188,7 @@ class NaiveEagleWorker(TpModelWorker):
         logger.info(
             f"Capture draft cuda graph begin. This can take up to several minutes. avail mem={before_mem:.2f} GB"
         )
-        self.cuda_graph_runner = NaiveEAGLECudaGraphRunner(
-            self.target_worker.model_runner,
-            self.model_runner,
-            requests_all_greedy=self.requests_all_greedy,
-        )
+        self.cuda_graph_runner = NaiveEAGLECudaGraphRunner(self)
         after_mem = get_available_gpu_memory(self.device, self.gpu_id)
         logger.info(
             f"Capture draft cuda graph end. Time elapsed: {time.time() - tic:.2f} s. avail mem={after_mem:.2f} GB. mem usage={(before_mem - after_mem):.2f} GB."
@@ -283,7 +279,7 @@ class NaiveEagleWorker(TpModelWorker):
 
     def draft(self, batch: ScheduleBatch):
         num_seqs = batch.batch_size()
-        spec_info = batch.spec_info
+        draft_input_spec_info = batch.spec_info
         if self.page_size == 1:
             batch.out_cache_loc = batch.alloc_token_slots(
                 num_seqs * 2,
@@ -303,7 +299,7 @@ class NaiveEagleWorker(TpModelWorker):
             raise NotImplementedError("TODO: Page size > 1 not supported yet")
 
         batch.input_ids = torch.column_stack(
-            (batch.output_ids, spec_info.topk_index.squeeze(1))
+            (batch.output_ids, draft_input_spec_info.topk_index.squeeze(1))
         ).flatten()
         positions = torch.column_stack((batch.seq_lens, batch.seq_lens + 1)).flatten()
 
@@ -334,9 +330,8 @@ class NaiveEagleWorker(TpModelWorker):
             forward_batch
         )
         if can_cuda_graph:
-            forward_batch.spec_info_topk_index = spec_info.topk_index
-            forward_batch.spec_info_topk_p = spec_info.topk_p
-
+            forward_batch.spec_info_topk_index = draft_input_spec_info.topk_index
+            forward_batch.spec_info_topk_p = draft_input_spec_info.topk_p
             (
                 logits_output,
                 next_token_ids,
@@ -373,71 +368,18 @@ class NaiveEagleWorker(TpModelWorker):
             forward_batch.spec_info.kv_indptr = kv_indptr
             forward_batch.spec_info.kv_indices = kv_indices
 
-            logits_output, _ = self.target_worker.model_runner.forward(forward_batch)
-            accept_index = torch.full(
-                (num_seqs, 2), -1, dtype=torch.int32, device="cuda"
+            accept_length = torch.zeros((num_seqs,), dtype=torch.int32, device="cuda")
+
+            logits_output, next_token_ids, accept_index = self.draft_forward_and_verify(
+                forward_batch,
+                num_seqs,
+                draft_input_spec_info.topk_p,
+                draft_input_spec_info.topk_index,
             )
-            accept_length = torch.zeros((num_seqs,), dtype=torch.int32, device="cuda")
-            # verify
-            indices = torch.arange(num_seqs, device="cuda", dtype=torch.int32)
-            accept_index[:, 0] = indices * 2
-            if forward_batch.sampling_info.is_all_greedy:
-                probs = torch.softmax(logits_output.next_token_logits, dim=-1)
-                _, token_indices = fast_topk(probs, topk=1, dim=-1)
-                next_token_ids = token_indices.squeeze(-1)
-                draft_token = forward_batch.input_ids[2 * indices + 1]
-                target_token = next_token_ids[2 * indices]
-
-                mask = draft_token == target_token
-                accept_index[:, 1] = torch.where(
-                    mask, 2 * indices + 1, accept_index[:, 1]
-                )
-            else:
-                # apply temperature and get target probs
-                expanded_temperature = torch.repeat_interleave(
-                    forward_batch.sampling_info.temperatures, 2, dim=0
-                )  # (bs * draft_token_num, 1)
-
-                target_probs = F.softmax(
-                    logits_output.next_token_logits / expanded_temperature, dim=-1
-                )  # (bs * draft_token_num, vocab_size)
-                target_probs = top_k_renorm_prob(
-                    target_probs,
-                    torch.repeat_interleave(
-                        forward_batch.sampling_info.top_ks, 2, dim=0
-                    ),
-                )  # (bs * draft_token_num, vocab_size)
-                target_probs = top_p_renorm_prob(
-                    target_probs,
-                    torch.repeat_interleave(
-                        forward_batch.sampling_info.top_ps, 2, dim=0
-                    ),
-                )
-
-                target_verify_probs = target_probs[indices * 2]
-                coins = torch.rand((num_seqs), dtype=torch.float32, device="cuda")
-                draft_p = spec_info.topk_p.squeeze()
-
-                target_p = torch.gather(
-                    target_verify_probs, dim=1, index=spec_info.topk_index
-                ).squeeze(1)
-                mask = coins < torch.min(
-                    torch.tensor([1], device=target_verify_probs.device),
-                    target_p / draft_p,
-                )
-                accept_index[:, 1] = torch.where(
-                    mask, 2 * indices + 1, accept_index[:, 1]
-                )
-                # prepare next_token_ids
-                next_token_ids = torch.multinomial(target_probs, num_samples=1).squeeze(
-                    -1
-                )
-
-            accept_length = torch.zeros((num_seqs,), dtype=torch.int32, device="cuda")
             for i in range(num_seqs):
                 accept_length[i] = 1 if accept_index[i][1] != -1 else 0
 
-            # NOTE: We do not assign here, because the res here is same as first assign
+            # NOTE: We do not assign draft model here, because the res here is same as target model's assign
 
             # we pass accept length to 1 of all reqs cause we extend all tokens anyway.
             accept_length_for_draft_extend = torch.ones(
@@ -660,6 +602,58 @@ class NaiveEagleWorker(TpModelWorker):
             if torch.any(torch.isnan(logits)):
                 logger.error("Detected errors during sampling! NaN in the logits.")
                 raise ValueError("Detected errors during sampling! NaN in the logits.")
+
+    def draft_forward_and_verify(
+        self, forward_batch, bs, draft_top_k_p, draft_topk_index
+    ):
+        logits_output, _ = self.target_worker.model_runner.forward(forward_batch)
+
+        accept_index = torch.full((bs, 2), -1, dtype=torch.int32, device="cuda")
+
+        indices = torch.arange(bs, device="cuda", dtype=torch.int32)
+        accept_index[:, 0] = indices * 2
+        if forward_batch.sampling_info.is_all_greedy:
+            probs = torch.softmax(logits_output.next_token_logits, dim=-1)
+            _, token_indices = fast_topk(probs, topk=1, dim=-1)
+            next_token_ids = token_indices.squeeze(-1)
+            draft_token = forward_batch.input_ids[2 * indices + 1]
+            target_token = next_token_ids[2 * indices]
+
+            mask = draft_token == target_token
+            accept_index[:, 1] = torch.where(mask, 2 * indices + 1, accept_index[:, 1])
+        else:
+            # apply temperature and get target probs
+            expanded_temperature = torch.repeat_interleave(
+                forward_batch.sampling_info.temperatures, 2, dim=0
+            )  # (bs * draft_token_num, 1)
+
+            target_probs = F.softmax(
+                logits_output.next_token_logits / expanded_temperature, dim=-1
+            )  # (bs * draft_token_num, vocab_size)
+            target_probs = top_k_renorm_prob(
+                target_probs,
+                torch.repeat_interleave(forward_batch.sampling_info.top_ks, 2, dim=0),
+            )  # (bs * draft_token_num, vocab_size)
+            target_probs = top_p_renorm_prob(
+                target_probs,
+                torch.repeat_interleave(forward_batch.sampling_info.top_ps, 2, dim=0),
+            )
+
+            target_verify_probs = target_probs[indices * 2]
+            coins = torch.rand((bs), dtype=torch.float32, device="cuda")
+            draft_p = draft_top_k_p.squeeze()
+
+            target_p = torch.gather(
+                target_verify_probs, dim=1, index=draft_topk_index
+            ).squeeze(1)
+            mask = coins < torch.min(
+                torch.tensor([1], device=target_verify_probs.device),
+                target_p / draft_p,
+            )
+            accept_index[:, 1] = torch.where(mask, 2 * indices + 1, -1)
+            # prepare next_token_ids
+            next_token_ids = torch.multinomial(target_probs, num_samples=1).squeeze(-1)
+        return logits_output, next_token_ids, accept_index
 
 
 def load_token_map(token_map_path: str) -> List[int]:

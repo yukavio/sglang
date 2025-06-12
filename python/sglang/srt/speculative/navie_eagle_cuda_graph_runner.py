@@ -38,10 +38,13 @@ from sglang.srt.model_executor.forward_batch_info import (
 )
 from sglang.srt.sampling.sampling_batch_info import SamplingBatchInfo
 from sglang.srt.speculative.eagle_utils import EagleDraftInput, create_draft_kv_indices
-from sglang.srt.utils import fast_topk, next_power_of_2
+from sglang.srt.utils import fast_topk, is_cuda, next_power_of_2
 
 if TYPE_CHECKING:
-    from sglang.srt.model_executor.model_runner import ModelRunner
+    from sglang.srt.speculative.naive_eagle import NaiveEagleWorker
+
+if is_cuda():
+    from sgl_kernel import top_k_renorm_prob, top_p_renorm_prob
 
 
 class NaiveEAGLECudaGraphRunner:
@@ -49,29 +52,27 @@ class NaiveEAGLECudaGraphRunner:
 
     def __init__(
         self,
-        model_runner: ModelRunner,
-        draft_model_runner: ModelRunner,
-        requests_all_greedy: bool,
+        eagle_worker: NaiveEagleWorker,
     ):
         # Parse args
-        self.model_runner = model_runner
-        self.draft_model_runner = draft_model_runner
-        self.requests_all_greedy = requests_all_greedy
+        self.model_runner = eagle_worker.target_worker.model_runner
+        self.draft_model_runner = eagle_worker.model_runner
+        self.requests_all_greedy = eagle_worker.requests_all_greedy
         self.graphs = {}
         self.output_buffers = {}
-        self.enable_torch_compile = model_runner.server_args.enable_torch_compile
-        self.disable_padding = model_runner.server_args.disable_cuda_graph_padding
-        self.is_encoder_decoder = model_runner.model_config.is_encoder_decoder
-        self.enable_dp_attention = model_runner.server_args.enable_dp_attention
-        self.enable_sp_layernorm = model_runner.server_args.enable_sp_layernorm
-        self.speculative_algorithm = model_runner.server_args.speculative_algorithm
-        self.tp_size = model_runner.server_args.tp_size
-        self.dp_size = model_runner.server_args.dp_size
+        self.enable_torch_compile = self.model_runner.server_args.enable_torch_compile
+        self.disable_padding = self.model_runner.server_args.disable_cuda_graph_padding
+        self.is_encoder_decoder = self.model_runner.model_config.is_encoder_decoder
+        self.enable_dp_attention = self.model_runner.server_args.enable_dp_attention
+        self.enable_sp_layernorm = self.model_runner.server_args.enable_sp_layernorm
+        self.speculative_algorithm = self.model_runner.server_args.speculative_algorithm
+        self.tp_size = self.model_runner.server_args.tp_size
+        self.dp_size = self.model_runner.server_args.dp_size
         self.enable_profile_cuda_graph = (
-            model_runner.server_args.enable_profile_cuda_graph
+            self.model_runner.server_args.enable_profile_cuda_graph
         )
         # Batch sizes to capture
-        self.capture_bs, self.compile_bs = get_batch_sizes_to_capture(model_runner)
+        self.capture_bs, self.compile_bs = get_batch_sizes_to_capture(self.model_runner)
         self.capture_hidden_mode = CaptureHiddenMode.NULL
 
         self.num_tokens_per_bs = 2
@@ -248,7 +249,6 @@ class NaiveEAGLECudaGraphRunner:
 
         # Run and capture
         def run_once():
-            # Clean intermediate result cache for DP attention
             logits_output, _ = self.model_runner.forward(
                 forward_batch
             )  # target model verify
@@ -257,6 +257,7 @@ class NaiveEAGLECudaGraphRunner:
             accept_index[:, 0] = indices * 2
             accept_index[:, 1] = -1  # init it
             if self.requests_all_greedy:
+
                 probs = torch.softmax(logits_output.next_token_logits, dim=-1)
                 _, token_indices = fast_topk(probs, topk=1, dim=-1)
                 next_token_ids = token_indices.squeeze(-1)
