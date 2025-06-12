@@ -131,9 +131,10 @@ class NaiveEagleWorker(TpModelWorker):
         # Init draft worker
         with empty_context():
             super().__init__(
+                server_args=server_args,
                 gpu_id=gpu_id,
                 tp_rank=tp_rank,
-                server_args=server_args,
+                pp_rank=0,
                 nccl_port=nccl_port,
                 dp_rank=dp_rank,
                 is_draft_worker=True,
@@ -219,18 +220,18 @@ class NaiveEagleWorker(TpModelWorker):
             return self.draft(batch)
         elif batch.forward_mode.is_idle():
             model_worker_batch = batch.get_model_worker_batch()
-            logits_output, next_token_ids = self.target_worker.forward_batch_generation(
-                model_worker_batch
+            logits_output, next_token_ids, _ = (
+                self.target_worker.forward_batch_generation(model_worker_batch)
             )
 
-            return logits_output, next_token_ids, model_worker_batch.bid, 0
+            return logits_output, next_token_ids, model_worker_batch.bid, 0, False
         else:
             logits_output, next_token_ids, bid = self.forward_target_extend(batch)
             with self.draft_tp_context(self.draft_model_runner.tp_group):
                 self.forward_draft_extend(
                     batch, logits_output.hidden_states, next_token_ids
                 )
-            return logits_output, next_token_ids, bid, 0
+            return logits_output, next_token_ids, bid, 0, False
 
     def forward_target_extend(
         self, batch: ScheduleBatch
@@ -249,7 +250,7 @@ class NaiveEagleWorker(TpModelWorker):
         # We need the full hidden states to prefill the KV cache of the draft model.
         model_worker_batch = batch.get_model_worker_batch()
         model_worker_batch.capture_hidden_mode = CaptureHiddenMode.FULL
-        logits_output, next_token_ids = self.target_worker.forward_batch_generation(
+        logits_output, next_token_ids, _ = self.target_worker.forward_batch_generation(
             model_worker_batch
         )
         return logits_output, next_token_ids, model_worker_batch.bid
@@ -270,7 +271,7 @@ class NaiveEagleWorker(TpModelWorker):
         forward_batch.attn_backend = self.draft_model_runner.attn_backend
         forward_batch.positions = forward_batch.spec_info.positions
         # Run
-        logits_output = self.draft_model_runner.forward(forward_batch)
+        logits_output, _ = self.draft_model_runner.forward(forward_batch)
 
         last = accept_index[:, 1]
         first = accept_index[:, 0]
@@ -316,7 +317,10 @@ class NaiveEagleWorker(TpModelWorker):
             retrive_cum_len=None,
             draft_token_num=2,
             spec_steps=1,
+            topk=1,
             capture_hidden_mode=CaptureHiddenMode.FULL,
+            seq_lens_cpu=None,
+            seq_lens_sum=None,
         )
 
         model_worker_batch = batch.get_model_worker_batch()
@@ -326,9 +330,6 @@ class NaiveEagleWorker(TpModelWorker):
         )
         forward_batch.forward_mode = ForwardMode.NAIVE_TARGET_VERIFY
 
-        # logger.info(f"[before start]{kv_indptr=}{kv_indices=}")
-
-        # logger.info(f"decode start:{forward_batch=}")
         can_cuda_graph = self.cuda_graph_runner and self.cuda_graph_runner.can_run(
             forward_batch
         )
@@ -372,7 +373,7 @@ class NaiveEagleWorker(TpModelWorker):
             forward_batch.spec_info.kv_indptr = kv_indptr
             forward_batch.spec_info.kv_indices = kv_indices
 
-            logits_output = self.target_worker.model_runner.forward(forward_batch)
+            logits_output, _ = self.target_worker.model_runner.forward(forward_batch)
             accept_index = torch.full(
                 (num_seqs, 2), -1, dtype=torch.int32, device="cuda"
             )
@@ -552,6 +553,7 @@ class NaiveEagleWorker(TpModelWorker):
             output_ids,
             model_worker_batch.bid,
             sum(accept_length_cpu),
+            can_cuda_graph,
         )
 
     def add_logprob_values(
@@ -638,7 +640,7 @@ class NaiveEagleWorker(TpModelWorker):
             model_worker_batch, self.draft_model_runner
         )
         forward_batch.return_logprob = False
-        logits_output = self.draft_model_runner.forward(forward_batch)
+        logits_output, _ = self.draft_model_runner.forward(forward_batch)
         self._detect_nan_if_needed(logits_output)
         assert isinstance(forward_batch.spec_info, EagleDraftInput)
         assert forward_batch.spec_info is batch.spec_info
