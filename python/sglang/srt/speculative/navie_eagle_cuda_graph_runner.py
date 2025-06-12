@@ -378,6 +378,8 @@ class NaiveEAGLECudaGraphRunner:
             is_all_greedy=False,
             need_min_p_sampling=None,
             vocab_size=None,
+            need_top_p_sampling=False,
+            need_top_k_sampling=False,
         )
 
         forward_batch = ForwardBatch(
@@ -451,8 +453,7 @@ class NaiveEAGLECudaGraphRunner:
         # Run and capture
         def run_once():
             # Clean intermediate result cache for DP attention
-            forward_batch.dp_local_start_pos = forward_batch.dp_local_num_tokens = None
-            logits_output = self.model_runner.forward(
+            logits_output, _ = self.model_runner.forward(
                 forward_batch
             )  # target model verify
             # verify
@@ -755,6 +756,9 @@ class NaiveEAGLECudaGraphRunner:
                 draft_token_num=2,
                 spec_steps=1,
                 capture_hidden_mode=CaptureHiddenMode.FULL,
+                seq_lens_sum=None,
+                seq_lens_cpu=None,
+                topk=1,
             )
             draft_spec_info = EagleDraftInput(
                 topk_p=None,
@@ -783,7 +787,7 @@ class NaiveEAGLECudaGraphRunner:
         forward_batch.attn_backend = self.draft_model_runner.attn_backend
         forward_batch.positions = forward_batch.spec_info.positions
         # Run
-        logits_output = self.draft_model_runner.forward(
+        logits_output, _ = self.draft_model_runner.forward(
             forward_batch, skip_attn_backend_init=True
         )
 

@@ -283,7 +283,7 @@ class TestNaiveEAGLEServer(CustomTestCase):
         # Wait a little bit so that the memory check happens.
         time.sleep(4)
 
-    # TODO: return return_logprob is not supproted yet.
+    # TODO: return return_logprob is not supported yet.
     # def test_logprob_start_len(self):
     #     logprob_start_len = 4
     #     new_tokens = 4
@@ -385,7 +385,7 @@ class TestNaiveEAGLEServer(CustomTestCase):
                     # for return_logprob in [True, False]:
                     for return_logprob in [
                         False
-                    ]:  # TODO: return return_logprob is not supproted yet.
+                    ]:  # TODO: return return_logprob is not supported yet.
                         for top_logprobs_num in [0, 5]:
 
                             if logprob_start_len >= input_len:
