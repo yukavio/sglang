@@ -212,8 +212,8 @@ class NaiveEagleWorker(TpModelWorker):
         Args:
             batch: The batch to run forward. The state of the batch is modified as it runs.
         Returns:
-            A tuple of the final logit output of the target model, next tokens accepeted,
-            the batch id (used for overlap schedule), and number of accepeted tokens.
+            A tuple of the final logit output of the target model, next tokens accepted,
+            the batch id (used for overlap schedule), and number of accepted tokens.
         """
         if batch.forward_mode.is_decode():
             return self.draft(batch)
@@ -436,7 +436,7 @@ class NaiveEagleWorker(TpModelWorker):
             for i in range(num_seqs):
                 accept_length[i] = 1 if accept_index[i][1] != -1 else 0
 
-            # NOTE: We do not assign here, becasue the res here is same as first assign
+            # NOTE: We do not assign here, because the res here is same as first assign
 
             # we pass accept length to 1 of all reqs cause we extend all tokens anyway.
             accept_length_for_draft_extend = torch.ones(
