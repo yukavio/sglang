@@ -104,7 +104,7 @@ class NaiveEAGLECudaGraphRunner:
             self.positions = torch.zeros((self.max_num_token,), dtype=torch.int64)
             self.mrope_positions = torch.zeros((3, self.max_bs), dtype=torch.int64)
 
-            self.hidden_states = torch.zeros(
+            self.hidden_states = torch.empty(
                 (self.max_num_token, self.model_runner.model_config.hidden_size),
                 dtype=self.model_runner.dtype,
             )

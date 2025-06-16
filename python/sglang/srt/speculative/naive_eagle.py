@@ -339,7 +339,6 @@ class NaiveEagleWorker(TpModelWorker):
                 draft_logits_output,
                 draft_input,
             ) = self.cuda_graph_runner.replay(forward_batch)
-            accept_length = (accept_index[:, 1] != -1).to(torch.int32)
             forward_batch.input_ids = next_token_ids
         else:
             draft_token_num = 2
@@ -368,16 +367,12 @@ class NaiveEagleWorker(TpModelWorker):
             forward_batch.spec_info.kv_indptr = kv_indptr
             forward_batch.spec_info.kv_indices = kv_indices
 
-            accept_length = torch.zeros((num_seqs,), dtype=torch.int32, device="cuda")
-
             logits_output, next_token_ids, accept_index = self.draft_forward_and_verify(
                 forward_batch,
                 num_seqs,
                 draft_input_spec_info.topk_p,
                 draft_input_spec_info.topk_index,
             )
-            for i in range(num_seqs):
-                accept_length[i] = 1 if accept_index[i][1] != -1 else 0
 
             # NOTE: We do not assign draft model here, because the res here is same as target model's assign
 
@@ -403,6 +398,14 @@ class NaiveEagleWorker(TpModelWorker):
             draft_logits_output = self.forward_draft_extend_after_decode(
                 forward_batch, accept_index
             )
+
+        accept_length = torch.zeros((num_seqs,), dtype=torch.int32, device="cuda")
+        torch.where(
+            accept_index[:, 1] != -1,
+            torch.tensor(1, dtype=accept_index.dtype, device=accept_index.device),
+            torch.tensor(0, dtype=accept_index.dtype, device=accept_index.device),
+            out=accept_length,
+        )
 
         self._detect_nan_if_needed(draft_logits_output)
         self.capture_for_decode(draft_logits_output, draft_input)
