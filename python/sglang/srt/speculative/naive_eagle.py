@@ -464,7 +464,7 @@ class NaiveEagleWorker(TpModelWorker):
             accept_length = (accept_index != -1).sum(dim=1) - 1
 
         evict_mask = torch.full((num_seqs * 2,), True, dtype=torch.bool)
-        evict_mask[accept_index_viewd] = False
+        evict_mask[accept_index[accept_index != -1]] = False
         if self.page_size != 1:
             # TODO: align_evict_mask_to_page_size, see eagle_utils.py/align_evict_mask_to_page_size
             pass
