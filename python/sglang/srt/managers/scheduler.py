@@ -1330,9 +1330,7 @@ class Scheduler(
                 f"{self.token_to_kv_pool_allocator.available_size()=}\n"
                 f"{self.tree_cache.evictable_size()=}\n"
             )
-            raise ValueError(
-                msg
-            )  # FIXME: Naive spec may lead to memory leak, pass it here anyway.
+            raise ValueError(msg)
 
         if len(self.req_to_token_pool.free_slots) != self.req_to_token_pool.size:
             msg = (
