@@ -521,17 +521,11 @@ class SchedulerOutputProcessorMixin:
                     stream_interval = (
                         req.sampling_params.stream_interval or self.stream_interval
                     )
-                    should_output = (
-                        len(req.output_ids) % stream_interval == 1
-                        if not self.model_config.is_multimodal_gen
-                        and stream_interval > 1
-                        else len(req.output_ids) % stream_interval == 0
-                    )
+                    should_output = len(req.output_ids) % stream_interval == 0
                 else:
                     should_output = (
                         len(req.output_ids) % DEFAULT_FORCE_STREAM_INTERVAL == 0
-                        if not self.model_config.is_multimodal_gen
-                        else False
+                        and not self.model_config.is_multimodal_gen
                     )
 
             if should_output:

@@ -11,17 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""Conversation chat templates.
-
-This module provides conversation template definitions, data structures, and utilities
-for managing chat templates across different model types in SGLang.
-
-Key components:
-- Conversation class: Defines the structure and behavior of chat templates
-- SeparatorStyle enum: Different conversation formatting styles
-- Template registry: Functions to register and retrieve templates by name or model path
-- Built-in templates: Pre-defined templates for popular models
-"""
+"""Conversation chat templates."""
 
 # Adapted from
 # https://github.com/lm-sys/FastChat/blob/main/fastchat/conversation.py
@@ -30,7 +20,7 @@ import re
 from enum import IntEnum, auto
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
-from sglang.srt.entrypoints.openai.protocol import ChatCompletionRequest
+from sglang.srt.openai_api.protocol import ChatCompletionRequest
 from sglang.srt.utils import read_system_prompt_from_file
 
 
@@ -59,7 +49,6 @@ class SeparatorStyle(IntEnum):
     METAMATH = auto()
     DeepSeekVL2 = auto()
     QWEN2_VL_EMBED = auto()
-    QWEN2_AUDIO = auto()
     GEMMA3 = auto()
     MPT = auto()
 
@@ -351,23 +340,6 @@ class Conversation:
                 else:
                     ret += role
             return ret
-        elif self.sep_style == SeparatorStyle.QWEN2_AUDIO:
-            ret = "" if system_prompt == "" else system_prompt + self.sep
-
-            counter = 1
-            for role, message in self.messages:
-                if message:
-                    while self.audio_token in message:
-                        message = message.replace(
-                            self.audio_token, self.audio_token.format(idx=counter), 1
-                        )
-                        counter += 1
-
-                    ret += role + "\n" + message + self.sep
-                else:
-                    ret += role + "\n"
-
-            return ret
         else:
             raise ValueError(f"Invalid style: {self.sep_style}")
 
@@ -646,7 +618,7 @@ def generate_chat_conv(
 
 
 # llama2 template
-# reference: https://github.com/lm-sys/FastChat/blob/main/fastchat/conversation.py
+# reference: https://huggingface.co/blog/codellama#conversational-instructions
 # reference: https://github.com/facebookresearch/llama/blob/1a240688810f8036049e8da36b073f63d2ac552c/llama/generation.py#L212
 register_conv_template(
     Conversation(
@@ -841,7 +813,6 @@ register_conv_template(
         sep_style=SeparatorStyle.GEMMA3,
         stop_str=["<end_of_turn>"],
         image_token="<start_of_image>",
-        audio_token="<start_of_audio>",
     )
 )
 
@@ -922,20 +893,6 @@ register_conv_template(
 )
 
 
-register_conv_template(
-    Conversation(
-        name="qwen2-audio",
-        system_template="<|im_start|>system\n{system_message}",
-        system_message="You are a helpful assistant.",
-        roles=("<|im_start|>user", "<|im_start|>assistant"),
-        sep="<|im_end|>\n",
-        sep_style=SeparatorStyle.QWEN2_AUDIO,
-        stop_str=["<|im_end|>"],
-        audio_token="Audio {idx}: <|audio_bos|><|AUDIO|><|audio_eos|>\n",
-    )
-)
-
-
 @register_conv_template_matching_function
 def match_internvl(model_path: str):
     if re.search(r"internvl2_5", model_path, re.IGNORECASE):
@@ -988,8 +945,6 @@ def match_qwen_chat_ml(model_path: str):
         return "gme-qwen2-vl"
     if re.search(r"qwen.*vl", model_path, re.IGNORECASE):
         return "qwen2-vl"
-    if re.search(r"qwen.*audio", model_path, re.IGNORECASE):
-        return "qwen2-audio"
     if re.search(
         r"llava-v1\.6-34b|llava-v1\.6-yi-34b|llava-next-video-34b|llava-onevision-qwen2",
         model_path,

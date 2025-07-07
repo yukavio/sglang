@@ -53,15 +53,9 @@ def is_sm100_supported(device=None) -> bool:
     )
 
 
-def is_sm90_supported(device=None) -> bool:
-    return (torch.cuda.get_device_capability(device)[0] == 9) and (
-        torch.version.cuda >= "12.8"
-    )
-
-
 @pytest.mark.skipif(
-    not (is_sm100_supported() or is_sm90_supported()),
-    reason="fp8_blockwise_scaled_grouped_mm at sgl-kernel is only supported on sm100 or sm90",
+    not is_sm100_supported(),
+    reason="fp8_blockwise_scaled_grouped_mm at sgl-kernel is only supported on sm100",
 )
 @pytest.mark.parametrize("num_experts", [8, 16])
 @pytest.mark.parametrize("out_dtype", [torch.half, torch.bfloat16])
@@ -168,7 +162,7 @@ def test_fp8_blockwise_scaled_grouped_mm(num_experts, out_dtype):
     for g in range(num_experts):
         baseline = baseline_tensors[g]
         actual = c_out[expert_offsets[g] : expert_offsets[g + 1]]
-        torch.testing.assert_close(actual, baseline, rtol=1e-2, atol=1e-3)
+        torch.testing.assert_close(actual, baseline, rtol=1e-2, atol=5e-4)
         print(f"num_experts={num_experts}, out_dtype={out_dtype}: OK")
 
 

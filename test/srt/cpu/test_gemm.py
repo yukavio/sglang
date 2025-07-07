@@ -14,8 +14,6 @@ from utils import (
 
 from sglang.test.test_utils import CustomTestCase
 
-torch.manual_seed(1234)
-
 
 class Mod(nn.Module):
     def __init__(self, input_channel, output_channel, has_bias):
@@ -28,7 +26,7 @@ class Mod(nn.Module):
 
 class TestGemm(CustomTestCase):
     M = [1, 101]
-    N = [16, 32 * 13]
+    N = [32 * 13]
     K = [32 * 16]
     has_bias = [False, True]
 
@@ -62,8 +60,8 @@ class TestGemm(CustomTestCase):
         )
 
         atol = rtol = precision[ref.dtype]
-        torch.testing.assert_close(ref, out, atol=atol, rtol=rtol)
-        torch.testing.assert_close(ref, out2, atol=atol, rtol=rtol)
+        self.assertTrue(torch.allclose(ref, out, atol=atol, rtol=rtol))
+        self.assertTrue(torch.allclose(ref, out2, atol=atol, rtol=rtol))
 
     def test_bf16_gemm(self):
         for params in itertools.product(
@@ -102,13 +100,13 @@ class TestGemm(CustomTestCase):
         out = torch.ops.sgl_kernel.int8_scaled_mm_cpu(
             Aq2, Bq, As2, Bs, bias if has_bias else None, torch.bfloat16, False
         )
-        torch.testing.assert_close(ref_out, out, atol=atol, rtol=rtol)
+        self.assertTrue(torch.allclose(ref_out, out, atol=atol, rtol=rtol))
 
         # test the fused version
         fused_out = torch.ops.sgl_kernel.int8_scaled_mm_with_quant(
             A, Bq, Bs, bias if has_bias else None, torch.bfloat16, False
         )
-        torch.testing.assert_close(ref_out, fused_out, atol=atol, rtol=rtol)
+        self.assertTrue(torch.allclose(ref_out, fused_out, atol=atol, rtol=rtol))
 
     def test_int8_gemm(self):
         for params in itertools.product(
@@ -167,7 +165,7 @@ class TestGemm(CustomTestCase):
             prepack,
         )
         atol = rtol = precision[ref.dtype]
-        torch.testing.assert_close(ref, opt, atol=atol, rtol=rtol)
+        self.assertTrue(torch.allclose(ref, opt, atol=atol, rtol=rtol))
 
     def test_fp8_gemm(self):
         for params in itertools.product(

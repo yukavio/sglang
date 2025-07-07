@@ -199,16 +199,7 @@ class FlashInferAttnBackend(AttentionBackend):
         self.draft_extend_cuda_graph_metadata = {}  # For draft extend
 
     def init_forward_metadata(self, forward_batch: ForwardBatch):
-        if (
-            forward_batch.forward_mode.is_decode_or_idle()
-            or forward_batch.forward_mode.is_naive_verify()
-        ):
-            if (
-                forward_batch.forward_mode.is_naive_verify()
-                and forward_batch.naive_skip_attn_backend_init
-            ):
-                return
-
+        if forward_batch.forward_mode.is_decode_or_idle():
             self.indices_updater_decode.update(
                 forward_batch.req_pool_indices,
                 forward_batch.seq_lens,
@@ -271,14 +262,11 @@ class FlashInferAttnBackend(AttentionBackend):
             )
 
     def init_cuda_graph_state(
-        self,
-        max_bs: int,
-        max_num_tokens: int,
-        kv_indices_buf: Optional[torch.Tensor] = None,
+        self, max_bs: int, kv_indices_buf: Optional[torch.Tensor] = None
     ):
         if kv_indices_buf is None:
             cuda_graph_kv_indices = torch.zeros(
-                (max_num_tokens * self.max_context_len,),
+                (max_bs * self.max_context_len,),
                 dtype=torch.int32,
                 device="cuda",
             )
@@ -297,7 +285,7 @@ class FlashInferAttnBackend(AttentionBackend):
 
         if not self.skip_prefill:
             self.cuda_graph_custom_mask = torch.zeros(
-                (max_num_tokens * self.max_context_len),
+                (max_bs * self.max_context_len),
                 dtype=torch.uint8,
                 device="cuda",
             )
@@ -314,7 +302,7 @@ class FlashInferAttnBackend(AttentionBackend):
         forward_mode: ForwardMode,
         spec_info: Optional[Union[EagleDraftInput, EagleVerifyInput]],
     ):
-        if forward_mode.is_decode_or_idle() or forward_mode.is_naive_verify():
+        if forward_mode.is_decode_or_idle():
             decode_wrappers = []
             for i in range(self.num_wrappers):
                 decode_wrappers.append(
@@ -341,19 +329,13 @@ class FlashInferAttnBackend(AttentionBackend):
             )
             self.decode_cuda_graph_metadata[bs] = decode_wrappers
             self.forward_metadata = DecodeMetadata(decode_wrappers)
-            if not forward_mode.is_naive_verify():
-                for i in range(self.num_wrappers):
-                    decode_wrappers[i].begin_forward = partial(
-                        fast_decode_plan, decode_wrappers[i]
-                    )
-        elif forward_mode.is_target_verify() or forward_mode.is_naive_draft():
+            for i in range(self.num_wrappers):
+                decode_wrappers[i].begin_forward = partial(
+                    fast_decode_plan, decode_wrappers[i]
+                )
+        elif forward_mode.is_target_verify():
             prefill_wrappers = []
             for i in range(self.num_wrappers):
-                if not forward_mode.is_naive_draft():
-                    custom_mask_buf = self.cuda_graph_custom_mask
-                else:
-                    custom_mask_buf = None
-
                 prefill_wrappers.append(
                     BatchPrefillWithPagedKVCacheWrapper(
                         self.workspace_buffer,
@@ -363,7 +345,7 @@ class FlashInferAttnBackend(AttentionBackend):
                         paged_kv_indptr_buf=self.kv_indptr[i][: bs + 1],
                         paged_kv_indices_buf=self.cuda_graph_kv_indices[i],
                         paged_kv_last_page_len_buf=self.kv_last_page_len[:bs],
-                        custom_mask_buf=custom_mask_buf,
+                        custom_mask_buf=self.cuda_graph_custom_mask,
                         mask_indptr_buf=self.cuda_graph_qk_indptr[i][: bs + 1],
                     )
                 )
@@ -423,7 +405,7 @@ class FlashInferAttnBackend(AttentionBackend):
         spec_info: Optional[Union[EagleDraftInput, EagleVerifyInput]],
         seq_lens_cpu: Optional[torch.Tensor],
     ):
-        if forward_mode.is_decode_or_idle() or forward_mode.is_naive_verify():
+        if forward_mode.is_decode_or_idle():
             self.indices_updater_decode.update(
                 req_pool_indices[:bs],
                 seq_lens[:bs],
@@ -432,7 +414,7 @@ class FlashInferAttnBackend(AttentionBackend):
                 encoder_lens=encoder_lens[:bs] if encoder_lens is not None else None,
                 spec_info=spec_info,
             )
-        elif forward_mode.is_target_verify() or forward_mode.is_naive_draft():
+        elif forward_mode.is_target_verify():
             self.indices_updater_prefill.update(
                 req_pool_indices[:bs],
                 seq_lens[:bs],
@@ -458,7 +440,7 @@ class FlashInferAttnBackend(AttentionBackend):
             raise ValueError("Invalid forward mode")
 
     def get_cuda_graph_seq_len_fill_value(self):
-        return 1
+        return 0
 
     def forward_extend(
         self,
@@ -1067,13 +1049,14 @@ class FlashInferMultiStepDraftBackend:
             kv_indices_buffer,
             self.kv_indptr,
             forward_batch.positions,
+            num_seqs,
+            self.topk,
             self.pool_len,
             kv_indices_buffer.shape[1],
             self.kv_indptr.shape[1],
             next_power_of_2(num_seqs),
             next_power_of_2(self.speculative_num_steps),
             next_power_of_2(bs),
-            self.page_size,
         )
 
         assert forward_batch.spec_info is not None
@@ -1114,7 +1097,7 @@ class FlashInferMultiStepDraftBackend:
 
         self.common_template(forward_batch, kv_indices, call_fn)
 
-    def init_cuda_graph_state(self, max_bs: int, max_num_tokens: int):
+    def init_cuda_graph_state(self, max_bs: int):
         self.cuda_graph_kv_indices = torch.zeros(
             (self.speculative_num_steps, max_bs * self.max_context_len),
             dtype=torch.int32,
@@ -1123,7 +1106,7 @@ class FlashInferMultiStepDraftBackend:
 
         for i in range(self.speculative_num_steps):
             self.attn_backends[i].init_cuda_graph_state(
-                max_bs, max_num_tokens, kv_indices_buf=self.cuda_graph_kv_indices[i]
+                max_bs, kv_indices_buf=self.cuda_graph_kv_indices[i]
             )
 
     def init_forward_metadata_capture_cuda_graph(self, forward_batch: ForwardBatch):

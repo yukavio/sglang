@@ -493,7 +493,9 @@ class Qwen2_5_VLForConditionalGeneration(nn.Module):
         self.pooler = Pooler(pooling_type=PoolingType.LAST, normalize=True)
 
     def pad_input_ids(self, input_ids: List[int], mm_inputs: MultimodalInputs):
-        pattern = MultiModalityDataPaddingPatternMultimodalTokens()
+        # Get all special token IDs
+        im_token_id: int = mm_inputs.im_token_id
+        pattern = MultiModalityDataPaddingPatternMultimodalTokens([im_token_id])
         return pattern.pad_input_tokens(input_ids, mm_inputs)
 
     def get_image_feature(self, items: List[MultimodalDataItem]) -> torch.Tensor:

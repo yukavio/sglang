@@ -67,7 +67,7 @@ class TestFlashMLAAttnBackend(unittest.TestCase):
 
 class TestFlashMLAAttnLatency(unittest.TestCase):
     def test_latency(self):
-        _, output_throughput, _ = run_bench_one_batch(
+        output_throughput = run_bench_one_batch(
             DEFAULT_MODEL_NAME_FOR_TEST_MLA,
             [
                 "--attention-backend",

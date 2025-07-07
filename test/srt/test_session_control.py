@@ -28,19 +28,13 @@ def remove_prefix(text: str, prefix: str) -> str:
     return text[len(prefix) :] if text.startswith(prefix) else text
 
 
-class TestSessionControl(unittest.TestCase):
+class TestSessionControl(CustomTestCase):
     @classmethod
     def setUpClass(cls):
         cls.model = DEFAULT_SMALL_MODEL_NAME_FOR_TEST
         cls.base_url = DEFAULT_URL_FOR_TEST
         cls.process = popen_launch_server(
-            cls.model,
-            cls.base_url,
-            timeout=DEFAULT_TIMEOUT_FOR_SERVER_LAUNCH,
-            other_args=[
-                "--attention-backend",
-                "flashinfer",
-            ],
+            cls.model, cls.base_url, timeout=DEFAULT_TIMEOUT_FOR_SERVER_LAUNCH
         )
 
     @classmethod
@@ -69,11 +63,11 @@ class TestSessionControl(unittest.TestCase):
         rid = None
 
         # open an existing session, should get session_id as None
-        ret = requests.post(
+        response = requests.post(
             self.base_url + "/open_session",
             json={"capacity_of_str_len": 1000, "session_id": session_id},
-        )
-        self.assertNotEqual(ret.status_code, 200)
+        ).json()
+        assert isinstance(response, dict) and "error" in response
 
         first_rid = None
         outputs_from_session = []
@@ -115,7 +109,7 @@ class TestSessionControl(unittest.TestCase):
             cur_logprob_start_len += len(chunk_ids) + max_new_tokens
 
         # query with a logprob_start_len longer than the request, should see error
-        ret = requests.post(
+        response = requests.post(
             self.base_url + "/generate",
             json={
                 "input_ids": chunk_ids,
@@ -134,8 +128,8 @@ class TestSessionControl(unittest.TestCase):
                 "return_logprob": True,
                 "logprob_start_len": cur_logprob_start_len + len(chunk_ids),
             },
-        )
-        self.assertNotEqual(ret.status_code, 200)
+        ).json()
+        assert "Request with a lower logprob_start_len" in response["error"]["message"]
 
         # backtrack to the first request and regenerate
         cur_logprob_start_len = 0
@@ -168,7 +162,7 @@ class TestSessionControl(unittest.TestCase):
         )
 
         # query with a non-existing rid (the last one should be disappeared because of backtrack), should see abort
-        ret = requests.post(
+        response = requests.post(
             self.base_url + "/generate",
             json={
                 "input_ids": chunks_ids[-1],
@@ -186,17 +180,17 @@ class TestSessionControl(unittest.TestCase):
                 },
                 "return_logprob": True,
             },
-        )
-        self.assertNotEqual(ret.status_code, 200)
+        ).json()
+        assert response["meta_info"]["finish_reason"]["type"] == "abort"
 
         ret = requests.post(
             self.base_url + "/close_session",
             json={"session_id": session_id},
         )
-        self.assertEqual(ret.status_code, 200)
+        assert ret.status_code == 200
 
         # send a request to a closed session, should see abort
-        ret = requests.post(
+        response = requests.post(
             self.base_url + "/generate",
             json={
                 "input_ids": chunks_ids[-1],
@@ -214,8 +208,8 @@ class TestSessionControl(unittest.TestCase):
                 },
                 "return_logprob": True,
             },
-        )
-        self.assertNotEqual(ret.status_code, 200)
+        ).json()
+        assert response["meta_info"]["finish_reason"]["type"] == "abort"
 
         # 2. not use session control
         requests.post(self.base_url + "/flush_cache")
@@ -282,7 +276,7 @@ class TestSessionControl(unittest.TestCase):
         print(outputs_from_session)
         print("outputs from normal queries:")
         print(outputs_normal)
-        self.assertEqual(outputs_from_session, outputs_normal)
+        assert outputs_from_session == outputs_normal
         print("logprobs from chunked queries with session control:")
         print(logprobs_from_session)
         print("logprobs from normal queries:")
@@ -291,7 +285,7 @@ class TestSessionControl(unittest.TestCase):
             logprobs_normal
         ), "logprobs must have equal length"
         for a, b in zip(logprobs_from_session, logprobs_normal):
-            assert abs(a - b) <= 0.15, f"logprobs {a} and {b} differ by more than 0.15"
+            assert abs(a - b) <= 0.1, f"logprobs {a} and {b} differ by more than 0.1"
 
     async def async_generate(self, payload):
         url = self.base_url + "/generate"
@@ -424,7 +418,6 @@ class TestSessionControl(unittest.TestCase):
                 second_output == output_no_session
             ), f"second_output: {second_output}, output_no_session: {output_no_session}"
 
-    @unittest.skip("broken")
     def test_session_control_backtrack_with_abort(self):
         asyncio.run(self.run_session_control_backtrack_with_abort(replace=True))
         asyncio.run(self.run_session_control_backtrack_with_abort(replace=False))
@@ -568,7 +561,6 @@ class TestSessionControl(unittest.TestCase):
         )
 
 
-@unittest.skip("broken")
 class TestSessionControlVision(CustomTestCase):
     @classmethod
     def setUpClass(cls):
@@ -599,8 +591,8 @@ class TestSessionControlVision(CustomTestCase):
             "https://raw.githubusercontent.com/sgl-project/sglang/main/assets/logo.png",
         ]
 
-        self.assertEqual(
-            len(text_chunks), len(image_chunks) + 2
+        assert (
+            len(text_chunks) == len(image_chunks) + 2
         )  # the first and the last prompt does not contain images
         tokenizer = get_tokenizer(self.model)
         text_input_ids = [tokenizer.encode(x) for x in text_chunks]
@@ -618,11 +610,11 @@ class TestSessionControlVision(CustomTestCase):
         rid = None
 
         # open an existing session, should get session_id as None
-        ret = requests.post(
+        response = requests.post(
             self.base_url + "/open_session",
             json={"capacity_of_str_len": 1000, "session_id": session_id},
-        )
-        self.assertNotEqual(ret.status_code, 200)
+        ).json()
+        assert isinstance(response, dict) and "error" in response
 
         first_rid = None
         outputs_from_session = []
@@ -677,7 +669,7 @@ class TestSessionControlVision(CustomTestCase):
         outputs_from_session.append(response["text"])
 
         # query with a non-existing rid (the last one should be disappeared because of backtrack), should see abort
-        ret = requests.post(
+        response = requests.post(
             self.base_url + "/generate",
             json={
                 "input_ids": text_input_ids[-1],
@@ -694,17 +686,17 @@ class TestSessionControlVision(CustomTestCase):
                     "skip_special_tokens": False,
                 },
             },
-        )
-        self.assertNotEqual(ret.status_code, 200)
+        ).json()
+        assert response["meta_info"]["finish_reason"]["type"] == "abort"
 
         ret = requests.post(
             self.base_url + "/close_session",
             json={"session_id": session_id},
         )
-        self.assertEqual(ret.status_code, 200)
+        assert ret.status_code == 200
 
         # send a request to a closed session, should see abort
-        ret = requests.post(
+        response = requests.post(
             self.base_url + "/generate",
             json={
                 "input_ids": text_input_ids[-1],
@@ -721,8 +713,8 @@ class TestSessionControlVision(CustomTestCase):
                     "skip_special_tokens": False,
                 },
             },
-        )
-        self.assertNotEqual(ret.status_code, 200)
+        ).json()
+        assert response["meta_info"]["finish_reason"]["type"] == "abort"
 
         # 2. not use session control
         requests.post(self.base_url + "/flush_cache")

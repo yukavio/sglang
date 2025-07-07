@@ -6,7 +6,7 @@ from sglang.test.test_utils import CustomTestCase, is_in_ci, run_bench_one_batch
 class TestDummyGrok1(CustomTestCase):
 
     def test_dummy_grok_1(self):
-        _, output_throughput, _ = run_bench_one_batch(
+        output_throughput = run_bench_one_batch(
             None,
             [
                 "--model",

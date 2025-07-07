@@ -56,30 +56,22 @@ def multi_process_parallel(
 
 
 class TestCustomAllReduce(CustomTestCase):
-    TEST_SIZES = [
-        512,
-        4096,
-        32768,
-        262144,
-        2097152,
-        16777216,
-        33554432,
-    ]  # 512B...32MB
-    WORLD_SIZES = [2, 4, 6, 8]
-    TEST_LOOP = 10
-
     @classmethod
     def setUpClass(cls):
-        random.seed(42)  # keep the deterministic seed
+        random.seed(42)
+        # 512B to 32MB
+        cls.test_sizes = [512, 4096, 32768, 262144, 2097152, 16777216, 33554432]
+        cls.world_sizes = [2, 4, 6, 8]
+        cls.test_loop = 10
 
     def test_graph_allreduce(self):
-        for world_size in self.WORLD_SIZES:
+        for world_size in self.world_sizes:
             if world_size > torch.cuda.device_count():
                 continue
             multi_process_parallel(world_size, self, self.graph_allreduce)
 
     def test_eager_allreduce(self):
-        for world_size in self.WORLD_SIZES:
+        for world_size in self.world_sizes:
             if world_size > torch.cuda.device_count():
                 continue
             multi_process_parallel(world_size, self, self.eager_allreduce)
@@ -110,9 +102,9 @@ class TestCustomAllReduce(CustomTestCase):
         torch.cuda.synchronize()
         del data
 
-        for sz in self.TEST_SIZES:
+        for sz in self.test_sizes:
             for dtype in [torch.float32, torch.float16, torch.bfloat16]:
-                for _ in range(self.TEST_LOOP):
+                for _ in range(self.test_loop):
                     with graph_capture() as graph_capture_context:
                         # use integers so result matches NCCL exactly
                         inp1 = torch.randint(
@@ -159,9 +151,9 @@ class TestCustomAllReduce(CustomTestCase):
         initialize_model_parallel(tensor_model_parallel_size=world_size)
         group = get_tensor_model_parallel_group().device_group
 
-        for sz in self.TEST_SIZES:
+        for sz in self.test_sizes:
             for dtype in [torch.float32, torch.float16, torch.bfloat16]:
-                for _ in range(self.TEST_LOOP):
+                for _ in range(self.test_loop):
                     inp1 = torch.randint(
                         1, 16, (sz,), dtype=dtype, device=torch.cuda.current_device()
                     )
