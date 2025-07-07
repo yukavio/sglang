@@ -12,7 +12,7 @@ concurrency:
 jobs:
   build-test:
     if: github.event_name == 'pull_request'
-    runs-on: sglang-pvc
+    runs-on: sgl-kernel-release-node
     strategy:
       matrix:
         build_type: ['all']

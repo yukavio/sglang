@@ -182,7 +182,6 @@ def ep_moe(
         end_expert_id,
         top_k,
         hidden_states.size(1),
-        0,
         BLOCK_SIZE=512,
     )
     return output

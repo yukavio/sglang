@@ -17,7 +17,6 @@ from sglang.srt.distributed import (
     tensor_model_parallel_all_gather,
     tensor_model_parallel_all_reduce,
 )
-from sglang.srt.layers.amx_utils import _amx_process_weight_after_loading
 from sglang.srt.layers.parameter import (
     BasevLLMParameter,
     BlockQuantScaleParameter,
@@ -31,12 +30,7 @@ from sglang.srt.layers.quantization.base_config import (
     QuantizationConfig,
     QuantizeMethodBase,
 )
-from sglang.srt.utils import (
-    cpu_has_amx_support,
-    is_cpu,
-    set_weight_attrs,
-    use_intel_amx_backend,
-)
+from sglang.srt.utils import set_weight_attrs
 
 logger = logging.getLogger(__name__)
 
@@ -57,9 +51,6 @@ WEIGHT_LOADER_V2_SUPPORTED = [
     "ModelOptFp4LinearMethod",
     "IPEXAWQLinearMethod",
 ]
-
-_is_cpu_amx_available = cpu_has_amx_support()
-_is_cpu = is_cpu()
 
 
 def adjust_marlin_shard(param, shard_size, shard_offset):
@@ -174,21 +165,12 @@ class UnquantizedLinearMethod(LinearMethodBase):
         layer.register_parameter("weight", weight)
         set_weight_attrs(weight, extra_weight_attrs)
 
-    def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
-        if _is_cpu and _is_cpu_amx_available:
-            _amx_process_weight_after_loading(layer, ["weight"])
-
     def apply(
         self,
         layer: torch.nn.Module,
         x: torch.Tensor,
         bias: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-
-        if use_intel_amx_backend(layer):
-            return torch.ops.sgl_kernel.weight_packed_linear(
-                x, layer.weight, bias, True  # is_vnni
-            )
 
         return F.linear(x, layer.weight, bias)
 
@@ -426,26 +408,8 @@ class ColumnParallelLinear(LinearBase):
         if output_dim is not None and not use_bitsandbytes_4bit:
             shard_size = param_data.shape[output_dim]
             start_idx = self.tp_rank * shard_size
-
-            if _is_cpu:
-                from sglang.srt.model_loader.weight_utils import (
-                    narrow_padded_param_and_loaded_weight,
-                )
-
-                param_data, loaded_weight = narrow_padded_param_and_loaded_weight(
-                    param_data,
-                    loaded_weight,
-                    0,  # param_data_start
-                    start_idx,
-                    output_dim,
-                    shard_size,
-                    not self.use_presharded_weights,
-                )
-            else:
-                if not self.use_presharded_weights:
-                    loaded_weight = loaded_weight.narrow(
-                        output_dim, start_idx, shard_size
-                    )
+            if not self.use_presharded_weights:
+                loaded_weight = loaded_weight.narrow(output_dim, start_idx, shard_size)
 
         # Special case for loading scales off disk, which often do not
         # have a shape (such as in the case of AutoFP8).
@@ -662,29 +626,10 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
 
             param_data = param_data.narrow(output_dim, shard_offset, shard_size)
             start_idx = self.tp_rank * shard_size
-
-            if _is_cpu:
-                from sglang.srt.model_loader.weight_utils import (
-                    narrow_padded_param_and_loaded_weight,
-                )
-
-                param_data, loaded_weight = narrow_padded_param_and_loaded_weight(
-                    param_data,
-                    loaded_weight,
-                    0,  # param_data_start
-                    start_idx,
-                    output_dim,
-                    shard_size,
-                    not use_bitsandbytes_4bit and not self.use_presharded_weights,
-                )
-            else:
-                # bitsandbytes loads the weights of the specific portion
-                # no need to narrow here
-                if not use_bitsandbytes_4bit and not self.use_presharded_weights:
-                    loaded_weight = loaded_weight.narrow(
-                        output_dim, start_idx, shard_size
-                    )
-
+            # bitsandbytes loads the weights of the specific portion
+            # no need to narrow here
+            if not use_bitsandbytes_4bit and not self.use_presharded_weights:
+                loaded_weight = loaded_weight.narrow(output_dim, start_idx, shard_size)
         # Special case for AQLM codebooks.
         elif is_metadata:
             # metadata indicates fixed size concatenated along dim 0
@@ -1149,27 +1094,10 @@ class QKVParallelLinear(ColumnParallelLinear):
                 shard_id = self.tp_rank // self.num_kv_head_replicas
             start_idx = shard_id * shard_size
 
-            if _is_cpu:
-                from sglang.srt.model_loader.weight_utils import (
-                    narrow_padded_param_and_loaded_weight,
-                )
-
-                param_data, loaded_weight = narrow_padded_param_and_loaded_weight(
-                    param_data,
-                    loaded_weight,
-                    0,  # param_data_start
-                    start_idx,
-                    output_dim,
-                    shard_size,
-                    not use_bitsandbytes_4bit and not self.use_presharded_weights,
-                )
-            else:
-                # bitsandbytes loads the weights of the specific portion
-                # no need to narrow here
-                if not use_bitsandbytes_4bit and not self.use_presharded_weights:
-                    loaded_weight = loaded_weight.narrow(
-                        output_dim, start_idx, shard_size
-                    )
+            # bitsandbytes loads the weights of the specific portion
+            # no need to narrow here
+            if not use_bitsandbytes_4bit and not self.use_presharded_weights:
+                loaded_weight = loaded_weight.narrow(output_dim, start_idx, shard_size)
 
         # Special case for for AQLM codebooks.
         elif is_metadata:
@@ -1311,22 +1239,7 @@ class RowParallelLinear(LinearBase):
         ):
             shard_size = param_data.shape[input_dim]
             start_idx = self.tp_rank * shard_size
-
-            if _is_cpu:
-                from sglang.srt.model_loader.weight_utils import (
-                    narrow_padded_param_and_loaded_weight,
-                )
-
-                param_data, loaded_weight = narrow_padded_param_and_loaded_weight(
-                    param_data,
-                    loaded_weight,
-                    0,  # param_data_start
-                    start_idx,
-                    input_dim,
-                    shard_size,
-                )
-            else:
-                loaded_weight = loaded_weight.narrow(input_dim, start_idx, shard_size)
+            loaded_weight = loaded_weight.narrow(input_dim, start_idx, shard_size)
 
         # Special case for loading scales off disk, which often do not
         # have a shape (such as in the case of AutoFP8).

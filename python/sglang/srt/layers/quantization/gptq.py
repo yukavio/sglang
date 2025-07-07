@@ -344,10 +344,6 @@ class GPTQMarlinConfig(QuantizationConfig):
         if (num_bits, sym) not in cls.TYPE_MAP:
             return False
 
-        assert (
-            VLLM_AVAILABLE
-        ), "vllm is not installed, to use gptq_marlin, please install vllm"
-
         return check_marlin_supported(
             quant_type=cls.TYPE_MAP[(num_bits, sym)], group_size=group_size
         )
@@ -730,6 +726,6 @@ class GPTQMarlinMoEMethod(FusedMoEMethodBase):
             g_idx2=layer.w2_g_idx,
             sort_indices1=layer.w13_g_idx_sort_indices,
             sort_indices2=layer.w2_g_idx_sort_indices,
-            quant_type_id=self.quant_config.quant_type.id,
+            num_bits=self.quant_config.quant_type.size_bits,
             is_k_full=self.is_k_full,
         ).to(orig_dtype)

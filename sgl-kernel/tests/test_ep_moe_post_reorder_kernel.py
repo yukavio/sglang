@@ -85,7 +85,6 @@ def run_triton_kernel(
         end_expert_id,
         topk,
         hidden_size,
-        0,
         block_size,
     )
     return output

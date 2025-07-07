@@ -5,11 +5,7 @@ import torch
 import triton
 import triton.language as tl
 from sgl_kernel import moe_align_block_size as sgl_moe_align_block_size
-
-try:
-    from vllm import _custom_ops as ops
-except ImportError:
-    ops = None
+from vllm import _custom_ops as ops
 
 USE_RANDOM_PERM = False
 
@@ -212,7 +208,7 @@ def calculate_diff(num_tokens, num_experts=256, block_size=128, topk=8):
         )
         print(f"✅ VLLM implementation works with {num_experts} experts!")
         vllm_works = True
-    except Exception as e:
+    except RuntimeError as e:
         print(f"❌ VLLM implementation failed with {num_experts} experts: {e}")
         vllm_works = False
 
@@ -261,47 +257,13 @@ def get_topk_ids(num_tokens: int, num_experts: int, topk: int) -> torch.Tensor:
     return topk_ids
 
 
-def sgl_moe_align_block_size_with_empty(
-    topk_ids,
-    num_experts,
-    block_size,
-    sorted_ids,
-    expert_ids,
-    num_tokens_post_pad,
-    pad_sorted_token_ids=False,
-):
-    if not pad_sorted_token_ids:
-        sorted_ids.fill_(topk_ids.numel())
-
-    token_cnts_buffer = torch.empty(
-        (num_experts + 1) * num_experts,
-        dtype=torch.int32,
-        device=topk_ids.device,
-    )
-    cumsum_buffer = torch.empty(
-        num_experts + 1, dtype=torch.int32, device=topk_ids.device
-    )
-
-    sgl_moe_align_block_size(
-        topk_ids,
-        num_experts,
-        block_size,
-        sorted_ids.clone(),
-        expert_ids.clone(),
-        num_tokens_post_pad.clone(),
-        token_cnts_buffer,
-        cumsum_buffer,
-        pad_sorted_token_ids,
-    )
-
-
 @triton.testing.perf_report(
     triton.testing.Benchmark(
         x_names=["num_tokens", "num_experts", "topk"],
         x_vals=configs,
         line_arg="provider",
-        line_vals=["sgl", "sgl_fusion", "triton"],
-        line_names=["SGL", "SGL Fusion", "Triton"],
+        line_vals=["sgl", "triton", "vllm"],
+        line_names=["SGL", "Triton", "VLLM"],
         styles=[("blue", "-"), ("red", "-"), ("green", "-")],
         ylabel="us",
         plot_name="moe-align-block-size-performance",
@@ -326,6 +288,7 @@ def benchmark(num_tokens, num_experts, topk, provider):
     sorted_ids = torch.empty(
         (max_num_tokens_padded,), dtype=torch.int32, device=topk_ids.device
     )
+    sorted_ids.fill_(topk_ids.numel())
     max_num_m_blocks = max_num_tokens_padded // block_size
     expert_ids = torch.empty(
         (max_num_m_blocks,), dtype=torch.int32, device=topk_ids.device
@@ -334,6 +297,35 @@ def benchmark(num_tokens, num_experts, topk, provider):
 
     quantiles = [0.5, 0.2, 0.8]
     if provider == "sgl":
+
+        def sgl_moe_align_block_size_with_empty(
+            topk_ids,
+            num_experts,
+            block_size,
+            sorted_ids,
+            expert_ids,
+            num_tokens_post_pad,
+        ):
+            token_cnts_buffer = torch.empty(
+                (num_experts + 1) * num_experts,
+                dtype=torch.int32,
+                device=topk_ids.device,
+            )
+            cumsum_buffer = torch.empty(
+                num_experts + 1, dtype=torch.int32, device=topk_ids.device
+            )
+
+            sgl_moe_align_block_size(
+                topk_ids,
+                num_experts,
+                block_size,
+                sorted_ids.clone(),
+                expert_ids.clone(),
+                num_tokens_post_pad.clone(),
+                token_cnts_buffer,
+                cumsum_buffer,
+            )
+
         ms, min_ms, max_ms = triton.testing.do_bench(
             lambda: sgl_moe_align_block_size_with_empty(
                 topk_ids,
@@ -342,24 +334,10 @@ def benchmark(num_tokens, num_experts, topk, provider):
                 sorted_ids,
                 expert_ids,
                 num_tokens_post_pad,
-            ),
-            quantiles=quantiles,
-        )
-    elif provider == "sgl_fusion":
-        ms, min_ms, max_ms = triton.testing.do_bench(
-            lambda: sgl_moe_align_block_size_with_empty(
-                topk_ids,
-                num_experts,
-                block_size,
-                sorted_ids,
-                expert_ids,
-                num_tokens_post_pad,
-                pad_sorted_token_ids=True,
             ),
             quantiles=quantiles,
         )
     elif provider == "triton":
-        sorted_ids.fill_(topk_ids.numel())
         ms, min_ms, max_ms = triton.testing.do_bench(
             lambda: moe_align_block_size_triton(
                 topk_ids,
@@ -371,6 +349,23 @@ def benchmark(num_tokens, num_experts, topk, provider):
             ),
             quantiles=quantiles,
         )
+    else:  # vllm
+        try:
+            ms, min_ms, max_ms = triton.testing.do_bench(
+                lambda: ops.moe_align_block_size(
+                    topk_ids,
+                    num_experts,
+                    block_size,
+                    sorted_ids.clone(),
+                    expert_ids.clone(),
+                    num_tokens_post_pad.clone(),
+                ),
+                quantiles=quantiles,
+            )
+        except RuntimeError as e:
+            print(f"❌ VLLM benchmark failed with {num_experts} experts: {e}")
+            # Return extreme values to indicate failure in the chart
+            return float("inf"), float("inf"), float("inf")
 
     return 1000 * ms, 1000 * max_ms, 1000 * min_ms
 

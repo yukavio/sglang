@@ -13,7 +13,7 @@
 # ==============================================================================
 """Inference-only Mistral model."""
 
-from typing import List
+from typing import List, Union
 
 import torch
 from transformers.models.mistral3.modeling_mistral3 import Mistral3MultiModalProjector

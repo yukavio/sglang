@@ -38,7 +38,6 @@ class BenchArgs:
     output_len: Tuple[int] = (16,)
     temperature: float = 0.0
     return_logprob: bool = False
-    client_stream_interval: int = 1
     input_len_step_percentage: float = 0.0
     result_filename: str = "result.jsonl"
     base_url: str = ""
@@ -61,11 +60,6 @@ class BenchArgs:
         )
         parser.add_argument("--temperature", type=float, default=BenchArgs.temperature)
         parser.add_argument("--return-logprob", action="store_true")
-        parser.add_argument(
-            "--client-stream-interval",
-            type=int,
-            default=BenchArgs.client_stream_interval,
-        )
         parser.add_argument(
             "--input-len-step-percentage",
             type=float,
@@ -126,7 +120,6 @@ def run_one_case(
     output_len: int,
     temperature: float,
     return_logprob: bool,
-    stream_interval: int,
     input_len_step_percentage: float,
     run_name: str,
     result_filename: str,
@@ -175,7 +168,6 @@ def run_one_case(
                 "max_new_tokens": output_len,
                 "ignore_eos": True,
                 "json_schema": json_schema,
-                "stream_interval": stream_interval,
             },
             "return_logprob": return_logprob,
             "stream": True,
@@ -253,12 +245,8 @@ def run_benchmark(server_args: ServerArgs, bench_args: BenchArgs):
     else:
         proc, base_url = launch_server_process(server_args)
 
-    server_info = requests.get(base_url + "/get_server_info").json()
-    if "tokenizer_path" in server_info:
-        tokenizer_path = server_info["tokenizer_path"]
-    elif "prefill" in server_info:
-        tokenizer_path = server_info["prefill"][0]["tokenizer_path"]
-    tokenizer = get_tokenizer(tokenizer_path)
+    tokenizer_id = server_args.tokenizer_path or server_args.model_path
+    tokenizer = get_tokenizer(tokenizer_id)
 
     # warmup
     if not bench_args.skip_warmup:
@@ -270,7 +258,6 @@ def run_benchmark(server_args: ServerArgs, bench_args: BenchArgs):
             output_len=16,
             temperature=bench_args.temperature,
             return_logprob=bench_args.return_logprob,
-            stream_interval=bench_args.client_stream_interval,
             input_len_step_percentage=bench_args.input_len_step_percentage,
             run_name="",
             result_filename="",
@@ -293,7 +280,6 @@ def run_benchmark(server_args: ServerArgs, bench_args: BenchArgs):
                     ol,
                     temperature=bench_args.temperature,
                     return_logprob=bench_args.return_logprob,
-                    stream_interval=bench_args.client_stream_interval,
                     input_len_step_percentage=bench_args.input_len_step_percentage,
                     run_name=bench_args.run_name,
                     result_filename=bench_args.result_filename,
@@ -315,7 +301,6 @@ def run_benchmark(server_args: ServerArgs, bench_args: BenchArgs):
                                 ol,
                                 temperature=bench_args.temperature,
                                 return_logprob=bench_args.return_logprob,
-                                stream_interval=bench_args.client_stream_interval,
                                 input_len_step_percentage=bench_args.input_len_step_percentage,
                                 run_name=bench_args.run_name,
                                 result_filename=bench_args.result_filename,
