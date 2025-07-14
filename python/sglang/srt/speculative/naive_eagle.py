@@ -175,23 +175,22 @@ class NaiveEagleWorker(TpModelWorker):
     def init_cuda_graphs(self):
         """Capture cuda graphs."""
         self.cuda_graph_runner = None
-        self.cuda_graph_runner_for_draft_extend = None
+        self.cuda_graph_mem_usage = 0
 
-        # self.server_args.disable_cuda_graph = True
         if self.server_args.disable_cuda_graph:
-            logger.info("Eagle Cuda Graph is disabled")
             return
 
-        # Capture draft
-        tic = time.time()
+        tic = time.perf_counter()
         before_mem = get_available_gpu_memory(self.device, self.gpu_id)
         logger.info(
-            f"Capture draft cuda graph begin. This can take up to several minutes. avail mem={before_mem:.2f} GB"
+            f"Capture cuda graph begin. This can take up to several minutes. avail mem={before_mem:.2f} GB"
         )
         self.cuda_graph_runner = NaiveEAGLECudaGraphRunner(self)
         after_mem = get_available_gpu_memory(self.device, self.gpu_id)
+        self.cuda_graph_mem_usage = before_mem - after_mem
         logger.info(
-            f"Capture draft cuda graph end. Time elapsed: {time.time() - tic:.2f} s. avail mem={after_mem:.2f} GB. mem usage={(before_mem - after_mem):.2f} GB."
+            f"Capture cuda graph end. Time elapsed: {time.perf_counter() - tic:.2f} s. "
+            f"mem usage={self.cuda_graph_mem_usage:.2f} GB. avail mem={after_mem:.2f} GB."
         )
 
     @property
@@ -260,6 +259,7 @@ class NaiveEagleWorker(TpModelWorker):
             forward_batch,
             1,
         )
+        forward_batch.seq_lens_sum = sum(forward_batch.seq_lens)
         forward_batch.spec_info.capture_hidden_mode = CaptureHiddenMode.FULL
         forward_batch.return_logprob = False
         forward_batch.req_to_token_pool = self.draft_model_runner.req_to_token_pool

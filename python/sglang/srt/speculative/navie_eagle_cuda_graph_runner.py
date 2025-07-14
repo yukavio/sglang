@@ -45,6 +45,12 @@ if TYPE_CHECKING:
 
 if is_cuda():
     from sgl_kernel import top_k_renorm_prob, top_p_renorm_prob
+from sglang.srt.utils import (
+    require_attn_tp_gather,
+    require_gathered_buffer,
+    require_mlp_sync,
+    require_mlp_tp_gather,
+)
 
 
 class NaiveEAGLECudaGraphRunner:
@@ -56,15 +62,18 @@ class NaiveEAGLECudaGraphRunner:
     ):
         # Parse args
         self.model_runner = eagle_worker.target_worker.model_runner
-        self.draft_model_runner = eagle_worker.model_runner
+        self.draft_model_runner = model_runner = eagle_worker.model_runner
         self.requests_all_greedy = eagle_worker.requests_all_greedy
         self.graphs = {}
         self.output_buffers = {}
         self.enable_torch_compile = self.model_runner.server_args.enable_torch_compile
         self.disable_padding = self.model_runner.server_args.disable_cuda_graph_padding
         self.is_encoder_decoder = self.model_runner.model_config.is_encoder_decoder
+        self.require_gathered_buffer = require_gathered_buffer(model_runner.server_args)
+        self.require_mlp_tp_gather = require_mlp_tp_gather(model_runner.server_args)
+        self.require_mlp_sync = require_mlp_sync(model_runner.server_args)
+        self.require_attn_tp_gather = require_attn_tp_gather(model_runner.server_args)
         self.enable_dp_attention = self.model_runner.server_args.enable_dp_attention
-        self.enable_sp_layernorm = self.model_runner.server_args.enable_sp_layernorm
         self.speculative_algorithm = self.model_runner.server_args.speculative_algorithm
         self.tp_size = self.model_runner.server_args.tp_size
         self.dp_size = self.model_runner.server_args.dp_size
@@ -81,8 +90,12 @@ class NaiveEAGLECudaGraphRunner:
         # Attention backend
         self.max_bs = max(self.capture_bs)
         self.max_num_token = self.max_bs * self.num_tokens_per_bs
-        self.model_runner.attn_backend.init_cuda_graph_state(self.max_num_token)
-        self.draft_model_runner.attn_backend.init_cuda_graph_state(self.max_num_token)
+        self.model_runner.attn_backend.init_cuda_graph_state(
+            self.max_bs, self.max_num_token
+        )
+        self.draft_model_runner.attn_backend.init_cuda_graph_state(
+            self.max_bs, self.max_num_token
+        )
         self.seq_len_fill_value = (
             self.model_runner.attn_backend.get_cuda_graph_seq_len_fill_value()
         )
@@ -366,10 +379,13 @@ class NaiveEAGLECudaGraphRunner:
         raw_num_token = raw_bs * self.num_tokens_per_bs
 
         # Pad
-        if self.enable_dp_attention or self.enable_sp_layernorm:
-            index = bisect.bisect_left(
-                self.capture_bs, sum(forward_batch.global_num_tokens_cpu)
+        if self.require_mlp_tp_gather:
+            total_batch_size = (
+                sum(forward_batch.global_num_tokens_cpu) // self.num_tokens_per_bs
+                if self.model_runner.spec_algorithm.is_eagle()
+                else sum(forward_batch.global_num_tokens_cpu)
             )
+            index = bisect.bisect_left(self.capture_bs, total_batch_size)
         else:
             index = bisect.bisect_left(self.capture_bs, raw_bs)
         bs = self.capture_bs[index]
@@ -396,8 +412,6 @@ class NaiveEAGLECudaGraphRunner:
             self.encoder_lens[:raw_bs].copy_(forward_batch.encoder_lens)
         if forward_batch.mrope_positions is not None:
             self.mrope_positions[:, :raw_bs].copy_(forward_batch.mrope_positions)
-        if self.enable_dp_attention or self.enable_sp_layernorm:
-            self.global_num_tokens_gpu.copy_(forward_batch.global_num_tokens_gpu)
 
         if hasattr(forward_batch.spec_info, "hidden_states"):
             self.hidden_states[:raw_num_token] = forward_batch.spec_info.hidden_states
