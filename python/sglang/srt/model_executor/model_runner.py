@@ -314,6 +314,8 @@ class ModelRunner:
 
             # NOTE: hard code, we init target model cuda graphs in naive_eagle
             if self.spec_algorithm.is_naive_eagle():
+                self.cuda_graph_runner = None
+                self.cuda_graph_mem_usage = 0
                 logger.info("We init target model cuda graphs in naive eagle....")
             else:
                 self.init_cuda_graphs()
@@ -1268,10 +1270,29 @@ class ModelRunner:
                     FlashInferAttnBackend,
                 )
 
+                kv_indptr_buf = None
+                kv_last_page_len_buf = None
                 # Init streams
                 if self.server_args.speculative_algorithm in ["EAGLE", "NAIVE_EAGLE"]:
                     self.plan_stream_for_flashinfer = torch.cuda.Stream()
-                return FlashInferAttnBackend(self)
+
+                    # NOTE: Add for setting max-running-requests. If max-running-requests <= cuda graph capture bs, it will raise error.
+                    if self.server_args.speculative_algorithm == "NAIVE_EAGLE":
+                        kv_indptr_buf = torch.zeros(
+                            (self.req_to_token_pool.size * 2 + 1,),
+                            dtype=torch.int32,
+                            device=self.device,
+                        )
+                        kv_last_page_len_buf = torch.ones(
+                            (self.req_to_token_pool.size * 2,),
+                            dtype=torch.int32,
+                            device=self.device,
+                        )
+                return FlashInferAttnBackend(
+                    self,
+                    kv_indptr_buf=kv_indptr_buf,
+                    kv_last_page_len_buf=kv_last_page_len_buf,
+                )
             else:
                 from sglang.srt.layers.attention.flashinfer_mla_backend import (
                     FlashInferMLAAttnBackend,
