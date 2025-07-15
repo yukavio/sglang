@@ -233,11 +233,11 @@ class NaiveEagleWorker(TpModelWorker):
         self, forward_batch: ForwardBatch, accept_index
     ):
         # Prepare metadata
-        forward_batch.forward_mode = ForwardMode.NAIVE_DRAFT_EXTEND
         forward_batch.spec_info.prepare_extend_after_decode(
             forward_batch,
             1,
         )
+        forward_batch.forward_mode = ForwardMode.NAIVE_DRAFT_EXTEND
         forward_batch.spec_info.capture_hidden_mode = CaptureHiddenMode.FULL
         forward_batch.return_logprob = False
         forward_batch.req_to_token_pool = self.draft_model_runner.req_to_token_pool
