@@ -53,28 +53,6 @@ def draft_tp_context(tp_group: GroupCoordinator):
         yield
 
 
-import triton
-import triton.language as tl
-
-
-@triton.jit
-def create_extend_spec_info(
-    seq_len,
-    accept_len,
-    accept_len_cum,
-    positions,
-    accept_len_upper: tl.constexpr,  # 1
-):
-    pid = tl.program_id(axis=0)
-    offset = 0 if pid == 0 else tl.load(accept_len_cum + pid - 1)
-    seq_length = tl.load(seq_len + pid)
-    accept_length = tl.load(accept_len + pid)  # 1
-    positions_ptr = positions + offset
-    data = tl.arange(0, accept_len_upper)
-    mask = data < accept_length
-    tl.store(positions_ptr + data, seq_length - accept_length + data, mask)
-
-
 class NaiveEagleWorker(TpModelWorker):
 
     def __init__(
@@ -254,11 +232,11 @@ class NaiveEagleWorker(TpModelWorker):
         self, forward_batch: ForwardBatch, accept_index
     ):
         # Prepare metadata
-        forward_batch.forward_mode = ForwardMode.NAIVE_DRAFT_EXTEND
         forward_batch.spec_info.prepare_extend_after_decode(
             forward_batch,
             1,
         )
+        forward_batch.forward_mode = ForwardMode.NAIVE_DRAFT_EXTEND
         forward_batch.seq_lens_sum = sum(forward_batch.seq_lens)
         forward_batch.spec_info.capture_hidden_mode = CaptureHiddenMode.FULL
         forward_batch.return_logprob = False
