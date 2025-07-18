@@ -34,11 +34,11 @@ prefill_tolerance = 5e-2
 decode_tolerance: float = 5e-2
 
 
-class TestNaiveEAGLEEngine(CustomTestCase):
+class TestSimpleEAGLEEngine(CustomTestCase):
     BASE_CONFIG = {
         "model_path": DEFAULT_EAGLE_TARGET_MODEL_FOR_TEST,
         "speculative_draft_model_path": DEFAULT_EAGLE_DRAFT_MODEL_FOR_TEST,
-        "speculative_algorithm": "NAIVE_EAGLE",
+        "speculative_algorithm": "SIMPLE_EAGLE",
         "mem_fraction_static": 0.7,
         "cuda_graph_max_bs": 4,
         # "disable_cuda_graph": True,
@@ -147,7 +147,7 @@ class TestNaiveEAGLEEngine(CustomTestCase):
             self.assertGreater(acc_length, 1.25)
 
 
-class TestNaiveEAGLEServer(CustomTestCase):
+class TestSimpleEAGLEServer(CustomTestCase):
     PROMPTS = [
         "[INST] <<SYS>>\\nYou are a helpful assistant.\\n<</SYS>>\\nToday is a sunny day and I like[/INST]"
         '[INST] <<SYS>>\\nYou are a helpful assistant.\\n<</SYS>>\\nWhat are the mental triggers in Jeff Walker\'s Product Launch Formula and "Launch" book?[/INST]',
@@ -165,7 +165,7 @@ class TestNaiveEAGLEServer(CustomTestCase):
             timeout=DEFAULT_TIMEOUT_FOR_SERVER_LAUNCH,
             other_args=[
                 "--speculative-algorithm",
-                "NAIVE_EAGLE",
+                "SIMPLE_EAGLE",
                 "--speculative-draft-model-path",
                 DEFAULT_EAGLE_DRAFT_MODEL_FOR_TEST,
                 "--mem-fraction-static",
@@ -459,7 +459,7 @@ class TestNaiveEAGLEServer(CustomTestCase):
             list(executor.map(self.run_decode, args))
 
 
-class TestNaiveEAGLERetract(TestNaiveEAGLEServer):
+class TestSimpleEAGLERetract(TestSimpleEAGLEServer):
     @classmethod
     def setUpClass(cls):
         # These config helps find a leak.
@@ -471,7 +471,7 @@ class TestNaiveEAGLERetract(TestNaiveEAGLEServer):
             timeout=DEFAULT_TIMEOUT_FOR_SERVER_LAUNCH,
             other_args=[
                 "--speculative-algorithm",
-                "NAIVE_EAGLE",
+                "SIMPLE_EAGLE",
                 "--speculative-draft-model-path",
                 DEFAULT_EAGLE_DRAFT_MODEL_FOR_TEST,
                 "--mem-fraction-static",

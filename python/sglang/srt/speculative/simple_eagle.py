@@ -27,8 +27,8 @@ from sglang.srt.speculative.eagle_utils import (
     assign_req_to_token_pool,
     create_draft_kv_indices,
 )
-from sglang.srt.speculative.navie_eagle_cuda_graph_runner import (
-    NaiveEAGLECudaGraphRunner,
+from sglang.srt.speculative.simple_eagle_cuda_graph_runner import (
+    SimpleEAGLECudaGraphRunner,
 )
 from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
 from sglang.srt.utils import (
@@ -53,7 +53,7 @@ def draft_tp_context(tp_group: GroupCoordinator):
         yield
 
 
-class NaiveEagleWorker(TpModelWorker):
+class SimpleEagleWorker(TpModelWorker):
 
     def __init__(
         self,
@@ -163,7 +163,7 @@ class NaiveEagleWorker(TpModelWorker):
         logger.info(
             f"Capture cuda graph begin. This can take up to several minutes. avail mem={before_mem:.2f} GB"
         )
-        self.cuda_graph_runner = NaiveEAGLECudaGraphRunner(self)
+        self.cuda_graph_runner = SimpleEAGLECudaGraphRunner(self)
         after_mem = get_available_gpu_memory(self.device, self.gpu_id)
         self.cuda_graph_mem_usage = before_mem - after_mem
         logger.info(
@@ -236,7 +236,7 @@ class NaiveEagleWorker(TpModelWorker):
             forward_batch,
             1,
         )
-        forward_batch.forward_mode = ForwardMode.NAIVE_DRAFT_EXTEND
+        forward_batch.forward_mode = ForwardMode.SIMPLE_DRAFT_EXTEND
         forward_batch.seq_lens_sum = sum(forward_batch.seq_lens)
         forward_batch.spec_info.capture_hidden_mode = CaptureHiddenMode.FULL
         forward_batch.return_logprob = False
@@ -302,7 +302,7 @@ class NaiveEagleWorker(TpModelWorker):
         forward_batch = ForwardBatch.init_new(
             model_worker_batch, self.target_worker.model_runner
         )
-        forward_batch.forward_mode = ForwardMode.NAIVE_TARGET_VERIFY
+        forward_batch.forward_mode = ForwardMode.SIMPLE_TARGET_VERIFY
 
         can_cuda_graph = self.cuda_graph_runner and self.cuda_graph_runner.can_run(
             forward_batch
