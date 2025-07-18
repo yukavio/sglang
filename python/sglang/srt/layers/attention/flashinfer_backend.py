@@ -202,11 +202,11 @@ class FlashInferAttnBackend(AttentionBackend):
     def init_forward_metadata(self, forward_batch: ForwardBatch):
         if (
             forward_batch.forward_mode.is_decode_or_idle()
-            or forward_batch.forward_mode.is_naive_verify()
+            or forward_batch.forward_mode.is_simple_verify()
         ):
             if (
-                forward_batch.forward_mode.is_naive_verify()
-                and forward_batch.naive_skip_attn_backend_init
+                forward_batch.forward_mode.is_simple_verify()
+                and forward_batch.simple_eagle_skip_attn_backend_init
             ):
                 return
 
@@ -315,7 +315,7 @@ class FlashInferAttnBackend(AttentionBackend):
         forward_mode: ForwardMode,
         spec_info: Optional[Union[EagleDraftInput, EagleVerifyInput]],
     ):
-        if forward_mode.is_decode_or_idle() or forward_mode.is_naive_verify():
+        if forward_mode.is_decode_or_idle() or forward_mode.is_simple_verify():
             decode_wrappers = []
             for i in range(self.num_wrappers):
                 decode_wrappers.append(
@@ -342,15 +342,15 @@ class FlashInferAttnBackend(AttentionBackend):
             )
             self.decode_cuda_graph_metadata[bs] = decode_wrappers
             self.forward_metadata = DecodeMetadata(decode_wrappers)
-            if not forward_mode.is_naive_verify():
+            if not forward_mode.is_simple_verify():
                 for i in range(self.num_wrappers):
                     decode_wrappers[i].begin_forward = partial(
                         fast_decode_plan, decode_wrappers[i]
                     )
-        elif forward_mode.is_target_verify() or forward_mode.is_naive_draft():
+        elif forward_mode.is_target_verify() or forward_mode.is_simple_draft():
             prefill_wrappers = []
             for i in range(self.num_wrappers):
-                if not forward_mode.is_naive_draft():
+                if not forward_mode.is_simple_draft():
                     custom_mask_buf = self.cuda_graph_custom_mask
                 else:
                     custom_mask_buf = None
@@ -424,7 +424,7 @@ class FlashInferAttnBackend(AttentionBackend):
         spec_info: Optional[Union[EagleDraftInput, EagleVerifyInput]],
         seq_lens_cpu: Optional[torch.Tensor],
     ):
-        if forward_mode.is_decode_or_idle() or forward_mode.is_naive_verify():
+        if forward_mode.is_decode_or_idle() or forward_mode.is_simple_verify():
             self.indices_updater_decode.update(
                 req_pool_indices[:bs],
                 seq_lens[:bs],
@@ -433,7 +433,7 @@ class FlashInferAttnBackend(AttentionBackend):
                 encoder_lens=encoder_lens[:bs] if encoder_lens is not None else None,
                 spec_info=spec_info,
             )
-        elif forward_mode.is_target_verify() or forward_mode.is_naive_draft():
+        elif forward_mode.is_target_verify() or forward_mode.is_simple_draft():
             self.indices_updater_prefill.update(
                 req_pool_indices[:bs],
                 seq_lens[:bs],

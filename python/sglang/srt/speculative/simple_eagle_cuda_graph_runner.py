@@ -41,7 +41,7 @@ from sglang.srt.speculative.eagle_utils import EagleDraftInput, create_draft_kv_
 from sglang.srt.utils import fast_topk, is_cuda, next_power_of_2
 
 if TYPE_CHECKING:
-    from sglang.srt.speculative.naive_eagle import NaiveEagleWorker
+    from sglang.srt.speculative.simple_eagle import SimpleEagleWorker
 
 if is_cuda():
     from sgl_kernel import top_k_renorm_prob, top_p_renorm_prob
@@ -53,12 +53,12 @@ from sglang.srt.utils import (
 )
 
 
-class NaiveEAGLECudaGraphRunner:
+class SimpleEAGLECudaGraphRunner:
     """A CudaGraphRunner runs the forward pass of a model with cuda graph and torch.compile."""
 
     def __init__(
         self,
-        eagle_worker: NaiveEagleWorker,
+        eagle_worker: SimpleEagleWorker,
     ):
         # Parse args
         self.model_runner = eagle_worker.target_worker.model_runner
@@ -85,7 +85,7 @@ class NaiveEAGLECudaGraphRunner:
         self.capture_hidden_mode = CaptureHiddenMode.NULL
 
         self.num_tokens_per_bs = 2
-        self.capture_forward_mode = ForwardMode.NAIVE_TARGET_VERIFY
+        self.capture_forward_mode = ForwardMode.SIMPLE_TARGET_VERIFY
 
         # Attention backend
         self.max_bs = max(self.capture_bs)
@@ -122,7 +122,7 @@ class NaiveEAGLECudaGraphRunner:
                 dtype=self.model_runner.dtype,
             )
 
-            # NOTE:Add for naive eagle
+            # NOTE:Add for simple eagle
             self.accept_index = torch.full((self.max_bs, 2), -1, dtype=torch.int32)
             self.accept_length = torch.zeros((self.max_bs,), dtype=torch.int32)
 
@@ -211,7 +211,7 @@ class NaiveEAGLECudaGraphRunner:
             spec_info=verify_spec_info,
             capture_hidden_mode=self.capture_hidden_mode,
             sampling_info=sampling_info,
-            naive_skip_attn_backend_init=True,
+            simple_eagle_skip_attn_backend_init=True,
         )
         draft_token_num = 2
         kv_indptr = torch.zeros(
@@ -243,7 +243,7 @@ class NaiveEAGLECudaGraphRunner:
         accept_length = self.accept_length[:bs]
         draft_spec_info.accept_length = accept_length + 2
 
-        forward_batch.forward_mode = ForwardMode.NAIVE_DRAFT_EXTEND
+        forward_batch.forward_mode = ForwardMode.SIMPLE_DRAFT_EXTEND
         forward_batch.spec_info = draft_spec_info
         self.draft_model_runner.attn_backend.init_forward_metadata_capture_cuda_graph(
             bs,
@@ -461,7 +461,7 @@ class NaiveEAGLECudaGraphRunner:
         )  # always 2 tokens
         draft_input.accept_length = accept_length_for_draft_extend
         # Draft Attention backend
-        forward_batch.forward_mode = ForwardMode.NAIVE_DRAFT_EXTEND
+        forward_batch.forward_mode = ForwardMode.SIMPLE_DRAFT_EXTEND
         forward_batch.spec_info = draft_input
 
         self.draft_model_runner.attn_backend.init_forward_metadata_replay_cuda_graph(
@@ -531,7 +531,7 @@ class NaiveEAGLECudaGraphRunner:
     def get_spec_info(self):
         verify_spec_info = None
         draft_spec_info = None
-        if self.model_runner.spec_algorithm.is_naive_eagle():
+        if self.model_runner.spec_algorithm.is_simple_eagle():
             from sglang.srt.speculative.eagle_utils import (
                 EagleDraftInput,
                 EagleVerifyInput,
@@ -567,8 +567,8 @@ class NaiveEAGLECudaGraphRunner:
         self, forward_batch: ForwardBatch, accept_index
     ):
         # Prepare metadata
-        forward_batch.forward_mode = ForwardMode.NAIVE_DRAFT_EXTEND
-        forward_batch.spec_info.prepare_extend_after_decode_for_naive_eagle(
+        forward_batch.forward_mode = ForwardMode.SIMPLE_DRAFT_EXTEND
+        forward_batch.spec_info.prepare_extend_after_decode_for_simple_eagle(
             forward_batch,
             1,
         )
