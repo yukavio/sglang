@@ -1,6 +1,6 @@
 """
 Usage:
-python3 offline_batch_inference.py  --model meta-llama/Llama-3.1-8B-Instruct
+python3 offline_batch_inference.py  --model Qwen/Qwen3-4B
 """
 
 import argparse
@@ -14,14 +14,11 @@ def main(
     server_args: ServerArgs,
 ):
     # Sample prompts.
-    prompts = [
-        "Hello, my name is",
-        "The president of the United States is",
-        "The capital of France is",
-        "The future of AI is",
-    ]
+    prompts = ["中国的首都在哪里？"]
     # Create a sampling params object.
-    sampling_params = {"temperature": 0.8, "top_p": 0.95}
+    # sampling_params = {"temperature": 0.8, "top_p": 0.95}
+    sampling_params = {"top_k": 1}
+    server_args.disable_cuda_graph = True
 
     # Create an LLM.
     llm = sgl.Engine(**dataclasses.asdict(server_args))

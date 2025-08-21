@@ -21,6 +21,8 @@ if os.environ["SGLANG_ENABLE_TORCH_COMPILE"] == "1":
     torch._logging.set_logs(dynamo=logging.ERROR)
     torch._dynamo.config.suppress_errors = True
 
+from memattention.cache_manager import SparesCacheManager
+
 from sglang.global_config import global_config
 from sglang.srt.layers.attention.base_attn_backend import AttentionBackend
 from sglang.srt.layers.attention.utils import create_flashinfer_kv_indices_triton
@@ -193,11 +195,17 @@ class FlashInferAttnBackend(AttentionBackend):
             )
 
         # Create indices updater
-        if not skip_prefill:
-            self.indices_updater_prefill = FlashInferIndicesUpdaterPrefill(
+        self.sparse_attn = model_runner.server_args.is_sparse
+        if self.sparse_attn:
+            self.cache_manager = SparesCacheManager(model_runner, self)
+        else:
+            if not skip_prefill:
+                self.indices_updater_prefill = FlashInferIndicesUpdaterPrefill(
+                    model_runner, self
+                )  # for verify
+            self.indices_updater_decode = FlashInferIndicesUpdaterDecode(
                 model_runner, self
-            )  # for verify
-        self.indices_updater_decode = FlashInferIndicesUpdaterDecode(model_runner, self)
+            )
 
         # Other metadata
         self.forward_metadata: Union[PrefillMetadata, DecodeMetadata] = None
@@ -207,15 +215,25 @@ class FlashInferAttnBackend(AttentionBackend):
 
     def init_forward_metadata(self, forward_batch: ForwardBatch):
         if forward_batch.forward_mode.is_decode_or_idle():
-            self.indices_updater_decode.update(
-                forward_batch.req_pool_indices,
-                forward_batch.seq_lens,
-                forward_batch.seq_lens_cpu,
-                forward_batch.seq_lens_sum,
-                decode_wrappers=self.decode_wrappers,
-                encoder_lens=forward_batch.encoder_lens,
-                spec_info=forward_batch.spec_info,
-            )
+            if self.sparse_attn:
+                self.cache_manager.update_decode(
+                    forward_batch.req_pool_indices,
+                    forward_batch.seq_lens,
+                    forward_batch.seq_lens_cpu,
+                    forward_batch.seq_lens_sum,
+                    decode_wrappers=self.decode_wrappers,
+                    encoder_lens=forward_batch.encoder_lens,
+                )
+            else:
+                self.indices_updater_decode.update(
+                    forward_batch.req_pool_indices,
+                    forward_batch.seq_lens,
+                    forward_batch.seq_lens_cpu,
+                    forward_batch.seq_lens_sum,
+                    decode_wrappers=self.decode_wrappers,
+                    encoder_lens=forward_batch.encoder_lens,
+                    spec_info=forward_batch.spec_info,
+                )
             self.forward_metadata = DecodeMetadata(self.decode_wrappers)
         elif forward_batch.forward_mode.is_draft_extend():
             self.indices_updater_prefill.update(
@@ -257,17 +275,29 @@ class FlashInferAttnBackend(AttentionBackend):
                 use_ragged = True
                 extend_no_prefix = not any(forward_batch.extend_prefix_lens_cpu)
 
-            self.indices_updater_prefill.update(
-                forward_batch.req_pool_indices,
-                forward_batch.seq_lens,
-                forward_batch.seq_lens_cpu,
-                forward_batch.seq_lens_sum,
-                prefix_lens,
-                prefill_wrappers=self.prefill_wrappers_paged,
-                use_ragged=use_ragged,
-                encoder_lens=forward_batch.encoder_lens,
-                spec_info=None,
-            )
+            if self.sparse_attn:
+                self.cache_manager.update_prefill(
+                    forward_batch.req_pool_indices,
+                    forward_batch.seq_lens,
+                    forward_batch.seq_lens_cpu,
+                    forward_batch.seq_lens_sum,
+                    prefix_lens,
+                    prefill_wrappers=self.prefill_wrappers_paged,
+                    use_ragged=use_ragged,
+                    encoder_lens=forward_batch.encoder_lens,
+                )
+            else:
+                self.indices_updater_prefill.update(
+                    forward_batch.req_pool_indices,
+                    forward_batch.seq_lens,
+                    forward_batch.seq_lens_cpu,
+                    forward_batch.seq_lens_sum,
+                    prefix_lens,
+                    prefill_wrappers=self.prefill_wrappers_paged,
+                    use_ragged=use_ragged,
+                    encoder_lens=forward_batch.encoder_lens,
+                    spec_info=None,
+                )
             self.forward_metadata = PrefillMetadata(
                 self.prefill_wrappers_paged, use_ragged, extend_no_prefix
             )

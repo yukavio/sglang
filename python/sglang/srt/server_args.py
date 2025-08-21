@@ -295,6 +295,9 @@ class ServerArgs:
     enable_triton_kernel_moe: bool = False
     enable_flashinfer_mxfp4_moe: bool = False
 
+    # Sparse attention
+    is_sparse: bool = True
+
     def __post_init__(self):
         # Check deprecated arguments
         def print_deprecated_warning(message: str):
