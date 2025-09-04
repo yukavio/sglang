@@ -253,6 +253,10 @@ class ServerArgs:
     speculative_accept_threshold_single: float = 1.0
     speculative_accept_threshold_acc: float = 1.0
     speculative_token_map: Optional[str] = None
+    speculative_draft_tokens_func: Optional[str] = None
+    speculative_draft_extend_func: Optional[str] = None
+    speculative_draft_extend_after_decode_func: Optional[str] = None
+    speculative_verify_func: Optional[str] = None
 
     # Expert parallelism
     ep_size: int = 1
