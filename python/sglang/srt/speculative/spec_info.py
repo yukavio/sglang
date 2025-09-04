@@ -5,6 +5,7 @@ class SpeculativeAlgorithm(IntEnum):
     NONE = auto()
     EAGLE = auto()
     EAGLE3 = auto()
+    CUSTOM = auto()
 
     def is_none(self):
         return self == SpeculativeAlgorithm.NONE
@@ -15,11 +16,15 @@ class SpeculativeAlgorithm(IntEnum):
     def is_eagle3(self):
         return self == SpeculativeAlgorithm.EAGLE3
 
+    def is_custom(self):
+        return self == SpeculativeAlgorithm.CUSTOM
+
     @staticmethod
     def from_string(name: str):
         name_map = {
             "EAGLE": SpeculativeAlgorithm.EAGLE,
             "EAGLE3": SpeculativeAlgorithm.EAGLE3,
+            "CUSTOM": SpeculativeAlgorithm.CUSTOM,
             None: SpeculativeAlgorithm.NONE,
         }
         if name is not None:
