@@ -456,14 +456,14 @@ class ModelConfig:
             ).lower()
 
             # Detect which checkpoint is it
-            for _, method in QUANTIZATION_METHODS.items():
-                quantization_override = method.override_quantization_method(
-                    quant_cfg, self.quantization
-                )
-                if quantization_override:
-                    quant_method = quantization_override
-                    self.quantization = quantization_override
-                    break
+            # for _, method in QUANTIZATION_METHODS.items():
+            #    quantization_override = method.override_quantization_method(
+            #        quant_cfg, self.quantization
+            #    )
+            #    if quantization_override:
+            #        quant_method = quantization_override
+            #        self.quantization = quantization_override
+            #        break
 
             # Verify quantization configurations.
             if self.quantization is None:

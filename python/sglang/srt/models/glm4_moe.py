@@ -1108,5 +1108,4 @@ class Glm4MoeForCausalLM(DeepseekV2ForCausalLM):
                         )
                         weight_loader(param, loaded_weight)
 
-
 EntryClass = [Glm4MoeForCausalLM]

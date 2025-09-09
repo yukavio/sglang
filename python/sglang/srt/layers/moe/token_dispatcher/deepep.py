@@ -164,6 +164,7 @@ class DeepEPBuffer:
                 f"Consider using --deepep-config to change the behavior."
             )
 
+        num_qps_per_rank = 20
         cls._buffer = Buffer(
             group,
             num_nvl_bytes,
