@@ -136,6 +136,21 @@ def expert_bias_routing(
     return topk_scores, indices
 
 
+def sigmoid_routing_function(
+    hidden_states: torch.Tensor,
+    gating_output: torch.Tensor,
+    topk: int,
+    renormalize: bool,
+    correction_bias: Optional[torch.Tensor] = None,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    # if softmax, then use qwen3 moe's routing function
+    scores = torch.sigmoid(gating_output).type_as(gating_output)
+    if correction_bias is not None:
+        scores_for_routing += correction_bias
+    _, indices = torch.topk(scores_for_routing, topk, dim=-1)
+    topk_scores = torch.gather(scores, dim=1, index=indices).type_as(scores)
+    return topk_scores, indices
+
 class Qwen2MoeSparseMoeBlock(nn.Module):
 
     def __init__(
@@ -416,7 +431,12 @@ class Qwen2MoeDecoderLayer(nn.Module):
         rope_theta = getattr(config, "rope_theta", 10000)
         rope_scaling = getattr(config, "rope_scaling", None)
         max_position_embeddings = getattr(config, "max_position_embeddings", 8192)
-        qkv_bias = getattr(config, "qkv_bias", True)
+        if getattr(config, "qkv_bias", None) is not None:
+            qkv_bias = getattr(config, "qkv_bias")
+        elif getattr(config, "qkv_proj_bias", None) is not None:
+            qkv_bias = getattr(config, "qkv_proj_bias")
+        else:
+            qkv_bias = True
         dual_chunk_attention_config = getattr(
             config, "dual_chunk_attention_config", None
         )
