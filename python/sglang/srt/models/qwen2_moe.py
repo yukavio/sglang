@@ -67,8 +67,50 @@ from sglang.srt.model_loader.weight_utils import default_weight_loader
 from sglang.srt.two_batch_overlap import model_forward_maybe_tbo
 from sglang.srt.utils import add_prefix, make_layers
 
+import hashlib
+import numpy as np
+import os
+
 logger = logging.getLogger(__name__)
 
+
+def hash_input_ids_vectorized(input_ids):
+    ids_numpy = input_ids.cpu().numpy()
+    
+    def vectorized_hash(id_array):
+        hash_values = []
+        for id_val in id_array.flat:
+            id_str = str(id_val)
+            hash_hex = hashlib.sha256(id_str.encode('utf-8')).hexdigest()
+            hash_int = int(hash_hex[:8], 16)
+            hash_values.append(hash_int)
+        
+        return np.array(hash_values).reshape(id_array.shape)
+    
+    hashed_array = vectorized_hash(ids_numpy)
+    return torch.tensor(hashed_array, dtype=input_ids.dtype, device=input_ids.device)
+
+class KVMirrorManager:
+    '''
+    Manager for kv mirror algorithm
+    '''
+    activations_dict_hs = dict()
+    
+    @staticmethod
+    def set_hidden_states_activation(layer_number, kv_activation):
+        if layer_number not in KVMirrorManager.activations_dict_hs:
+            KVMirrorManager.activations_dict_hs[layer_number] = []
+        KVMirrorManager.activations_dict_hs[layer_number].append(kv_activation)
+
+    @staticmethod
+    def get_hidden_states_activation(layer_number, end_of_story=False):
+        assert layer_number in KVMirrorManager.activations_dict_hs
+        assert len(KVMirrorManager.activations_dict_hs[layer_number]) == 1
+        kv_activation = KVMirrorManager.activations_dict_hs[layer_number].pop()
+        if end_of_story:
+            for key in KVMirrorManager.activations_dict_hs.keys():
+                KVMirrorManager.activations_dict_hs[key].clear()
+        return kv_activation
 
 class Qwen2MoeMLP(nn.Module):
     def __init__(
@@ -281,6 +323,11 @@ class Qwen2MoeAttention(nn.Module):
         quant_config: Optional[QuantizationConfig] = None,
         dual_chunk_attention_config: Optional[dict[str, Any]] = None,
         prefix: str = "",
+        kv_mirror_layers=[],
+        kv_mirror_imitated_layers=[],
+        layer_idx: Optional[int] = None,
+        o_norm=False,
+        total_layer_num: int = 1,
     ) -> None:
         super().__init__()
         self.hidden_size = hidden_size
@@ -311,10 +358,18 @@ class Qwen2MoeAttention(nn.Module):
         self.qk_norm = qk_norm
         self.only_k_norm = k_norm
 
+        self.kv_mirror_layers = kv_mirror_layers
+        self.kv_mirror_imitated_layers = kv_mirror_imitated_layers
+        self.layer_idx = layer_idx
+        print("self.layer_idx:{}".format(layer_idx), "self.kv_mirror_layers:", self.kv_mirror_layers, "self.kv_mirror_imitated_layers:", self.kv_mirror_imitated_layers, flush=True)
+        self.use_o_norm = o_norm
+        self.total_layer_num = total_layer_num
+
         self.q_norm = RMSNorm(self.head_dim) if self.qk_norm else nn.Identity()
         self.k_norm = RMSNorm(
             self.head_dim
         ) if self.qk_norm or self.only_k_norm else nn.Identity()
+        self.o_norm = RMSNorm(self.hidden_size) if self.use_o_norm else nn.Identity()
 
         self.qkv_proj = QKVParallelLinear(
             hidden_size,
@@ -335,7 +390,7 @@ class Qwen2MoeAttention(nn.Module):
             quant_config=quant_config,
             tp_rank=attn_tp_rank,
             tp_size=attn_tp_size,
-            reduce_results=False,
+            reduce_results=True,
             prefix=add_prefix("o_proj", prefix),
         )
 
@@ -363,8 +418,26 @@ class Qwen2MoeAttention(nn.Module):
         hidden_states: torch.Tensor,
         forward_batch: ForwardBatch,
     ) -> torch.Tensor:
+        hidden_states_ori = hidden_states
         qkv, _ = self.qkv_proj(hidden_states)
-        q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
+
+        if self.layer_idx in self.kv_mirror_imitated_layers:
+            KVMirrorManager.set_hidden_states_activation(self.layer_idx, hidden_states_ori)
+            # print("set hidden states activation for layer {} with shape {}".format(self.layer_idx, hidden_states_ori.shape), flush=True)
+            q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
+        elif self.layer_idx in self.kv_mirror_layers:
+            mirror_layer_number = self.kv_mirror_imitated_layers[self.kv_mirror_layers.index(self.layer_idx)]
+            if self.layer_idx == self.total_layer_num - 1:
+                hidden_states_ori = KVMirrorManager.get_hidden_states_activation(mirror_layer_number, end_of_story=True)
+            else:
+                hidden_states_ori = KVMirrorManager.get_hidden_states_activation(mirror_layer_number, end_of_story=False)
+            # print("get hidden states activation for layer {} with shape {}".format(mirror_layer_number, hidden_states_ori.shape), flush=True)
+            qkv_shadow, _ = self.qkv_proj(hidden_states_ori)
+            q, _, _ = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
+            _, k, v = qkv_shadow.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
+        else:
+            q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
+
         q_shape = q.shape
         k_shape = k.shape
 
@@ -412,6 +485,8 @@ class Qwen2MoeAttention(nn.Module):
             q, k = self.rotary_emb(positions, q, k)
         attn_output = self.attn(q, k, v, forward_batch)
         output, _ = self.o_proj(attn_output)
+        if self.use_o_norm:
+            output = self.o_norm(output)
         return output
 
 
@@ -446,6 +521,15 @@ class Qwen2MoeDecoderLayer(nn.Module):
         head_dim = getattr(config, "head_dim",
                            self.hidden_size // config.num_attention_heads)
         qk_rope_head_dim = getattr(config, "qk_rope_head_dim", head_dim)
+        
+        kv_mirror_layers = getattr(config, "kv_mirror_layers", [])
+        kv_mirror_imitated_layers = getattr(config, "kv_mirror_imitated_layers", [])
+        self.ppln = getattr(config, "ppln", False)
+        o_norm = getattr(config, "o_norm", False)
+        self.prenorm_layer_idx = getattr(config, "prenorm_layer_idx", [])
+        print("self.ppln:", self.ppln, "o_norm:", o_norm, "self.prenorm_layer_idx:", self.prenorm_layer_idx)
+        total_layer_num = config.num_hidden_layers
+        
         self.self_attn = Qwen2MoeAttention(
             hidden_size=self.hidden_size,
             num_heads=config.num_attention_heads,
@@ -463,8 +547,12 @@ class Qwen2MoeDecoderLayer(nn.Module):
             qkv_bias=qkv_bias,
             out_bias=out_bias,
             prefix=add_prefix("self_attn", prefix),
+            kv_mirror_layers=kv_mirror_layers,
+            kv_mirror_imitated_layers=kv_mirror_imitated_layers,
+            layer_idx=layer_id,
+            o_norm=o_norm and layer_id not in self.prenorm_layer_idx,
+            total_layer_num=total_layer_num,
         )
-
         self.layer_id = layer_id
 
         self.attn_tp_size = get_attention_tp_size()
@@ -518,7 +606,8 @@ class Qwen2MoeDecoderLayer(nn.Module):
         hidden_states, residual = self.layer_communicator.prepare_attn(
             hidden_states, residual, forward_batch
         )
-
+        if self.ppln and self.layer_id not in self.prenorm_layer_idx:
+            residual = hidden_states.clone().to(dtype=hidden_states.dtype, device=hidden_states.device)
         if hidden_states.shape[0] != 0:
             hidden_states = self.self_attn(
                 positions=positions,
@@ -526,9 +615,10 @@ class Qwen2MoeDecoderLayer(nn.Module):
                 forward_batch=forward_batch,
             )
 
-        hidden_states, residual = self.layer_communicator.prepare_mlp(
-            hidden_states, residual, forward_batch
-        )
+        # hidden_states, residual = self.layer_communicator.prepare_mlp(
+        #     hidden_states, residual, forward_batch
+        # )
+        hidden_states, residual = self.post_attention_layernorm(hidden_states, residual)
 
         # For DP with padding, reduce scatter can be used instead of all-reduce.
         use_reduce_scatter = self.layer_communicator.should_use_reduce_scatter(
@@ -558,6 +648,19 @@ class Qwen2MoeModel(nn.Module):
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
         self.pp_group = get_pp_group()
+
+        self.oe_dim = config.oe_dim
+        self.oe_grams = config.oe_grams
+        self.oe_vocab_size = config.oe_vocab_size
+
+        if len(self.oe_vocab_size) > 0:
+            self.oe_embed = nn.ModuleList(
+                [VocabParallelEmbedding(self.oe_vocab_size[i],self.oe_dim,)
+                 for i in range(len(self.oe_vocab_size))]
+            )
+            self.oe_upproj = ReplicatedLinear(
+                self.oe_dim * len(self.oe_vocab_size), config.hidden_size, bias=False, quant_config=None
+            )
 
         if self.pp_group.is_first_rank:
             self.embed_tokens = VocabParallelEmbedding(
@@ -605,6 +708,23 @@ class Qwen2MoeModel(nn.Module):
                 hidden_states = self.embed_tokens(input_ids)
             else:
                 hidden_states = input_embeds
+            
+            if len(self.oe_grams) > 0:
+                input_ids_ngram = []
+                input_ids_ngram_tmp = input_ids
+                input_ids_gram_n = [forward_batch.n_gram_input_ids.input_ids_gram2, forward_batch.n_gram_input_ids.input_ids_gram3, forward_batch.n_gram_input_ids.input_ids_gram4]
+                for g in range(1, max(self.oe_grams)):
+                    input_ids_ngram_tmp = input_ids_ngram_tmp + input_ids_gram_n[g-1] * (self.vocab_size ** g)
+                    input_ids_ngram.append(hash_input_ids_vectorized(input_ids_ngram_tmp))
+
+                emb_ngram = []
+                for i, vs in enumerate(self.oe_vocab_size):
+                    input_ids_ngram_hashed_tmp = input_ids_ngram[self.oe_grams[i] - 2] % vs
+                    emb_ngram_tmp = self.oe_embed[i](input_ids_ngram_hashed_tmp)
+                    emb_ngram.append(emb_ngram_tmp)
+                emb_new, _ = self.oe_upproj(torch.cat(emb_ngram, dim=-1))
+                hidden_states = (hidden_states + emb_new) / 2.0
+
             residual = None
         else:
             assert pp_proxy_tensors is not None
