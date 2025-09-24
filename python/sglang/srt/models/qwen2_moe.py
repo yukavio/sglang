@@ -715,7 +715,8 @@ class Qwen2MoeModel(nn.Module):
                 input_ids_gram_n = [forward_batch.n_gram_input_ids.input_ids_gram2, forward_batch.n_gram_input_ids.input_ids_gram3, forward_batch.n_gram_input_ids.input_ids_gram4]
                 for g in range(1, max(self.oe_grams)):
                     input_ids_ngram_tmp = input_ids_ngram_tmp + input_ids_gram_n[g-1] * (self.vocab_size ** g)
-                    input_ids_ngram.append(hash_input_ids_vectorized(input_ids_ngram_tmp))
+                    #input_ids_ngram.append(hash_input_ids_vectorized(input_ids_ngram_tmp))
+                    input_ids_ngram.append(input_ids_ngram_tmp)
 
                 emb_ngram = []
                 for i, vs in enumerate(self.oe_vocab_size):

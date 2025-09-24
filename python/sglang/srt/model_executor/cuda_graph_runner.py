@@ -60,6 +60,7 @@ from sglang.srt.utils import (
     require_mlp_sync,
     require_mlp_tp_gather,
 )
+from sglang.srt.managers.schedule_batch import NGramInputIds
 
 logger = logging.getLogger(__name__)
 
@@ -320,6 +321,11 @@ class CudaGraphRunner:
             self.mrope_positions = torch.zeros((3, self.max_bs), dtype=torch.int64)
             self.num_token_non_padded = torch.zeros((1,), dtype=torch.int32)
             self.tbo_plugin = TboCudaGraphRunnerPlugin()
+            
+            if self.model_runner.server_args.enable_over_encoding:
+                self.input_ids_gram2 = torch.zeros((self.max_num_token,), dtype=torch.int64)
+                self.input_ids_gram3 = torch.zeros((self.max_num_token,), dtype=torch.int64)
+                self.input_ids_gram4 = torch.zeros((self.max_num_token,), dtype=torch.int64)
 
             # pipeline parallelism
             if self.pp_size > 1:
@@ -618,6 +624,13 @@ class CudaGraphRunner:
             global_forward_mode=self.capture_forward_mode,
             lora_ids=lora_ids,
         )
+        if self.model_runner.server_args.enable_over_encoding:
+            forward_batch.n_gram_input_ids = NGramInputIds(
+                input_ids_gram2=self.input_ids_gram2[:num_tokens],
+                input_ids_gram3=self.input_ids_gram3[:num_tokens],
+                input_ids_gram4=self.input_ids_gram4[:num_tokens],
+            )
+        
         self.tbo_plugin.capture_one_batch_size(forward_batch, num_tokens=num_tokens)
 
         if lora_ids is not None:

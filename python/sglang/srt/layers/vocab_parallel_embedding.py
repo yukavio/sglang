@@ -303,6 +303,7 @@ class VocabParallelEmbedding(torch.nn.Module):
             self.num_embeddings_padded,
             params_dtype=params_dtype,
             weight_loader=self.weight_loader,
+            host_tensor= True if self.__class__ is VocabParallelEmbedding else False,
         )
 
     @classmethod

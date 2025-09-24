@@ -384,6 +384,9 @@ class ServerArgs:
     enable_flashinfer_trtllm_moe: bool = False
     enable_triton_kernel_moe: bool = False
     enable_flashinfer_mxfp4_moe: bool = False
+    
+    # For Over Encoding
+    enable_over_encoding: bool = False
 
     def __post_init__(self):
         # Check deprecated arguments
@@ -2104,6 +2107,13 @@ class ServerArgs:
             type=int,
             default=ServerArgs.sm_group_num,
             help="Number of sm partition groups.",
+        )
+
+        # For Over Encoding
+        parser.add_argument(
+            "--enable-over-encoding",
+            action="store_true",
+            help="Enable Over Encoding.",
         )
 
         # Deprecated arguments

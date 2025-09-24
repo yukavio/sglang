@@ -16,10 +16,11 @@ def main(
     # Sample prompts.
     prompts = [
         "Hello, my name is",
+        "煎饼果子怎么做？"
     ]
     # Create a sampling params object.
     #sampling_params = {"temperature": 0.8, "top_p": 0.95}
-    sampling_params = {"temperature": 0, 'max_new_tokens': 10}
+    sampling_params = {"temperature": 0, 'max_new_tokens': 100}
 
     # Create an LLM.
     llm = sgl.Engine(**dataclasses.asdict(server_args))
