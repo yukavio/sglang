@@ -387,6 +387,7 @@ class ServerArgs:
     
     # For Over Encoding
     enable_over_encoding: bool = False
+    enable_kv_mirror: bool = False
 
     def __post_init__(self):
         # Check deprecated arguments
@@ -2114,6 +2115,12 @@ class ServerArgs:
             "--enable-over-encoding",
             action="store_true",
             help="Enable Over Encoding.",
+        )
+        
+        parser.add_argument(
+            "--enable-kv-mirror",
+            action="store_true",
+            help="Enable KV Mirror.",
         )
 
         # Deprecated arguments

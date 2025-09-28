@@ -308,6 +308,7 @@ class ForwardBatch:
     
     # For Over Encoding
     n_gram_input_ids: Optional[NGramInputIds] = None
+    enable_kv_mirror: bool = False
 
     @classmethod
     def init_new(
@@ -352,6 +353,7 @@ class ForwardBatch:
             n_gram_input_ids=batch.n_gram_input_ids,
         )
         device = model_runner.device
+        ret.enable_kv_mirror = model_runner.server_args.enable_kv_mirror
 
         if batch.extend_input_logprob_token_ids is not None:
             ret.extend_input_logprob_token_ids_gpu = (

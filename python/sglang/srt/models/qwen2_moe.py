@@ -411,6 +411,7 @@ class Qwen2MoeAttention(nn.Module):
             quant_config=quant_config,
             prefix=add_prefix("attn", prefix),
         )
+        self.attn.is_kv_mirror = self.layer_idx in self.kv_mirror_layers
 
     def forward(
         self,
@@ -419,9 +420,10 @@ class Qwen2MoeAttention(nn.Module):
         forward_batch: ForwardBatch,
     ) -> torch.Tensor:
         hidden_states_ori = hidden_states
-        qkv, _ = self.qkv_proj(hidden_states)
+        #qkv, _ = self.qkv_proj(hidden_states)
 
         if self.layer_idx in self.kv_mirror_imitated_layers:
+            qkv, _ = self.qkv_proj(hidden_states)
             KVMirrorManager.set_hidden_states_activation(self.layer_idx, hidden_states_ori)
             # print("set hidden states activation for layer {} with shape {}".format(self.layer_idx, hidden_states_ori.shape), flush=True)
             q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
@@ -431,11 +433,15 @@ class Qwen2MoeAttention(nn.Module):
                 hidden_states_ori = KVMirrorManager.get_hidden_states_activation(mirror_layer_number, end_of_story=True)
             else:
                 hidden_states_ori = KVMirrorManager.get_hidden_states_activation(mirror_layer_number, end_of_story=False)
-            # print("get hidden states activation for layer {} with shape {}".format(mirror_layer_number, hidden_states_ori.shape), flush=True)
+            if forward_batch.enable_kv_mirror and forward_batch.forward_mode.is_extend() and not hasattr(forward_batch, 'last_index'):
+                forward_batch.last_index = torch.cumsum(forward_batch.extend_seq_lens, dim=0) - 1
+                hidden_states = hidden_states[forward_batch.last_index]
+            qkv, _ = self.qkv_proj(hidden_states)
             qkv_shadow, _ = self.qkv_proj(hidden_states_ori)
             q, _, _ = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
             _, k, v = qkv_shadow.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
         else:
+            qkv, _ = self.qkv_proj(hidden_states)
             q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
 
         q_shape = q.shape
@@ -466,7 +472,13 @@ class Qwen2MoeAttention(nn.Module):
             k_pe = k_pe.reshape(
                 (*k_shape[:-1],
                  k_shape[-1] // self.head_dim * self.qk_rope_head_dim))
-            q_pe, k_pe = self.rotary_emb(positions, q_pe, k_pe)
+            if forward_batch.enable_kv_mirror and forward_batch.forward_mode.is_extend() and self.layer_idx in self.kv_mirror_layers:
+                q_pe_proxy = torch.empty((k_pe.shape[0],) + q_pe.shape[1:], dtype=q_pe.dtype, device=q_pe.device)
+                k_pe_proxy = torch.empty((q_pe.shape[0],) + k_pe.shape[1:], dtype=k_pe.dtype, device=k_pe.device)
+                _, k_pe = self.rotary_emb(positions, q_pe_proxy, k_pe)
+                q_pe, _ = self.rotary_emb(positions[forward_batch.last_index], q_pe, k_pe_proxy)
+            else:
+                q_pe, k_pe = self.rotary_emb(positions, q_pe, k_pe)
 
             q_pe = q_pe.reshape(
                 (*q_shape[:-1], q_shape[-1] // self.head_dim, -1)).clone()
@@ -522,8 +534,8 @@ class Qwen2MoeDecoderLayer(nn.Module):
                            self.hidden_size // config.num_attention_heads)
         qk_rope_head_dim = getattr(config, "qk_rope_head_dim", head_dim)
         
-        kv_mirror_layers = getattr(config, "kv_mirror_layers", [])
-        kv_mirror_imitated_layers = getattr(config, "kv_mirror_imitated_layers", [])
+        self.kv_mirror_layers = getattr(config, "kv_mirror_layers", [])
+        self.kv_mirror_imitated_layers = getattr(config, "kv_mirror_imitated_layers", [])
         self.ppln = getattr(config, "ppln", False)
         o_norm = getattr(config, "o_norm", False)
         self.prenorm_layer_idx = getattr(config, "prenorm_layer_idx", [])
@@ -547,8 +559,8 @@ class Qwen2MoeDecoderLayer(nn.Module):
             qkv_bias=qkv_bias,
             out_bias=out_bias,
             prefix=add_prefix("self_attn", prefix),
-            kv_mirror_layers=kv_mirror_layers,
-            kv_mirror_imitated_layers=kv_mirror_imitated_layers,
+            kv_mirror_layers=self.kv_mirror_layers,
+            kv_mirror_imitated_layers=self.kv_mirror_imitated_layers,
             layer_idx=layer_id,
             o_norm=o_norm and layer_id not in self.prenorm_layer_idx,
             total_layer_num=total_layer_num,
@@ -618,6 +630,8 @@ class Qwen2MoeDecoderLayer(nn.Module):
         # hidden_states, residual = self.layer_communicator.prepare_mlp(
         #     hidden_states, residual, forward_batch
         # )
+        if forward_batch.enable_kv_mirror and forward_batch.forward_mode.is_extend() and self.layer_id == self.kv_mirror_layers[-1]:
+            residual = residual[forward_batch.last_index]
         hidden_states, residual = self.post_attention_layernorm(hidden_states, residual)
 
         # For DP with padding, reduce scatter can be used instead of all-reduce.
@@ -1048,3 +1062,4 @@ class Qwen2MoeForCausalLM(nn.Module):
 
 
 EntryClass = Qwen2MoeForCausalLM
+

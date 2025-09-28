@@ -52,7 +52,7 @@ if is_flashinfer_available():
 class WrapperDispatch(Enum):
     SLIDING_WINDOW = auto()
     CROSS_ATTENTION = auto()
-
+    KV_MIRROR = auto()
 
 @dataclass
 class DecodeMetadata:
@@ -98,6 +98,7 @@ class FlashInferAttnBackend(AttentionBackend):
         self.max_context_len = model_runner.model_config.context_len
         self.skip_prefill = skip_prefill
         self.is_multimodal = model_runner.model_config.is_multimodal
+        self.prefill_wrapper_ragged_kv_mirror = None
 
         assert not (
             model_runner.sliding_window_size is not None
@@ -110,6 +111,9 @@ class FlashInferAttnBackend(AttentionBackend):
         elif model_runner.model_config.is_encoder_decoder:
             self.num_wrappers = 2
             self.dispatch_reason = WrapperDispatch.CROSS_ATTENTION
+        elif model_runner.server_args.enable_kv_mirror:
+            self.num_wrappers = 2
+            self.dispatch_reason = WrapperDispatch.KV_MIRROR
         else:
             self.num_wrappers = 1
             self.dispatch_reason = None
@@ -166,7 +170,11 @@ class FlashInferAttnBackend(AttentionBackend):
         self.prefill_wrapper_ragged = BatchPrefillWithRaggedKVCacheWrapper(
             self.workspace_buffer, "NHD", backend=fmha_backend
         )
-
+        if model_runner.server_args.enable_kv_mirror:
+            self.prefill_wrapper_ragged_kv_mirror = BatchPrefillWithRaggedKVCacheWrapper(
+                self.workspace_buffer, "NHD", backend=fmha_backend
+            )
+        
         # Two wrappers: one for sliding window attention and one for full attention.
         # Using two wrappers is unnecessary in the current PR, but are prepared for future PRs
         self.prefill_wrappers_paged = []
@@ -207,6 +215,7 @@ class FlashInferAttnBackend(AttentionBackend):
         self.decode_cuda_graph_metadata = {}
         self.prefill_cuda_graph_metadata = {}  # For verify
         self.draft_extend_cuda_graph_metadata = {}  # For draft extend
+        self.enable_kv_mirror = model_runner.server_args.enable_kv_mirror
 
     def init_forward_metadata(self, forward_batch: ForwardBatch):
         if forward_batch.forward_mode.is_decode_or_idle():
@@ -475,8 +484,9 @@ class FlashInferAttnBackend(AttentionBackend):
         save_kv_cache=True,
     ):
         prefill_wrapper_paged = self.forward_metadata.prefill_wrappers[
-            self._get_wrapper_idx(layer)
+            self._get_wrapper_idx(layer, forward_batch)
         ]
+        prefill_wrapper_ragged = self.prefill_wrapper_ragged if not layer.is_kv_mirror else self.prefill_wrapper_ragged_kv_mirror
         cache_loc = (
             forward_batch.out_cache_loc
             if not layer.is_cross_attention
@@ -514,7 +524,8 @@ class FlashInferAttnBackend(AttentionBackend):
                 # NOTE: FlashInfer currently has limitations with head_dim = 32 or other dimensions
                 # The FlashInfer head_dim limitation itself is tracked here:
                 # https://github.com/flashinfer-ai/flashinfer/issues/1048
-                o = self.prefill_wrapper_ragged.forward(
+                
+                o = prefill_wrapper_ragged.forward(
                     q.view(-1, layer.tp_q_head_num, layer.head_dim),
                     k.view(-1, layer.tp_k_head_num, layer.head_dim),
                     v.view(-1, layer.tp_v_head_num, layer.head_dim),
@@ -524,7 +535,7 @@ class FlashInferAttnBackend(AttentionBackend):
                 )
 
             else:
-                o1, s1 = self.prefill_wrapper_ragged.forward_return_lse(
+                o1, s1 = prefill_wrapper_ragged.forward_return_lse(
                     q.view(-1, layer.tp_q_head_num, layer.head_dim),
                     k.view(-1, layer.tp_k_head_num, layer.head_dim),
                     v.view(-1, layer.tp_v_head_num, layer.head_dim),
@@ -559,7 +570,7 @@ class FlashInferAttnBackend(AttentionBackend):
         save_kv_cache=True,
     ):
         decode_wrapper = self.forward_metadata.decode_wrappers[
-            self._get_wrapper_idx(layer)
+            self._get_wrapper_idx(layer, forward_batch)
         ]
         cache_loc = (
             forward_batch.out_cache_loc
@@ -586,7 +597,7 @@ class FlashInferAttnBackend(AttentionBackend):
 
         return o.view(-1, layer.tp_q_head_num * layer.head_dim)
 
-    def _get_wrapper_idx(self, layer: RadixAttention):
+    def _get_wrapper_idx(self, layer: RadixAttention, forward_batch: ForwardBatch):
         if self.num_wrappers == 1:
             return 0
 
@@ -594,6 +605,8 @@ class FlashInferAttnBackend(AttentionBackend):
             return layer.sliding_window_size == -1
         if self.dispatch_reason == WrapperDispatch.CROSS_ATTENTION:
             return layer.is_cross_attention
+        if self.dispatch_reason == WrapperDispatch.KV_MIRROR:
+            return layer.is_kv_mirror if forward_batch.forward_mode.is_extend() else 0
 
         raise ValueError(f"Unknown dispatch reason: {self.dispatch_reason}")
 
@@ -625,7 +638,7 @@ class FlashInferIndicesUpdaterDecode:
         elif self.attn_backend.dispatch_reason == WrapperDispatch.CROSS_ATTENTION:
             self.update = self.update_cross_attention
         else:
-            assert self.attn_backend.num_wrappers == 1
+            assert self.attn_backend.num_wrappers == 1 or self.attn_backend.dispatch_reason == WrapperDispatch.KV_MIRROR
             self.update = self.update_single_wrapper
 
     def update(
@@ -842,6 +855,8 @@ class FlashInferIndicesUpdaterPrefill:
             self.update = self.update_sliding_window
         elif self.attn_backend.dispatch_reason == WrapperDispatch.CROSS_ATTENTION:
             self.update = self.update_cross_attention
+        elif self.attn_backend.dispatch_reason == WrapperDispatch.KV_MIRROR:
+            self.update = self.update_kv_mirror
         else:
             assert self.attn_backend.num_wrappers == 1
             self.update = self.update_single_wrapper
@@ -982,6 +997,62 @@ class FlashInferIndicesUpdaterPrefill:
                 spec_info,
             )
 
+    def update_kv_mirror(
+        self,
+        req_pool_indices: torch.Tensor,
+        seq_lens: torch.Tensor,
+        seq_lens_cpu: Optional[torch.Tensor],
+        seq_lens_sum: int,
+        prefix_lens: torch.Tensor,
+        prefill_wrappers: List[BatchPrefillWithPagedKVCacheWrapper],
+        use_ragged: bool,
+        encoder_lens: Optional[torch.Tensor],
+        spec_info: Optional[Union[EagleDraftInput, EagleVerifyInput]],
+    ):
+        if use_ragged:
+            # TODO: remove this device sync, we can use forward_batch.extend_prefix_lens_cpu
+            # and forward_batch.extend_seq_lens_cpu
+            paged_kernel_lens = prefix_lens
+            paged_kernel_lens_sum = paged_kernel_lens.sum().item()
+        else:
+            paged_kernel_lens = seq_lens
+            paged_kernel_lens_sum = seq_lens_sum
+
+        bs = len(seq_lens)
+        self.qo_indptr[0][1 : bs + 1] = torch.cumsum(seq_lens - prefix_lens, dim=0)
+        self.qo_indptr[1][:bs+1] = torch.arange(0, (bs+1), dtype=torch.int32, device=self.qo_indptr[1].device)
+        
+        self.call_begin_forward(
+            self.prefill_wrapper_ragged,
+            prefill_wrappers[0],
+            req_pool_indices,
+            paged_kernel_lens,
+            paged_kernel_lens_sum,
+            seq_lens,
+            prefix_lens,
+            None,
+            self.qo_indptr[0][:bs+1],
+            self.qo_indptr[0][:bs+1],
+            use_ragged,
+            spec_info,
+        )
+        
+        self.call_begin_forward(
+            self.attn_backend.prefill_wrapper_ragged_kv_mirror,
+            prefill_wrappers[1],
+            req_pool_indices,
+            paged_kernel_lens,
+            paged_kernel_lens_sum,
+            seq_lens,
+            prefix_lens,
+            None,
+            self.qo_indptr[0][:bs+1],
+            self.qo_indptr[1][:bs+1],
+            use_ragged,
+            spec_info,
+        )
+
+
     def call_begin_forward(
         self,
         wrapper_ragged: BatchPrefillWithRaggedKVCacheWrapper,
@@ -1000,27 +1071,28 @@ class FlashInferIndicesUpdaterPrefill:
     ):
         bs = len(seq_lens)
         if spec_info is None:
-            assert len(seq_lens) == len(req_pool_indices)
-            # Normal extend
-            kv_indptr[1 : bs + 1] = torch.cumsum(paged_kernel_lens, dim=0)
-            kv_indptr = kv_indptr[: bs + 1]
-            kv_indices = torch.empty(
-                paged_kernel_lens_sum + 256,
-                dtype=torch.int32,
-                device=req_pool_indices.device,
-            )
-            create_flashinfer_kv_indices_triton[(bs,)](
-                self.req_to_token,
-                req_pool_indices,
-                paged_kernel_lens,
-                kv_indptr,
-                kv_start_idx,
-                kv_indices,
-                self.req_to_token.shape[1],
-            )
-            qo_indptr[1 : bs + 1] = torch.cumsum(seq_lens - prefix_lens, dim=0)
-            qo_indptr = qo_indptr[: bs + 1]
-            custom_mask = None
+            if not self.attn_backend.enable_kv_mirror:
+                assert len(seq_lens) == len(req_pool_indices)
+                # Normal extend
+                qo_indptr[1 : bs + 1] = torch.cumsum(seq_lens - prefix_lens, dim=0)
+                qo_indptr = qo_indptr[: bs + 1]
+                kv_indptr[1 : bs + 1] = torch.cumsum(paged_kernel_lens, dim=0)
+                kv_indptr = kv_indptr[: bs + 1]
+                kv_indices = torch.empty(
+                    paged_kernel_lens_sum + 256,
+                    dtype=torch.int32,
+                    device=req_pool_indices.device,
+                )
+                create_flashinfer_kv_indices_triton[(bs,)](
+                    self.req_to_token,
+                    req_pool_indices,
+                    paged_kernel_lens,
+                    kv_indptr,
+                    kv_start_idx,
+                    kv_indices,
+                    self.req_to_token.shape[1],
+                )
+                custom_mask = None
         else:
             assert isinstance(spec_info, EagleDraftInput) or isinstance(
                 spec_info, EagleVerifyInput
@@ -1038,7 +1110,7 @@ class FlashInferIndicesUpdaterPrefill:
         if use_ragged:
             wrapper_ragged.begin_forward(
                 qo_indptr,
-                qo_indptr,
+                kv_indptr,
                 self.num_qo_heads,
                 self.num_kv_heads,
                 self.head_dim,
@@ -1053,10 +1125,28 @@ class FlashInferIndicesUpdaterPrefill:
                 )
             )
 
+        if self.attn_backend.enable_kv_mirror:
+            self.kv_indptr[0][1 : bs + 1] = torch.cumsum(paged_kernel_lens, dim=0)
+            kv_indptr = self.kv_indptr[0][: bs + 1]
+            kv_indices = torch.empty(
+                paged_kernel_lens_sum + 256,
+                dtype=torch.int32,
+                device=req_pool_indices.device,
+            )
+            create_flashinfer_kv_indices_triton[(bs,)](
+                self.req_to_token,
+                req_pool_indices,
+                paged_kernel_lens,
+                kv_indptr,
+                kv_start_idx,
+                kv_indices,
+                self.req_to_token.shape[1],
+            )
+            custom_mask = None
         # cached part
         wrapper_paged.begin_forward(
             qo_indptr,
-            kv_indptr,
+            kv_indptr[: bs + 1],
             kv_indices,
             self.kv_last_page_len[:bs],
             self.num_qo_heads,
