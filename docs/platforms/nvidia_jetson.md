@@ -20,15 +20,11 @@ Run the installation script:
 ```
 bash jetson-containers/install.sh
 ```
-Build the container image:
+Build the container:
 ```
-jetson-containers build sglang
+CUDA_VERSION=12.6 jetson-containers build sglang
 ```
 Run the container:
-```
-jetson-containers run $(autotag sglang)
-```
-Or you can also manually run a container with this command:
 ```
 docker run --runtime nvidia -it --rm --network=host IMAGE_NAME
 ```
@@ -73,7 +69,7 @@ Structured output with XGrammar
 Please refer to [SGLang doc structured output](../advanced_features/structured_outputs.ipynb).
 * * * * *
 
-Thanks to the support from [Nurgaliyev Shakhizat](https://github.com/shahizat), [Dustin Franklin](https://github.com/dusty-nv) and [Johnny Núñez Cano](https://github.com/johnnynunez).
+Thanks to the support from [shahizat](https://github.com/shahizat).
 
 References
 ----------

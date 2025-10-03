@@ -1,7 +1,7 @@
 import unittest
 from types import SimpleNamespace
 
-from sglang.srt.utils import is_hip, kill_process_tree
+from sglang.srt.utils import kill_process_tree
 from sglang.test.run_eval import run_eval
 from sglang.test.test_utils import (
     DEFAULT_MLA_MODEL_NAME_FOR_TEST,
@@ -10,12 +10,6 @@ from sglang.test.test_utils import (
     CustomTestCase,
     popen_launch_server,
 )
-
-_is_hip = is_hip()
-if _is_hip:
-    hicache_args = ["--hicache-size", 200]
-else:
-    hicache_args = ["--hicache-ratio", 2]
 
 
 class TestHierarchicalMLA(CustomTestCase):
@@ -30,8 +24,9 @@ class TestHierarchicalMLA(CustomTestCase):
             other_args=[
                 "--trust-remote-code",
                 "--enable-hierarchical-cache",
-            ]
-            + hicache_args,
+                "--hicache-ratio",
+                2,
+            ],
         )
 
     @classmethod

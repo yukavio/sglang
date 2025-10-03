@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import inspect
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type
 
 import torch
@@ -11,7 +10,7 @@ from torch import nn
 
 if TYPE_CHECKING:
     from sglang.srt.layers.moe.moe_runner import MoeRunnerConfig
-    from sglang.srt.layers.moe.token_dispatcher import CombineInput, DispatchOutput
+    from sglang.srt.layers.moe.topk import TopKOutput
 
 
 class QuantizeMethodBase(ABC):
@@ -90,15 +89,9 @@ class FusedMoEMethodBase(QuantizeMethodBase):
         layer: torch.nn.Module,
         num_experts: int,
         hidden_size: int,
-        intermediate_size_per_partition: int,
+        intermediate_size: int,
         params_dtype: torch.dtype,
         **extra_weight_attrs,
-    ):
-        raise NotImplementedError
-
-    @abstractmethod
-    def create_moe_runner(
-        self, layer: torch.nn.Module, moe_runner_config: MoeRunnerConfig
     ):
         raise NotImplementedError
 
@@ -106,8 +99,10 @@ class FusedMoEMethodBase(QuantizeMethodBase):
     def apply(
         self,
         layer: torch.nn.Module,
-        dispatch_output: DispatchOutput,
-    ) -> CombineInput:
+        x: torch.Tensor,
+        topk_output: TopKOutput,
+        moe_runner_config: MoeRunnerConfig,
+    ) -> torch.Tensor:
         raise NotImplementedError
 
 

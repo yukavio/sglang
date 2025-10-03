@@ -12,7 +12,6 @@
 # limitations under the License.
 # ==============================================================================
 
-import json
 import multiprocessing as mp
 import unittest
 from dataclasses import dataclass
@@ -90,35 +89,8 @@ BASIC_TESTS = [
             "Nutanix/Meta-Llama-3.1-8B-Instruct_lora_4_alpha_16",
             "pbevan11/llama-3.1-8b-ocr-correction",
         ],
-        initial_adapters=[
-            # Testing 3 supported lora-path formats.
-            "philschmid/code-llama-3-1-8b-text-to-sql-lora",
-            "Nutanix/Meta-Llama-3.1-8B-Instruct_lora_4_alpha_16=Nutanix/Meta-Llama-3.1-8B-Instruct_lora_4_alpha_16",
-            {
-                "lora_name": "pbevan11/llama-3.1-8b-ocr-correction",
-                "lora_path": "pbevan11/llama-3.1-8b-ocr-correction",
-                "pinned": False,
-            },
-        ],
+        initial_adapters=["philschmid/code-llama-3-1-8b-text-to-sql-lora"],
         op_sequence=[
-            Operation(
-                type=OperationType.FORWARD,
-                data=create_batch_data(
-                    [
-                        "philschmid/code-llama-3-1-8b-text-to-sql-lora",
-                        "Nutanix/Meta-Llama-3.1-8B-Instruct_lora_4_alpha_16",
-                        "pbevan11/llama-3.1-8b-ocr-correction",
-                    ]
-                ),
-            ),
-            Operation(
-                type=OperationType.UNLOAD,
-                data="Nutanix/Meta-Llama-3.1-8B-Instruct_lora_4_alpha_16",
-            ),
-            Operation(
-                type=OperationType.UNLOAD,
-                data="pbevan11/llama-3.1-8b-ocr-correction",
-            ),
             Operation(
                 type=OperationType.FORWARD,
                 data=create_batch_data("philschmid/code-llama-3-1-8b-text-to-sql-lora"),
@@ -176,10 +148,6 @@ BASIC_TESTS = [
                 data="Nutanix/Meta-Llama-3.1-8B-Instruct_lora_4_alpha_16",
             ),
             Operation(
-                type=OperationType.UNLOAD,
-                data="pbevan11/llama-3.1-8b-ocr-correction",
-            ),
-            Operation(
                 type=OperationType.FORWARD,
                 data=create_batch_data(
                     "Nutanix/Meta-Llama-3.1-8B-Instruct_lora_4_alpha_16"
@@ -189,12 +157,18 @@ BASIC_TESTS = [
             Operation(
                 type=OperationType.FORWARD,
                 data=create_batch_data("pbevan11/llama-3.1-8b-ocr-correction"),
-                expected_error="not loaded",
+            ),
+            Operation(
+                type=OperationType.LOAD,
+                data="philschmid/code-llama-3-1-8b-text-to-sql-lora",
             ),
             Operation(
                 type=OperationType.FORWARD,
                 data=create_batch_data(
-                    None,
+                    [
+                        "philschmid/code-llama-3-1-8b-text-to-sql-lora",
+                        "pbevan11/llama-3.1-8b-ocr-correction",
+                    ]
                 ),
             ),
         ],
@@ -731,7 +705,7 @@ class LoRAUpdateTestSessionBase:
         *,
         testcase: Optional[TestCase],
         model_path: str,
-        lora_paths: List[Union[str, dict]],
+        lora_paths: list[str],
         max_loras_per_batch: int,
         max_loaded_loras: Optional[int] = None,
         max_lora_rank: Optional[int],
@@ -753,17 +727,7 @@ class LoRAUpdateTestSessionBase:
         self.cuda_graph_max_bs = cuda_graph_max_bs
         self.enable_lora = enable_lora
 
-        self.expected_adapters = set()
-        if self.lora_paths:
-            for adapter in self.lora_paths:
-                if isinstance(adapter, dict):
-                    lora_name = adapter["lora_name"]
-                elif "=" in adapter:
-                    lora_name = adapter.split("=")[0]
-                else:
-                    lora_name = adapter
-                self.expected_adapters.add(lora_name)
-
+        self.expected_adapters = set(lora_paths or [])
         self.handle = None  # Will be set in __enter__
 
     def __enter__(self):
@@ -824,7 +788,6 @@ class LoRAUpdateEngineTestSession(LoRAUpdateTestSessionBase):
             disable_cuda_graph=self.disable_cuda_graph,
             cuda_graph_max_bs=self.cuda_graph_max_bs,
             enable_lora=self.enable_lora,
-            disable_radix_cache=True,
         )
         self.handle.__enter__()
         return self
@@ -959,16 +922,11 @@ class LoRAUpdateServerTestSession(LoRAUpdateTestSessionBase):
             "1",
             "--mem-fraction-static",
             str(MEM_FRACTION_STATIC),
-            "--disable-radix-cache",
         ]
         if self.enable_lora:
             other_args.append("--enable-lora")
         if self.lora_paths:
-            other_args.append("--lora-paths")
-            for lora_path in self.lora_paths:
-                if isinstance(lora_path, dict):
-                    lora_path = json.dumps(lora_path)
-                other_args.append(lora_path)
+            other_args.extend(["--lora-paths"] + self.lora_paths)
         if self.disable_cuda_graph:
             other_args.append("--disable-cuda-graph")
         if self.max_lora_rank is not None:
@@ -1135,7 +1093,7 @@ class TestLoRADynamicUpdate(CustomTestCase):
         self,
         mode: LoRAUpdateTestSessionMode,
         base: str,
-        initial_adapters: List[Union[str, dict]],
+        initial_adapters: List[str],
         op_sequence: List[Operation],
         max_loras_per_batch: int,
         max_loaded_loras: Optional[int] = None,

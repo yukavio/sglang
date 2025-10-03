@@ -100,7 +100,8 @@ void segment_gemm_kernel_impl(
   const int64_t NB1 = div_up(N1, BLOCK_N);
   const int64_t NB = NB0 + NB1;
 
-  const bool use_brgemm = can_use_brgemm<int8_t>(M);
+  // TODO: brgemm u8s8 depends on PyTorch 2.7 release.
+  const bool use_brgemm = false;
 
   // K + 4 after compensation
   const int64_t packed_row_size = get_row_size<int8_t>(K);

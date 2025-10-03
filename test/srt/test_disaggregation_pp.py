@@ -1,19 +1,29 @@
+import json
+import os
+import random
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
-from urllib.parse import urlparse
+from typing import List, Optional
 
+import requests
+
+from sglang.srt.utils import kill_process_tree
 from sglang.test.few_shot_gsm8k import run_eval
-from sglang.test.test_disaggregation_utils import TestDisaggregationBase
+from sglang.test.runners import DEFAULT_PROMPTS
 from sglang.test.test_utils import (
+    DEFAULT_EAGLE_DRAFT_MODEL_FOR_TEST,
+    DEFAULT_EAGLE_TARGET_MODEL_FOR_TEST,
     DEFAULT_MODEL_NAME_FOR_TEST,
     DEFAULT_TIMEOUT_FOR_SERVER_LAUNCH,
     DEFAULT_URL_FOR_TEST,
-    popen_launch_pd_server,
+    CustomTestCase,
+    popen_launch_server,
 )
 
 
-class TestDisaggregationPPAccuracy(TestDisaggregationBase):
+class TestPDPPAccuracy(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.model = DEFAULT_MODEL_NAME_FOR_TEST
@@ -36,7 +46,25 @@ class TestDisaggregationPPAccuracy(TestDisaggregationBase):
         cls.wait_server_ready(cls.prefill_url + "/health")
         cls.wait_server_ready(cls.decode_url + "/health")
 
-        cls.launch_lb()
+        lb_command = [
+            "python3",
+            "-m",
+            "sglang.srt.disaggregation.mini_lb",
+            "--prefill",
+            cls.prefill_url,
+            "--decode",
+            cls.decode_url,
+            "--host",
+            cls.base_host,
+            "--port",
+            cls.lb_port,
+        ]
+
+        print("Starting load balancer:", " ".join(lb_command))
+        cls.process_lb = subprocess.Popen(
+            lb_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        cls.wait_server_ready(cls.lb_url + "/health")
 
     @classmethod
     def start_prefill(cls):
@@ -45,11 +73,11 @@ class TestDisaggregationPPAccuracy(TestDisaggregationBase):
             "--disaggregation-mode",
             "prefill",
             "--tp-size",
-            "1",
+            "2",
             "--pp-size",
             "2",
             "--disaggregation-ib-device",
-            "mlx5_roce0,mlx5_roce1",
+            "mlx5_roce0",
             "--disable-overlap-schedule",
         ]
         cls.process_prefill = popen_launch_pd_server(
@@ -68,9 +96,9 @@ class TestDisaggregationPPAccuracy(TestDisaggregationBase):
             "--tp",
             "1",
             "--base-gpu-id",
-            "2",
+            "1",
             "--disaggregation-ib-device",
-            "mlx5_roce2",
+            "mlx5_roce1",
         ]
         cls.process_decode = popen_launch_pd_server(
             cls.model,
@@ -79,6 +107,10 @@ class TestDisaggregationPPAccuracy(TestDisaggregationBase):
             other_args=decode_args,
         )
 
+    @classmethod
+    def tearDownClass(cls):
+        kill_process_tree(cls.process.pid)
+
     def test_gsm8k(self):
         args = SimpleNamespace(
             num_shots=5,
@@ -86,8 +118,8 @@ class TestDisaggregationPPAccuracy(TestDisaggregationBase):
             num_questions=200,
             max_new_tokens=512,
             parallel=128,
-            host=f"http://{self.base_host}",
-            port=int(self.lb_port),
+            host="http://127.0.0.1",
+            port=int(self.base_url.split(":")[-1]),
         )
         metrics = run_eval(args)
         print(f"{metrics=}")

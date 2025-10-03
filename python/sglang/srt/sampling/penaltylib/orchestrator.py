@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import abc
-import weakref
-from typing import TYPE_CHECKING, Optional, Set, Type
+from typing import TYPE_CHECKING, Set, Type
 
 import torch
 
@@ -18,7 +17,7 @@ class BatchedPenalizerOrchestrator:
         penalizers: Set[Type["_BatchedPenalizer"]],
     ):
         self.vocab_size = vocab_size
-        self._batch_ref = weakref.ref(batch)
+        self.batch = batch
         self.device = batch.device
         self.penalizers = {Penalizer: Penalizer(self) for Penalizer in penalizers}
 
@@ -27,17 +26,6 @@ class BatchedPenalizerOrchestrator:
             pen_is_required = penalizer.prepare_if_required()
             is_required |= pen_is_required
         self.is_required = is_required
-
-    @property
-    def batch(self) -> ScheduleBatch | None:
-        return self._batch_ref()
-
-    @batch.setter
-    def batch(self, value: Optional[ScheduleBatch]):
-        if value is None:
-            self._batch_ref = lambda: None
-        else:
-            self._batch_ref = weakref.ref(value)
 
     def reqs(self):
         return self.batch.reqs

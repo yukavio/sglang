@@ -385,10 +385,6 @@ class LlamaModel(nn.Module):
                     "Self attention has no KV cache scaling " "factor attribute!"
                 )
 
-    def get_input_embeddings(self) -> nn.Embedding:
-        """Get input embeddings from the model."""
-        return self.embed_tokens
-
 
 class LlamaForCausalLM(nn.Module):
     # BitandBytes specific attributes

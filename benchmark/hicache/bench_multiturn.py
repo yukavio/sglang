@@ -105,15 +105,11 @@ def parse_args():
         action="store_true",
         help="If set, disable automatically testing with a range of request rates.",
     )
+
     parser.add_argument(
         "--disable-random-sample",
         action="store_true",
         help="If set, disable random sampling of requests from the ShareGPT dataset.",
-    )
-    parser.add_argument(
-        "--enable-round-barrier",
-        action="store_true",
-        help="If set, only send i-th turn requests after all (i-1)-th turn requests finished.",
     )
     parser.add_argument(
         "--sub-question-input-length",
@@ -134,12 +130,6 @@ def parse_args():
         help="Tag of a certain run in the log file",
     )
     parser.add_argument("--seed", type=int, default=1, help="The random seed.")
-    parser.add_argument(
-        "--lora-path",
-        type=str,
-        default="",
-        help="String of LoRA path. Currently we only support benchmarking on a single LoRA adaptor.",
-    )
     return parser.parse_args()
 
 
@@ -201,7 +191,6 @@ async def async_request_sglang_generate(
                     output.latency = latency
                     output.prompt_len = prompt_tokens
                     output.cached_tokens = cached_tokens
-                    output.generated_len = len(output.itl) + 1
                 else:
                     output.error = response.reason or ""
                     output.success = False
@@ -215,7 +204,7 @@ async def async_request_sglang_generate(
     return output
 
 
-def gen_payload(prompt, output_len, lora_path=""):
+def gen_payload(prompt, output_len):
     payload = {
         "text": prompt,
         "sampling_params": {
@@ -225,7 +214,7 @@ def gen_payload(prompt, output_len, lora_path=""):
         },
         "stream": True,
         "stream_options": {"include_usage": True},
-        "lora_path": lora_path,
+        "lora_path": "",
         "return_logprob": False,
         "logprob_start_len": -1,
     }
@@ -313,12 +302,7 @@ class WorkloadGenerator:
         )
 
         init_requests = [
-            (
-                i,
-                gen_payload(
-                    self.candidate_inputs[i], args.output_length, args.lora_path
-                ),
-            )
+            (i, gen_payload(self.candidate_inputs[i], args.output_length))
             for i in range(args.num_clients)
         ]
         self.client_records = {
@@ -337,21 +321,7 @@ class WorkloadGenerator:
             "latency": [],
             "prompt_len": [],
             "cached_tokens": [],
-            "generated_len": [],
         }
-        self.enable_round_barrier = args.enable_round_barrier
-        if self.enable_round_barrier:
-            # Add round-specific metrics while preserving the original structure
-            for i in range(args.num_rounds):
-                self.performance_metrics[f"round_{i}"] = {
-                    "ttft": [],
-                    "latency": [],
-                    "prompt_len": [],
-                    "cached_tokens": [],
-                    "generated_len": [],
-                }
-        self.num_clients = args.num_clients
-
         self.num_rounds = args.num_rounds
         self.max_parallel = args.max_parallel
         self.output_length = args.output_length
@@ -400,7 +370,6 @@ class WorkloadGenerator:
         loop.close()
 
     def response_handler(self):
-        next_round_reqs = []
         while True:
             try:
                 client_id, response = self.response_queue.get(
@@ -409,29 +378,11 @@ class WorkloadGenerator:
                 if not response.success:
                     raise ValueError(f"Request failed with error: {response.error}")
                 self.client_records[client_id]["history"] += response.generated_text
-                current_round = self.client_records[client_id]["round"]
                 self.client_records[client_id]["round"] += 1
                 self.performance_metrics["ttft"].append(response.ttft)
                 self.performance_metrics["latency"].append(response.latency)
                 self.performance_metrics["prompt_len"].append(response.prompt_len)
                 self.performance_metrics["cached_tokens"].append(response.cached_tokens)
-                self.performance_metrics["generated_len"].append(response.generated_len)
-                if self.enable_round_barrier:
-                    self.performance_metrics[f"round_{current_round}"]["ttft"].append(
-                        response.ttft
-                    )
-                    self.performance_metrics[f"round_{current_round}"][
-                        "latency"
-                    ].append(response.latency)
-                    self.performance_metrics[f"round_{current_round}"][
-                        "prompt_len"
-                    ].append(response.prompt_len)
-                    self.performance_metrics[f"round_{current_round}"][
-                        "cached_tokens"
-                    ].append(response.cached_tokens)
-                    self.performance_metrics[f"round_{current_round}"][
-                        "generated_len"
-                    ].append(response.generated_len)
                 self.completed_requests += 1
 
                 if self.client_records[client_id]["round"] < self.num_rounds:
@@ -439,22 +390,15 @@ class WorkloadGenerator:
                     self.client_records[client_id][
                         "history"
                     ] += self.sub_question_inputs.pop().prompt
-                    new_req = (
-                        client_id,
-                        gen_payload(
-                            self.client_records[client_id]["history"],
-                            self.output_length,
-                            args.lora_path,
-                        ),
+                    self.ready_queue.append(
+                        (
+                            client_id,
+                            gen_payload(
+                                self.client_records[client_id]["history"],
+                                self.output_length,
+                            ),
+                        )
                     )
-                    if self.enable_round_barrier:
-                        next_round_reqs.append(new_req)
-                        if len(next_round_reqs) == self.num_clients:
-                            for req in next_round_reqs:
-                                self.ready_queue.append(req)
-                            next_round_reqs = []
-                    else:
-                        self.ready_queue.append(new_req)
             except queue.Empty:
                 if self.pbar.n == self.pbar.total:
                     break
@@ -474,23 +418,10 @@ class WorkloadGenerator:
         response_thread.join()
         self.pbar.close()
 
-        duration = self.finished_time - self.start_time
         performance_data = {
             "summary": {
                 "total_requests": len(self.performance_metrics["ttft"]),
                 "request_rate": self.request_rate,
-                "average_prompt_len": (
-                    sum(self.performance_metrics["prompt_len"])
-                    / len(self.performance_metrics["prompt_len"])
-                    if self.performance_metrics["prompt_len"]
-                    else 0.0
-                ),
-                "average_output_len": (
-                    sum(self.performance_metrics["generated_len"])
-                    / len(self.performance_metrics["generated_len"])
-                    if self.performance_metrics["generated_len"]
-                    else 0.0
-                ),
                 "average_ttft": sum(self.performance_metrics["ttft"])
                 / len(self.performance_metrics["ttft"]),
                 "p90_ttft": sorted(self.performance_metrics["ttft"])[
@@ -507,13 +438,7 @@ class WorkloadGenerator:
                 "median_latency": sorted(self.performance_metrics["latency"])[
                     len(self.performance_metrics["latency"]) // 2
                 ],
-                "input_token_throughput": sum(self.performance_metrics["prompt_len"])
-                / duration,
-                "output_token_throughput": sum(
-                    self.performance_metrics["generated_len"]
-                )
-                / duration,
-                "throughput": self.pbar.total / duration,
+                "throughput": self.pbar.total / (self.finished_time - self.start_time),
                 "cache_hit_rate": (
                     0
                     if sum(self.performance_metrics["prompt_len"]) == 0
@@ -522,35 +447,10 @@ class WorkloadGenerator:
                 ),
             },
         }
-        if self.enable_round_barrier:
-            performance_data["round"] = {}
-            for round_num in range(args.num_rounds):
-                round_key = f"round_{round_num}"
-                round_metrics = self.performance_metrics[round_key]
-                performance_data["round"][round_key] = {
-                    "average_ttft": (
-                        sum(round_metrics["ttft"]) / len(round_metrics["ttft"])
-                        if round_metrics["ttft"]
-                        else 0
-                    ),
-                    "cache_hit_rate": (
-                        0
-                        if sum(round_metrics["prompt_len"]) == 0
-                        else sum(round_metrics["cached_tokens"])
-                        / sum(round_metrics["prompt_len"])
-                    ),
-                    "request_count": len(round_metrics["ttft"]),
-                }
         print("All requests completed")
         print("Performance metrics summary:")
         print(
             f"  Total requests: {performance_data['summary']['total_requests']} at {performance_data['summary']['request_rate']} requests per second"
-        )
-        print(
-            f"  Average Prompt Length: {performance_data['summary']['average_prompt_len']:.2f} tokens"
-        )
-        print(
-            f"  Average Output Length: {performance_data['summary']['average_output_len']:.2f} tokens"
         )
         print(f"  Average TTFT: {performance_data['summary']['average_ttft']:.2f}")
         print(f"  P90 TTFT: {performance_data['summary']['p90_ttft']:.2f}")
@@ -561,35 +461,9 @@ class WorkloadGenerator:
         print(f"  P90 latency: {performance_data['summary']['p90_latency']:.2f}")
         print(f"  Median latency: {performance_data['summary']['median_latency']:.2f}")
         print(
-            f"  Input token throughput: {performance_data['summary']['input_token_throughput']:.2f} tokens per second"
-        )
-        print(
-            f"  Output token throughput: {performance_data['summary']['output_token_throughput']:.2f} tokens per second"
-        )
-        print(
-            f"  Request Throughput: {performance_data['summary']['throughput']:.2f} requests per second"
+            f"  Throughput: {performance_data['summary']['throughput']:.2f} requests per second"
         )
         print(f"  Cache Hit Rate: {performance_data['summary']['cache_hit_rate']:.6f}")
-
-        if self.enable_round_barrier:
-            # Print round-basedsummary
-            print("Per-round metrics:")
-            if "round" in performance_data:
-                for round_num in range(self.num_rounds):
-                    round_key = f"round_{round_num}"
-                    if round_key in performance_data["round"]:
-                        round_data = performance_data["round"][round_key]
-                        avg_ttft = round_data["average_ttft"]
-                        cache_hit_rate = round_data["cache_hit_rate"]
-                        request_count = round_data["request_count"]
-                        print(
-                            f"  Round {round_num}: Average TTFT = {avg_ttft:.2f}s, "
-                            f"Cache Hit Rate = {cache_hit_rate:.6f} "
-                            f"({request_count} requests)"
-                        )
-                    else:
-                        print(f"  Round {round_num}: No requests completed")
-
         return performance_data
 
 

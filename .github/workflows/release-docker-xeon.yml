@@ -1,4 +1,4 @@
-name: Release Docker Xeon Images
+name: Release Docker Images
 on:
   push:
     branches:

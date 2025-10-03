@@ -7,7 +7,7 @@
 #include "utils.h"
 
 __device__ __forceinline__ float GroupReduceMax(float val, const int tid) {
-  unsigned mask = threadIdx.x % 32 >= 16 ? 0xffff0000 : 0x0000ffff;
+  unsigned mask = 0xffff;
 
   val = fmaxf(val, __shfl_xor_sync(mask, val, 8));
   val = fmaxf(val, __shfl_xor_sync(mask, val, 4));

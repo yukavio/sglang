@@ -10,22 +10,19 @@ from sglang.srt.hf_transformers_utils import AutoConfig
 
 @dataclass
 class LoRABatchInfo:
-    # The forward mode is using CUDA Graph.
-    use_cuda_graph: bool
-
     # Batch size
     bs: int
 
-    # Number of segments. For triton backend, it is equal to batch size.
-    num_segments: int
+    # Lengths of each sequence in shape (bs,)
+    seg_lens: torch.Tensor
 
-    # Maximum segment length of current batch
-    max_len: int
-
-    # Indice pointers of each segment in shape (num_segments + 1, )
+    # Indice pointers of each sequence in shape (bs + 1, )
     seg_indptr: torch.Tensor
 
-    # The index of lora adapter used by each segment, in shape (num_segments,)
+    # Maximum sequence length of current batch
+    max_len: int
+
+    # The index of lora adapter used by each sequence, in shape (bs,)
     weight_indices: torch.Tensor
 
     # ranks of each lora adapter, in shape (lora_num,)
@@ -33,12 +30,6 @@ class LoRABatchInfo:
 
     # scaling of each lora adapter, in shape (lora_num,)
     scalings: torch.Tensor
-
-    # Lengths of each segments in shape (num_segments,)
-    seg_lens: Optional[torch.Tensor]
-
-    # The logical (re)ordering of input rows (tokens), in shape (num_tokens,)
-    permutation: Optional[torch.Tensor]
 
 
 class LoRAType(Enum):
@@ -57,14 +48,14 @@ def get_layer_id(name: str) -> int:
 
 
 def get_hidden_dim(
-    module_name: str, config: AutoConfig, base_model: torch.nn.Module, layer_idx: int
+    module_name: str, config: AutoConfig, base_model: torch.nn.Module
 ) -> Tuple[int]:
     """
     Given a module_name (might be a stacked name), return the hidden dims of modules' input and output.
     """
 
     if hasattr(base_model, "get_hidden_dim"):
-        return base_model.get_hidden_dim(module_name, layer_idx)
+        return base_model.get_hidden_dim(module_name)
     else:
         """
         WARNING: get_hidden_dim() is not defined,
