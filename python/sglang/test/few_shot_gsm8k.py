@@ -129,7 +129,6 @@ def run_eval(args):
 
     return {
         "accuracy": acc,
-        "invalid": invalid,
         "latency": latency,
         "output_throughput": output_throughput,
     }

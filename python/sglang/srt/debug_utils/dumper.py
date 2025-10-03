@@ -53,7 +53,7 @@ class _Dumper:
         if self._partial_name is None:
             self._partial_name = _get_partial_name()
 
-        rank = _get_rank()
+        rank = dist.get_rank()
         full_kwargs = dict(
             forward_pass_id=self._forward_pass_id,
             rank=rank,
@@ -80,18 +80,10 @@ class _Dumper:
 
 
 def _get_partial_name():
-    rank = _get_rank()
+    rank = dist.get_rank()
     object_list = [str(time.time()) if rank == 0 else None]
-    if dist.is_initialized():
-        dist.broadcast_object_list(object_list, device="cuda")
+    dist.broadcast_object_list(object_list, device="cuda")
     return object_list[0]
-
-
-def _get_rank():
-    if dist.is_initialized():
-        return dist.get_rank()
-    else:
-        return 0
 
 
 def get_truncated_value(value):

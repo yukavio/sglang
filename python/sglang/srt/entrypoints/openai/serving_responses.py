@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Adapted from vLLM's OpenAIServingResponses
 """Handler for /v1/responses requests"""
-from __future__ import annotations
 
 import asyncio
 import copy
@@ -10,7 +9,7 @@ import logging
 import time
 from contextlib import AsyncExitStack
 from http import HTTPStatus
-from typing import TYPE_CHECKING, Any, AsyncGenerator, AsyncIterator, Optional, Union
+from typing import Any, AsyncGenerator, AsyncIterator, Optional, Union
 
 import jinja2
 import openai.types.responses as openai_responses_types
@@ -55,12 +54,10 @@ from sglang.srt.entrypoints.openai.protocol import (
 from sglang.srt.entrypoints.openai.serving_chat import OpenAIServingChat
 from sglang.srt.entrypoints.openai.tool_server import MCPToolServer, ToolServer
 from sglang.srt.managers.io_struct import GenerateReqInput
-from sglang.srt.parser.reasoning_parser import ReasoningParser
+from sglang.srt.managers.template_manager import TemplateManager
+from sglang.srt.managers.tokenizer_manager import TokenizerManager
+from sglang.srt.reasoning_parser import ReasoningParser
 from sglang.srt.utils import random_uuid
-
-if TYPE_CHECKING:
-    from sglang.srt.managers.template_manager import TemplateManager
-    from sglang.srt.managers.tokenizer_manager import TokenizerManager
 
 logger = logging.getLogger(__name__)
 
@@ -245,7 +242,6 @@ class OpenAIServingResponses(OpenAIServingChat):
                         sampling_params=sampling_params,
                         stream=request.stream,
                         rid=request.request_id,
-                        extra_key=self._compute_extra_key(request),
                         background=request.background,
                     )
 
@@ -948,7 +944,7 @@ class OpenAIServingResponses(OpenAIServingChat):
                                     type="output_text",
                                     text="",
                                     annotations=[],
-                                    logprobs=None,
+                                    logprobs=[],
                                 ),
                             )
                         )
@@ -996,7 +992,7 @@ class OpenAIServingResponses(OpenAIServingChat):
                                     type="output_text",
                                     text="",
                                     annotations=[],
-                                    logprobs=None,
+                                    logprobs=[],
                                 ),
                             )
                         )
@@ -1251,7 +1247,6 @@ class OpenAIServingResponses(OpenAIServingChat):
                 sampling_params=sampling_params,
                 stream=adapted_request.stream,
                 rid=request_id,
-                extra_key=adapted_request.extra_key,
                 return_logprob=adapted_request.return_logprob,
                 logprob_start_len=adapted_request.logprob_start_len,
                 top_logprobs_num=adapted_request.top_logprobs_num,

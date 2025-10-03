@@ -18,7 +18,6 @@ from data_utils import (
     construct_prompt,
     load_yaml,
     process_single_sample,
-    save_json,
 )
 from datasets import concatenate_datasets, load_dataset
 from tqdm import tqdm
@@ -29,7 +28,7 @@ class EvalArgs:
     seed: int = 42
     split: str = "validation"
     image_pixels_limit: int = -1
-    result_filename: str = f"./val_sglang.json"
+    result_filename: str = ""
     prompt_format_file: str = "prompt_format.yaml"
     dataset_path: str = "MMMU/MMMU"
     extra_request_body: Optional[str] = None
@@ -446,18 +445,6 @@ def eval_multi_choice(gold_i, pred_i):
     Evaluate a multiple choice instance.
     """
     correct = False
-    # for case like Answer: A, Answer is A, answer is A, answer: A
-    for _exp in ["Answer:", "Answer is ", "answer is ", "answer: "]:
-        if _exp in pred_i:
-            pred_i = pred_i.split(_exp)[1].strip()
-            break
-    # for case like (A), (B), (C), (D) ......
-    if "(" in pred_i and ")" in pred_i:
-        try:
-            pred_i = re.search(r"\(([A-Z])\)", pred_i).group(1)
-        except:
-            print(f"Error to extract answer from: {pred_i}")
-            pass
     # only they are exactly the same, we consider it as correct
     if isinstance(gold_i, list):
         for answer in gold_i:
@@ -548,12 +535,7 @@ def process_result(response, sample, answer_dict, out_samples):
     else:  # open question
         pred_ans = response
 
-    out_samples[sample["id"]] = {
-        "pred_ans": pred_ans,
-        "original_response": sample["original_response"],
-        "ground_truth": sample["answer"],
-        "question_type": sample["question_type"],
-    }
+    out_samples[sample["id"]] = pred_ans
 
     # set ground truth answer
     answer_dict[sample["id"]] = {
@@ -572,12 +554,6 @@ def eval_result(model_answer_path, answer_dict, eval_output_path=None):
     # group by category
     output_dict_w_cat = {}
     for data_id, parsed_pred in output_dict.items():
-        if isinstance(parsed_pred, str):
-            parsed_pred = parsed_pred
-        elif isinstance(parsed_pred, dict):
-            parsed_pred = parsed_pred["pred_ans"]
-        else:
-            raise ValueError(f"Unknown type of parsed_pred: {type(parsed_pred)}")
         category = "_".join(data_id.split("_")[1:-1])
         if category not in output_dict_w_cat:
             output_dict_w_cat.update({category: {}})
@@ -624,12 +600,9 @@ def eval_result(model_answer_path, answer_dict, eval_output_path=None):
 
         judge_dict, metric_dict = evaluate(exampels_to_eval)
         metric_dict.update({"num_example": len(exampels_to_eval)})
-        for key, value in judge_dict.items():
-            output_dict[key]["judge"] = value
 
         evaluation_result[category] = metric_dict
 
-    save_json(model_answer_path, output_dict)
     printable_results = {}
     # pdb.set_trace()
     # add domain Subject

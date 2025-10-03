@@ -63,9 +63,7 @@ use super::{get_healthy_worker_indices, CacheAwareConfig, LoadBalancingPolicy};
 use crate::core::Worker;
 use crate::metrics::RouterMetrics;
 use crate::tree::Tree;
-use dashmap::DashMap;
-use rand::Rng;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use tracing::debug;
@@ -74,11 +72,10 @@ use tracing::debug;
 ///
 /// Routes requests based on cache affinity when load is balanced,
 /// switches to shortest-queue routing when load is imbalanced.
-/// Maintains separate trees per model for multi-model support.
 #[derive(Debug)]
 pub struct CacheAwarePolicy {
     config: CacheAwareConfig,
-    trees: Arc<DashMap<String, Arc<Tree>>>,
+    tree: Arc<Mutex<Tree>>,
     eviction_handle: Option<thread::JoinHandle<()>>,
 }
 
@@ -88,26 +85,20 @@ impl CacheAwarePolicy {
     }
 
     pub fn with_config(config: CacheAwareConfig) -> Self {
-        let trees = Arc::new(DashMap::<String, Arc<Tree>>::new());
+        let tree = Arc::new(Mutex::new(Tree::new()));
 
         // Start background eviction thread if configured
         let eviction_handle = if config.eviction_interval_secs > 0 {
-            let trees_clone = Arc::clone(&trees);
+            let tree_clone = Arc::clone(&tree);
             let max_tree_size = config.max_tree_size;
             let interval = config.eviction_interval_secs;
 
             Some(thread::spawn(move || loop {
                 thread::sleep(Duration::from_secs(interval));
 
-                // Evict for all model trees
-                for tree_ref in trees_clone.iter() {
-                    let model_id = tree_ref.key();
-                    let tree = tree_ref.value();
-                    tree.evict_tenant_by_size(max_tree_size);
-                    debug!(
-                        "Cache eviction completed for model {}, max_size: {}",
-                        model_id, max_tree_size
-                    );
+                if let Ok(tree_guard) = tree_clone.lock() {
+                    tree_guard.evict_tenant_by_size(max_tree_size);
+                    debug!("Cache eviction completed, max_size: {}", max_tree_size);
                 }
             }))
         } else {
@@ -116,100 +107,38 @@ impl CacheAwarePolicy {
 
         Self {
             config,
-            trees,
+            tree,
             eviction_handle,
         }
     }
 
     /// Initialize the tree with worker URLs (used only during initial setup)
-    pub fn init_workers(&self, workers: &[Arc<dyn Worker>]) {
-        // Group workers by model
-        let mut model_workers: std::collections::HashMap<String, Vec<&Arc<dyn Worker>>> =
-            std::collections::HashMap::new();
-        for worker in workers {
-            // Use "default" for unknown/empty model_ids for backward compatibility
-            let model_id = worker.model_id();
-            let tree_key = if model_id.is_empty() || model_id == "unknown" {
-                "default"
-            } else {
-                model_id
-            };
-            model_workers
-                .entry(tree_key.to_string())
-                .or_default()
-                .push(worker);
-        }
-
-        // Initialize tree for each model
-        for (tree_key, model_workers) in model_workers {
-            let tree = self
-                .trees
-                .entry(tree_key)
-                .or_insert_with(|| Arc::new(Tree::new()));
-            for worker in model_workers {
+    pub fn init_workers(&self, workers: &[Box<dyn Worker>]) {
+        if let Ok(tree) = self.tree.lock() {
+            for worker in workers {
                 tree.insert("", worker.url());
             }
         }
     }
 
     /// Add a single worker to the tree (incremental update)
-    pub fn add_worker(&self, worker: &dyn Worker) {
-        // For backward compatibility: if model_id is "unknown" or empty,
-        // use a default tree. This preserves existing behavior for single-model routers.
-        let model_id = worker.model_id();
-        let tree_key = if model_id.is_empty() || model_id == "unknown" {
-            "default"
-        } else {
-            model_id
-        };
-        let tree = self
-            .trees
-            .entry(tree_key.to_string())
-            .or_insert_with(|| Arc::new(Tree::new()));
-        tree.insert("", worker.url());
-    }
-
-    /// Add a worker by URL and model (for backward compatibility)
-    pub fn add_worker_by_url(&self, url: &str, model_id: &str) {
-        let tree = self
-            .trees
-            .entry(model_id.to_string())
-            .or_insert_with(|| Arc::new(Tree::new()));
-        tree.insert("", url);
-    }
-
-    /// Remove a worker from the tree
-    pub fn remove_worker(&self, worker: &dyn Worker) {
-        // Use same logic as add_worker for consistency
-        let model_id = worker.model_id();
-        let tree_key = if model_id.is_empty() || model_id == "unknown" {
-            "default"
-        } else {
-            model_id
-        };
-        if let Some(tree) = self.trees.get(tree_key) {
-            tree.remove_tenant(worker.url());
+    pub fn add_worker(&self, url: &str) {
+        if let Ok(tree) = self.tree.lock() {
+            tree.insert("", url);
         }
     }
 
-    /// Remove a worker by URL (removes from all model trees for backward compatibility)
-    pub fn remove_worker_by_url(&self, url: &str) {
-        // Remove from all trees since we don't know which model it belongs to
-        for tree_ref in self.trees.iter() {
-            tree_ref.value().remove_tenant(url);
+    /// Remove a worker from the tree
+    pub fn remove_worker(&self, url: &str) {
+        if let Ok(tree) = self.tree.lock() {
+            tree.remove_tenant(url);
         }
     }
 
     /// Run cache eviction to prevent unbounded growth
     pub fn evict_cache(&self, max_size: usize) {
-        for tree_ref in self.trees.iter() {
-            let model_id = tree_ref.key();
-            let tree = tree_ref.value();
+        if let Ok(tree) = self.tree.lock() {
             tree.evict_tenant_by_size(max_size);
-            debug!(
-                "Cache eviction for model {}, max_size: {}",
-                model_id, max_size
-            );
         }
     }
 }
@@ -217,7 +146,7 @@ impl CacheAwarePolicy {
 impl LoadBalancingPolicy for CacheAwarePolicy {
     fn select_worker(
         &self,
-        workers: &[Arc<dyn Worker>],
+        workers: &[Box<dyn Worker>],
         request_text: Option<&str>,
     ) -> Option<usize> {
         let healthy_indices = get_healthy_worker_indices(workers);
@@ -225,15 +154,6 @@ impl LoadBalancingPolicy for CacheAwarePolicy {
         if healthy_indices.is_empty() {
             return None;
         }
-
-        // Determine the model for this set of workers (router pre-filters by model)
-        // All workers should be from the same model
-        let first_model = workers[healthy_indices[0]].model_id();
-        let model_id = if first_model.is_empty() || first_model == "unknown" {
-            "default"
-        } else {
-            first_model
-        };
 
         // Get current load statistics
         let loads: Vec<usize> = workers.iter().map(|w| w.load()).collect();
@@ -267,18 +187,8 @@ impl LoadBalancingPolicy for CacheAwarePolicy {
 
             // Even in imbalanced mode, update the tree to maintain cache state
             if let Some(text) = request_text {
-                // Get the tree reference without locking the entire HashMap
-                // DashMap only locks the specific shard containing this key
-                let tree = self.trees.get(model_id).map(|entry| entry.value().clone());
-
-                if let Some(tree) = tree {
-                    // Now we can work with the tree without holding the HashMap lock
+                if let Ok(tree) = self.tree.lock() {
                     tree.insert(text, workers[min_load_idx].url());
-                } else {
-                    debug!(
-                        "Warning: No tree found for model '{}', skipping cache update",
-                        model_id
-                    );
                 }
             }
 
@@ -293,12 +203,7 @@ impl LoadBalancingPolicy for CacheAwarePolicy {
         // Use cache-aware routing when balanced
         let text = request_text.unwrap_or("");
 
-        // Get the tree reference without locking the entire HashMap
-        // DashMap only locks the specific shard containing this key
-        let tree = self.trees.get(model_id).map(|entry| entry.value().clone());
-
-        if let Some(tree) = tree {
-            // Now we work with the tree without holding the HashMap lock
+        if let Ok(tree) = self.tree.lock() {
             let (matched_text, matched_worker) = tree.prefix_match(text);
             let match_rate = if text.is_empty() {
                 0.0
@@ -334,18 +239,11 @@ impl LoadBalancingPolicy for CacheAwarePolicy {
             }
 
             // Fallback to first healthy worker
-            healthy_indices.first().copied()
-        } else {
-            // No tree for this model, log warning and use random selection
-            debug!(
-                "Warning: No tree found for model '{}', using random worker selection",
-                model_id
-            );
-            // Return a random healthy worker
-            let mut rng = rand::rng();
-            let random_idx = rng.random_range(0..healthy_indices.len());
-            Some(healthy_indices[random_idx])
+            return healthy_indices.first().copied();
         }
+
+        // Fallback to first healthy worker if tree operations fail
+        healthy_indices.first().copied()
     }
 
     fn name(&self) -> &'static str {
@@ -374,8 +272,8 @@ impl LoadBalancingPolicy for CacheAwarePolicy {
 
     fn select_worker_pair(
         &self,
-        prefill_workers: &[Arc<dyn Worker>],
-        decode_workers: &[Arc<dyn Worker>],
+        prefill_workers: &[Box<dyn Worker>],
+        decode_workers: &[Box<dyn Worker>],
         request_text: Option<&str>,
     ) -> Option<(usize, usize)> {
         // DEPRECATED: This method is no longer used when separate policies are configured.
@@ -425,7 +323,7 @@ impl Drop for CacheAwarePolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{BasicWorkerBuilder, WorkerType};
+    use crate::core::{BasicWorker, WorkerType};
 
     #[test]
     fn test_cache_aware_with_balanced_load() {
@@ -435,19 +333,15 @@ mod tests {
             ..Default::default()
         };
         let policy = CacheAwarePolicy::with_config(config);
-        let workers: Vec<Arc<dyn Worker>> = vec![
-            Arc::new(
-                BasicWorkerBuilder::new("http://w1:8000")
-                    .worker_type(WorkerType::Regular)
-                    .api_key("test_api_key")
-                    .build(),
-            ),
-            Arc::new(
-                BasicWorkerBuilder::new("http://w2:8000")
-                    .worker_type(WorkerType::Regular)
-                    .api_key("test_api_key")
-                    .build(),
-            ),
+        let workers: Vec<Box<dyn Worker>> = vec![
+            Box::new(BasicWorker::new(
+                "http://w1:8000".to_string(),
+                WorkerType::Regular,
+            )),
+            Box::new(BasicWorker::new(
+                "http://w2:8000".to_string(),
+                WorkerType::Regular,
+            )),
         ];
 
         // Initialize the policy with workers
@@ -475,12 +369,8 @@ mod tests {
             max_tree_size: 10000,
         });
 
-        let worker1 = BasicWorkerBuilder::new("http://w1:8000")
-            .worker_type(WorkerType::Regular)
-            .build();
-        let worker2 = BasicWorkerBuilder::new("http://w2:8000")
-            .worker_type(WorkerType::Regular)
-            .build();
+        let worker1 = BasicWorker::new("http://w1:8000".to_string(), WorkerType::Regular);
+        let worker2 = BasicWorker::new("http://w2:8000".to_string(), WorkerType::Regular);
 
         // Create significant load imbalance
         for _ in 0..20 {
@@ -488,7 +378,7 @@ mod tests {
         }
         // worker2 has load 0
 
-        let workers: Vec<Arc<dyn Worker>> = vec![Arc::new(worker1), Arc::new(worker2)];
+        let workers: Vec<Box<dyn Worker>> = vec![Box::new(worker1), Box::new(worker2)];
         policy.init_workers(&workers);
 
         // Should select worker2 (lower load) despite cache affinity
@@ -505,17 +395,15 @@ mod tests {
             ..Default::default()
         };
         let policy = CacheAwarePolicy::with_config(config);
-        let workers: Vec<Arc<dyn Worker>> = vec![
-            Arc::new(
-                BasicWorkerBuilder::new("http://w1:8000")
-                    .worker_type(WorkerType::Regular)
-                    .build(),
-            ),
-            Arc::new(
-                BasicWorkerBuilder::new("http://w2:8000")
-                    .worker_type(WorkerType::Regular)
-                    .build(),
-            ),
+        let workers: Vec<Box<dyn Worker>> = vec![
+            Box::new(BasicWorker::new(
+                "http://w1:8000".to_string(),
+                WorkerType::Regular,
+            )),
+            Box::new(BasicWorker::new(
+                "http://w2:8000".to_string(),
+                WorkerType::Regular,
+            )),
         ];
 
         policy.init_workers(&workers);
@@ -525,7 +413,7 @@ mod tests {
         policy.select_worker(&workers, Some("test2"));
 
         // Remove a worker
-        policy.remove_worker_by_url("http://w1:8000");
+        policy.remove_worker("http://w1:8000");
         workers[0].set_healthy(false);
 
         // All requests should now go to worker2
