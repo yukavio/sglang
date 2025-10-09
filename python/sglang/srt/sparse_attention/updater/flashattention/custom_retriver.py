@@ -88,7 +88,6 @@ class NaiveDecodeSparseRetriver:
 
     def build_stream(self, forward_batch: "ForwardBatch", metadata: "FlashAttentionMetadata") -> "FlashAttentionMetadata":
         self.stream_indices_page = self._get_stream_indices(forward_batch)
-        return metadata
         
     def _get_stream_indices(self, forward_batch: "ForwardBatch"):
         token_indices = forward_batch.req_to_token_pool.req_to_token[forward_batch.req_pool_indices, :]
