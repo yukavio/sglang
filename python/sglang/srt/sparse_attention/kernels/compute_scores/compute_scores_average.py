@@ -84,14 +84,17 @@ def _compute_average_score_kernel(
     is_not_zero = page_offsets != 0
     is_page_valid = is_in_valid_pages & is_not_zero
 
-    if pid_block == 0:
-        is_sink = page_offsets <= num_sink_pages
-        is_page_valid = is_page_valid & (~is_sink)
-        
-    last_valid_page_idx = max_page_index
-    local_start_idx = last_valid_page_idx - num_local_pages + 1
+    first_valid_page = tl.load(kv_pages_per_seq + bid * MAX_NUM_TOKEN_PAGES)
+    last_valid_page = tl.load(kv_pages_per_seq + bid * MAX_NUM_TOKEN_PAGES + num_valid_pages - 1)
     
-    is_in_local = (page_offsets >= local_start_idx) & (page_offsets <= last_valid_page_idx)
+    # [first_valid_page, first_valid_page + num_sink_pages)
+    sink_end_page = first_valid_page + num_sink_pages
+    is_sink = (page_offsets >= first_valid_page) & (page_offsets < sink_end_page) & is_in_valid_pages
+    is_page_valid = is_page_valid & (~is_sink)
+    
+    # [last_valid_page - num_local_pages + 1, last_valid_page]
+    local_start_page = last_valid_page - num_local_pages + 1
+    is_in_local = (page_offsets >= local_start_page) & (page_offsets <= last_valid_page) & is_in_valid_pages
     is_page_valid = is_page_valid & (~is_in_local)
 
     out_ptrs = (Out + bid * scores_stride_b + 
