@@ -136,7 +136,6 @@ def compute_average_score(q: torch.Tensor,
         NUM_KV_HEADS, 
         triton.cdiv(num_pages, meta['BLOCK_SIZE_P'])
     )
-    
     _compute_average_score_kernel[grid](
         q, k, out, kv_pages_per_seq, kv_pages_num_per_seq, kv_pages_per_seq_max,
         # Strides
