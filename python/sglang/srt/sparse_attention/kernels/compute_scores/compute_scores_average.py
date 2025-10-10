@@ -84,21 +84,12 @@ def _compute_average_score_kernel(
     is_not_zero = page_offsets != 0
     is_page_valid = is_in_valid_pages & is_not_zero
 
-    # take the first num_sink_pages pages from the valid pages list
-    sink_page_offsets = tl.arange(0, PADDED_MAX_NUM_TOKEN_PAGES)
-    sink_pages = tl.load(token_base_ptr + sink_page_offsets,
-                        mask=(sink_page_offsets < num_sink_pages) & (sink_page_offsets < num_valid_pages), other=-1)
-    is_in_sink_matrix = (page_offsets[:, None] == sink_pages[None, :])
-    is_sink = tl.sum(is_in_sink_matrix.to(tl.int32), axis=1) > 0
+    position_indices = tl.argmax(is_in_valid_pages_matrix.to(tl.int32), axis=1)
+    is_sink = (position_indices < num_sink_pages) & is_in_valid_pages
     is_page_valid = is_page_valid & (~is_sink)
     
-    # take the last num_local_pages pages from the valid pages list
     local_start_idx = tl.maximum(num_valid_pages - num_local_pages, 0)
-    local_page_offsets = local_start_idx + tl.arange(0, PADDED_MAX_NUM_TOKEN_PAGES)
-    local_pages = tl.load(token_base_ptr + local_page_offsets,
-                         mask=(local_page_offsets < num_valid_pages) & (tl.arange(0, PADDED_MAX_NUM_TOKEN_PAGES) < num_local_pages), other=-1)
-    is_in_local_matrix = (page_offsets[:, None] == local_pages[None, :])
-    is_in_local = tl.sum(is_in_local_matrix.to(tl.int32), axis=1) > 0
+    is_in_local = (position_indices >= local_start_idx) & is_in_valid_pages
     is_page_valid = is_page_valid & (~is_in_local)
 
     out_ptrs = (Out + bid * scores_stride_b + 
