@@ -85,10 +85,10 @@ def _compute_average_score_kernel(
     is_page_valid = is_in_valid_pages & is_not_zero
 
     if pid_block == 0:
-        is_sink = page_offsets < num_sink_pages
+        is_sink = page_offsets <= num_sink_pages
         is_page_valid = is_page_valid & (~is_sink)
         
-    last_valid_page_idx = max_page_index - 1
+    last_valid_page_idx = max_page_index
     local_start_idx = last_valid_page_idx - num_local_pages + 1
     
     is_in_local = (page_offsets >= local_start_idx) & (page_offsets <= last_valid_page_idx)
@@ -156,5 +156,4 @@ def compute_average_score(q: torch.Tensor,
         PADDED_HEAD_DIM=PADDED_HEAD_DIM,
         MAX_NUM_TOKEN_PAGES=max_num_token_pages,
         PADDED_MAX_NUM_TOKEN_PAGES=padded_max_num_token_pages,
-        
     )
