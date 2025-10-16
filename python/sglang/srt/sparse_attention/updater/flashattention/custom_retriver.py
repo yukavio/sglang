@@ -208,8 +208,6 @@ class NaiveDecodeSparseRetriver:
         if self.cache_manager.config.async_retrive:
             retrive_result = self.cache_manager.get_result(layer.layer_id)
             new_seq_lens = self._combine_indices_async(retrive_result, forward_batch.req_pool_indices, forward_batch.req_to_token_pool.req_to_token, forward_batch.seq_lens, diff)
-            # if layer.layer_id == 0:
-                # print(f'{new_seq_lens=}')
             num_heads = self.cache_manager.config.keys[0].shape[1]
             
             # set metadata info
