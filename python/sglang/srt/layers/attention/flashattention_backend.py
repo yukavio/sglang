@@ -346,7 +346,7 @@ class FlashAttentionBackend(AttentionBackend):
                 use_cuda_graph=not model_runner.server_args.disable_cuda_graph,
                 max_bs=32,
                 page_size=self.page_size,
-                top_k=16,
+                top_k=10,
                 retrive_budget_per_seq=1024,
                 device=model_runner.device,
                 async_retrive=True,
