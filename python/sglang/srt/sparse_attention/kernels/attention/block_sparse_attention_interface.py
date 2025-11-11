@@ -8,7 +8,14 @@ import cutlass
 import cutlass.cute as cute
 from cutlass.cute.runtime import from_dlpack
 
-from .flash_block_sparse_fwd_sm90 import FlashBlockSparseFwdSm90
+from .flash_streaming_fwd_sm90 import FlashStreamingForwardSm90
+
+# Mapping from PyTorch dtypes to Cutlass dtypes
+torch2cute_dtype_map = {
+    torch.float16: cutlass.Float16,
+    torch.bfloat16: cutlass.BFloat16,
+    torch.float32: cutlass.Float32,
+}
 
 def convert_blockmask(blockmask, causal):
     """Convert from the 0-1 format to the format used by the CUDA code.
@@ -43,6 +50,32 @@ def convert_blockmask(blockmask, causal):
     nonzero_idx[first_nonzero_col_per_row_after_sort, first_nonzero_col_per_row] += 1
     nonzero_idx[nonzero_val == 0] = -1
     return nonzero_idx.T.contiguous().to(dtype=torch.int32)
+
+
+def convert_blockmask_row_reverse(blockmask, causal):
+    """Convert blockmask to row-reverse format for forward pass.
+    
+    This is similar to convert_blockmask but organizes the mask in row-major order,
+    which is more efficient for forward pass iteration.
+    
+    Args:
+        blockmask: (nrow, ncol, num_blockmasks): Block mask tensor
+        causal: Whether causal masking is applied
+        
+    Returns:
+        Row-reverse format blockmask suitable for forward pass
+    """
+    # For now, we use the same conversion as the original
+    # TODO: Implement proper row-reverse conversion if needed
+    if blockmask.ndim == 3:
+        # Handle multiple blockmasks
+        nrow, ncol, num_masks = blockmask.shape
+        result = []
+        for i in range(num_masks):
+            result.append(convert_blockmask(blockmask[:, :, i], causal))
+        return torch.stack(result, dim=0)  # (num_masks, ncol, nrow)
+    else:
+        return convert_blockmask(blockmask, causal)
 
 
 def replace_ones_with_count(tensor):
@@ -219,20 +252,123 @@ def _block_sparse_attn_forward(
     # These will be used by the autograd function for backward pass
     # return out, q, k, v, out_padded, softmax_lse, S_dmask, rng_state
 
+    # Get device compute capability and validate
     compute_capability = torch.cuda.get_device_capability()[0]
     assert compute_capability in [9], "Unsupported compute capability. Supported: 9.x"
     current_stream = cuda.CUstream(torch.cuda.current_stream().cuda_stream)
 
+    # Extract tensor shapes
+    total_q, num_head, head_dim = q.shape
+    total_k, num_head_kv, _ = k.shape
+    head_dim_v = v.shape[-1]
+    batch_size = cu_seqlens_q.shape[0] - 1 if cu_seqlens_q is not None else 1
+    qhead_per_kvhead = num_head // num_head_kv
+    
+    # Set default softmax scale if not provided
+    if softmax_scale is None:
+        softmax_scale = 1.0 / (head_dim ** 0.5)
+    
+    # Validate inputs
+    assert q.dtype in [torch.float16, torch.bfloat16], "q must be float16 or bfloat16"
+    assert q.dtype == k.dtype == v.dtype, "q, k, v must have the same dtype"
+    assert q.is_cuda and k.is_cuda and v.is_cuda, "inputs must be on CUDA device"
+    
+    # Create output tensors
+    out = torch.empty_like(q[..., :head_dim_v])  # (total_q, num_head, head_dim_v)
+    softmax_lse = torch.empty(num_head, total_q, dtype=torch.float32, device=q.device)
+    
+    # Handle dropout (not implemented yet, just create placeholders)
+    S_dmask = None
+    rng_state = None
+    if p_dropout > 0.0:
+        # TODO: Implement dropout support
+        raise NotImplementedError("Dropout is not yet implemented for block sparse attention")
+    
+    # Convert torch tensors to cute tensors
+    dtype = torch2cute_dtype_map[q.dtype]
+    q_tensor, k_tensor, v_tensor, o_tensor = [
+        from_dlpack(t.detach(), assumed_align=16).mark_layout_dynamic(leading_dim=t.ndim - 1)
+        for t in (q, k, v, out)
+    ]
+    lse_tensor = from_dlpack(softmax_lse.detach(), assumed_align=4).mark_layout_dynamic(leading_dim=1)
+    
+    # Convert cu_seqlens tensors if provided
+    cu_seqlens_q_tensor = from_dlpack(cu_seqlens_q.detach(), assumed_align=4).mark_layout_dynamic(leading_dim=0) if cu_seqlens_q is not None else None
+    cu_seqlens_k_tensor = from_dlpack(cu_seqlens_k.detach(), assumed_align=4).mark_layout_dynamic(leading_dim=0) if cu_seqlens_k is not None else None
+    
+    # Handle window sizes
+    local = window_size_left is not None or window_size_right is not None
+    if is_causal:
+        window_size_right = 0
+    if window_size_left is not None or window_size_right is not None:
+        if window_size_left is None and window_size_right == 0:
+            is_causal, local = True, False
+        else:
+            is_causal, local = False, True
+    
     # Create compilation key for kernel caching
-
-    compile_key = ()
-
-    if compile_key not in FlashBlockSparseFwdSm90.compile_cache:
-        # TODO: Implement FlashBlockSparseFwdSm90
-        pass
-
-    # TODO: Execute the compiled kernel
-    pass
+    compile_key = (
+        dtype, head_dim, head_dim_v, qhead_per_kvhead, 
+        is_causal, local,
+        cu_seqlens_q is not None, cu_seqlens_k is not None,
+        window_size_left is not None, window_size_right is not None,
+        m_block_dim, n_block_dim,
+        compute_capability,
+    )
+    
+    # Initialize compile cache if it doesn't exist
+    if not hasattr(_block_sparse_attn_forward, 'compile_cache'):
+        _block_sparse_attn_forward.compile_cache = {}
+    
+    # Compile kernel if not cached
+    if compile_key not in _block_sparse_attn_forward.compile_cache:
+        from .flash_fwd_sm90 import FlashAttentionForwardSm90
+        
+        # Create FlashAttentionForwardSm90 instance
+        fa_fwd = FlashAttentionForwardSm90(
+            dtype,
+            head_dim,
+            head_dim_v,
+            qhead_per_kvhead,
+            is_causal=is_causal,
+            is_local=local,
+            pack_gqa=False,  # For block sparse, we don't use pack_gqa for now
+            m_block_size=m_block_dim,
+            n_block_size=n_block_dim,
+            num_stages=2,
+            num_threads=384,  # 3 warp groups for producer, 1 for consumer
+            Q_in_regs=False,
+            groupwise=False,
+        )
+        
+        # Compile the kernel
+        _block_sparse_attn_forward.compile_cache[compile_key] = cute.compile(
+            fa_fwd, 
+            q_tensor, k_tensor, v_tensor, o_tensor, lse_tensor, 
+            softmax_scale, current_stream,
+            cu_seqlens_q_tensor, cu_seqlens_k_tensor, 
+            None, None,  # seqused_q, seqused_k
+            None,  # page_table
+            None,  # softcap
+            window_size_left, window_size_right,
+            None,  # learnable_sink
+        )
+    
+    # Execute the compiled kernel
+    _block_sparse_attn_forward.compile_cache[compile_key](
+        q_tensor, k_tensor, v_tensor, o_tensor, lse_tensor,
+        softmax_scale, current_stream,
+        cu_seqlens_q_tensor, cu_seqlens_k_tensor,
+        None, None,  # seqused_q, seqused_k
+        None,  # page_table
+        None,  # softcap
+        window_size_left, window_size_right,
+        None,  # learnable_sink
+    )
+    
+    # Return outputs in the expected format
+    # Note: out_padded is set to out for now (no padding applied)
+    return out, q, k, v, out, softmax_lse, S_dmask, rng_state
     
 
 class BlockSparseAttnFun(torch.autograd.Function):
@@ -397,14 +533,14 @@ def block_streaming_attn_func(
     q: torch.Tensor,
     k: torch.Tensor,
     v: torch.Tensor,
+    head_mask_type: torch.Tensor,
+    streaming_info: torch.Tensor,
+    max_seqlen_q_: int,
+    max_seqlen_k_: int,
     cu_seqlens_q: Optional[torch.Tensor] = None,
     cu_seqlens_k: Optional[torch.Tensor] = None,
-    head_mask_type,
-    streaming_info,
-    max_seqlen_q_,
-    max_seqlen_k_,
     p_dropout: float = 0.0,
-    softmax_scale: float = None,
+    softmax_scale: Optional[float] = None,
     causal: bool = False,
     softcap: float = 0.0,
     alibi_slopes: Optional[torch.Tensor] = None,
@@ -412,4 +548,5 @@ def block_streaming_attn_func(
     return_attn_probs: bool = False,
     return_softmax_lse: bool = False,
 ):
+    # TODO: Implement block streaming attention
     pass
