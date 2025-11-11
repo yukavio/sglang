@@ -355,6 +355,8 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
         SeqlenInfoCls: Callable,
         AttentionMaskCls: Callable,
         TileSchedulerCls: Callable,
+
+        enable_streaming: bool = False,
     ):
         warp_group_idx = cute.arch.make_warp_uniform(tidx // self.num_threads_per_warp_group)
         warp_group_thread_layout = cute.make_layout(
@@ -445,3 +447,98 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
             )
             softmax.reset()
 
+            # Load Q if not TMA_Q
+            if const_expr(not self.use_tma_Q):
+                pack_gqa = PackGQA(self.m_block_size, self.head_dim_padded, self.check_hdim_oob, self.qhead_per_kvhead)
+                if const_expr(not seqlen.has_cu_seqlens_q):
+                    mQ_cur = mQ[None, None, head_idx, batch_idx]
+                else:
+                    offset = seqlen.offset_q if const_expr(not self.pack_gqa) else (0, seqlen.offset_q)
+                    mQ_cur = cute.domain_offset((offset, 0), mQ[None, None, head_idx])
+                pack_gqa.load_Q(mQ_cur, sQ, gmem_tiled_copy_Q, tidx, m_block, seqlen.seqlen_q)
+                utils.cp_async_mbarrier_arrive_shared(mbar_ptr_Q, noinc=True)
+
+            n_block_min, n_block_max = block_info.get_n_block_min_max(seqlen, m_block)
+            cute.arch.mbarrier_wait(mbar_ptr_Q, phase=q_consumer_phase)
+            q_consumer_phase ^= 1
+
+            O_should_accumulate = False
+
+            # First iteration with seqlen masking
+            if const_expr(self.intra_wg_overlap):
+                acc_S = cute.make_fragment(
+                    tiled_mma_qk.partition_shape_C((self.m_block_size, self.n_block_size)), Float32
+                )
+                pipeline_k.consumer_wait(kv_consumer_state)
+                sm90_utils.gemm(
+                    tiled_mma_qk, acc_S, tSrQ, tSrK[None, None, None, kv_consumer_state.index],
+                    zero_init=True, wg_wait=0
+                )
+                pipeline_k.consumer_release(kv_consumer_state)
+
+                # Apply softcapping and masking before softmax
+                scoremod_premask_fn(acc_S)
+
+                # Apply masking before softmax
+                mask_fn(acc_S, n_block=n_block_max - 1, mask_seqlen=True)
+
+                # Apply softmax
+                softmax.online_softmax(acc_S, is_first=True)
+
+                tOrP_acc = cute.make_tensor(acc_S.iterator, utils.convert_layout_acc_frgA(acc_S.layout))
+                tOrP = mma_params.tOrP if const_expr(self.mma_pv_is_rs) else cute.make_fragment_like(tOrP_acc, self.dtype)
+                # tOrP.store(tOrP_acc.load().to(self.dtype))
+                # the "to(self.dtype)" conversion fails to vectorize for block sizes other
+                # than 128 x 128, i.e. it calls convert on 1 fp32 element at a time instead of
+                # 2 elements. So we just call ptx directly.
+                utils.cvt_f16(tOrP_acc, tOrP)
+                if const_expr(not self.mma_pv_is_rs):
+                    tPrP = smem_thr_copy_P.retile(tOrP)
+                    cute.copy(smem_thr_copy_P, tPrP, tPsP)
+                    # Fence and barrier to make sure smem store is visible to WGMMA
+                    cute.arch.fence_proxy(cute.arch.ProxyKind.async_shared, space=cute.arch.SharedSpace.shared_cta)
+                    cute.arch.sync_warp()  # Only need syncwarp since each warp is using its own P values for MmaPV
+                # Need to initialize tOrO in the case of RescaleOBeforeGemm where we will scale tOrO even in the 1st iter
+                # acc_O.fill(0.0)
+
+                else:
+                    self.warp_scheduler_barrier_sync()
+                    kv_consumer_state = mma_one_n_block(
+                        n_block_max - 1, kv_consumer_state,
+                        is_first_n_block=True, mask_fn=partial(mask_fn, mask_seqlen=True),
+                        O_should_accumulate=False
+                    )
+                    O_should_accumulate = True
+
+                n_block_max -= 1
+
+            if const_expr(enable_streaming):
+                streaming_mask_fn = partial(
+                    mask.apply_streaming_mask, m_block=m_block, thr_mma=thr_mma_qk,
+                )
+
+                n_block_min, n_block_max = block_info.get_streaming_mask_n_block_min_max(seqlen_info=seqlen, m_block=m_block)
+
+                for n_tile in cutlass.range(n_block_max - n_block_min, unroll=1):
+                    n_block = n_block_max - n_tile - 1
+                    kv_consumer_state = mma_one_n_block(
+                        n_block, kv_consumer_state,
+                        mask_fn=partial(streaming_mask_fn, mask_seqlen=True),
+                        O_should_accumulate=O_should_accumulate
+                    )
+                    O_should_accumulate = True
+            else:
+                pass
+
+            if const_expr(self.intra_wg_overlap):
+                pipeline_v.consumer_wait(kv_consumer_state, pipeline_v.consumer_try_wait(kv_consumer_state))
+                sm90_utils.gemm(
+                    tiled_mma_pv, mma_params.acc_O, mma_params.tOrP,
+                    mma_params.tOrVt[None, None, None, kv_consumer_state.index],
+                    zero_init=not O_should_accumulate, wg_wait=-1
+                )
+                warpgroup.wait_group(0)
+                pipeline_v.consumer_release(kv_consumer_state)
+                kv_consumer_state.advance()
+            else:
+                self.warp_scheduler_barrier_arrive()
