@@ -366,183 +366,325 @@ def _streaming_sparse_attn_forward(
 _streaming_sparse_attn_forward.compile_cache = {}
 
 
-class BlockSparseAttnFun(torch.autograd.Function):
-    """Block sparse attention autograd function.
+# class BlockSparseAttnFun(torch.autograd.Function):
+#     """Block sparse attention autograd function.
 
-    Implements PyTorch's autograd interface, supporting forward and backward propagation.
-    This is the main block sparse attention implementation that does not return attention weights.
+#     Implements PyTorch's autograd interface, supporting forward and backward propagation.
+#     This is the main block sparse attention implementation that does not return attention weights.
+#     """
+
+#     @staticmethod
+#     def forward(ctx,
+#                 q, k, v,
+#                 cu_seqlens_q, cu_seqlens_k,
+#                 m_block_dim, n_block_dim,
+#                 head_mask_type,
+#                 streaming_info,
+#                 base_blockmask,
+#                 max_seqlen_q_, max_seqlen_k_,
+#                 p_dropout,
+#                 softmax_scale,
+#                 is_causal,
+#                 exact_streaming,
+#                 return_softmax,
+#                 window_size_left,
+#                 window_size_right, deterministic=False):
+#         """Forward propagation.
+
+#         Executes block sparse attention computation and saves intermediate results needed for backward pass.
+
+#         Key steps:
+#         1. Set default softmax scale factor (if not provided)
+#         2. Convert block mask to row-reverse format (for forward pass)
+#         3. Validate exact_streaming prerequisites
+#         4. Call CUDA kernel to perform computation
+#         5. Save tensors and parameters needed for backward pass
+
+#         Args:
+#             ctx: Context object to save information for backward pass
+#             q: Query tensor, shape (total_q, num_heads, head_dim)
+#             k: Key tensor, shape (total_k, num_heads, head_dim)
+#             v: Value tensor, shape (total_k, num_heads, head_dim)
+#             cu_seqlens_q: Cumulative sequence lengths for queries, shape (batch_size + 1,)
+#             cu_seqlens_k: Cumulative sequence lengths for keys, shape (batch_size + 1,)
+#             m_block_dim: Block dimension for query (M dimension), typically 128
+#             n_block_dim: Block dimension for key (N dimension), typically 128
+#             head_mask_type: Tensor indicating attention type for each head, shape (num_heads,)
+#                            0: dense attention, 1+: block sparse (with blockmask ID), -1: streaming
+#             streaming_info: Streaming attention configuration (sink size, local window size)
+#             base_blockmask: Block mask tensor defining sparse pattern, shape (nrow, ncol, num_blockmasks)
+#             max_seqlen_q_: Maximum query sequence length in the batch
+#             max_seqlen_k_: Maximum key sequence length in the batch
+#             p_dropout: Dropout probability
+#             softmax_scale: Scaling factor for softmax, defaults to 1/sqrt(head_dim)
+#             is_causal: Whether to apply causal masking
+#             exact_streaming: Whether to use exact streaming attention mode
+#             return_softmax: Whether to return softmax probabilities (not used in this function)
+#             window_size_left: Left window size for local attention (-1 means no limit)
+#             window_size_right: Right window size for local attention (-1 means no limit)
+#             deterministic: Whether to use deterministic computation
+
+#         Returns:
+#             out: Output tensor, shape (total_q, num_heads, head_dim)
+#         """
+#         # Save rng_state because the backward pass will regenerate the dropout mask
+#         # Set default softmax scale to 1/sqrt(head_dim) if not provided
+#         if softmax_scale is None:
+#             softmax_scale = q.shape[-1] ** (-0.5)
+
+#         # Convert block mask to row-reverse format for efficient CUDA kernel processing
+#         # This format allows the kernel to quickly find which blocks to compute for each row
+#         if base_blockmask is not None:
+#             row_blockmask = convert_blockmask_row_reverse(
+#                 base_blockmask, is_causal)
+#         else:
+#             row_blockmask = None
+
+#         # Validate exact_streaming mode requirements
+#         # Exact streaming requires streaming_info and causal masking to be enabled
+#         if exact_streaming:
+#             assert streaming_info is not None
+#             assert is_causal
+
+#         # Call the CUDA kernel to perform block sparse attention computation
+#         # Returns output, potentially modified q/k/v, padded output, softmax statistics,
+#         # dropout mask, and RNG state for backward pass
+#         out, q, k, v, out_padded, softmax_lse, S_dmask, rng_state = _block_sparse_attn_forward(
+#             q, k, v,
+#             cu_seqlens_q, cu_seqlens_k,
+#             m_block_dim, n_block_dim,
+#             head_mask_type,
+#             streaming_info,
+#             row_blockmask,
+#             max_seqlen_q_, max_seqlen_k_,
+#             p_dropout,
+#             softmax_scale,
+#             is_causal,
+#             exact_streaming,
+#             return_softmax=False,
+#             window_size_left=window_size_left,
+#             window_size_right=window_size_right
+#         )
+
+#         # Save scalar parameters as context attributes
+#         # These define the block structure and attention configuration
+#         ctx.m_block_dim = m_block_dim
+#         ctx.n_block_dim = n_block_dim
+#         ctx.window_size_left = window_size_left
+#         ctx.window_size_right = window_size_right
+#         ctx.max_seqlen_q_ = max_seqlen_q_
+#         ctx.max_seqlen_k_ = max_seqlen_k_
+#         ctx.p_dropout = p_dropout
+#         ctx.softmax_scale = softmax_scale
+#         ctx.is_causal = is_causal
+#         ctx.exact_streaming = exact_streaming
+#         ctx.deterministic = deterministic
+
+#         return out
+
+
+# def block_streaming_attn_func(
+#     q: torch.Tensor,
+#     k: torch.Tensor,
+#     v: torch.Tensor,
+#     head_mask_type: torch.Tensor,
+#     streaming_info: torch.Tensor,
+#     max_seqlen_q_: int,
+#     max_seqlen_k_: int,
+#     cu_seqlens_q: Optional[torch.Tensor] = None,
+#     cu_seqlens_k: Optional[torch.Tensor] = None,
+#     p_dropout: float = 0.0,
+#     softmax_scale: Optional[float] = None,
+#     causal: bool = False,
+#     softcap: float = 0.0,
+#     alibi_slopes: Optional[torch.Tensor] = None,
+#     deterministic: bool = False,
+#     return_attn_probs: bool = False,
+#     return_softmax_lse: bool = False,
+# ):
+#     # TODO: Implement block streaming attention
+#     pass
+
+
+class StreamingSparseAttnFunc(torch.autograd.Function):
+    """Autograd function for streaming sparse attention.
+
+    This class provides automatic differentiation support for streaming sparse attention,
+    wrapping the forward pass and providing hooks for backward pass.
     """
 
     @staticmethod
-    def forward(ctx,
-                q, k, v,
-                cu_seqlens_q, cu_seqlens_k,
-                m_block_dim, n_block_dim,
-                head_mask_type,
-                streaming_info,
-                base_blockmask,
-                max_seqlen_q_, max_seqlen_k_,
-                p_dropout,
-                softmax_scale,
-                is_causal,
-                exact_streaming,
-                return_softmax,
-                window_size_left,
-                window_size_right, deterministic=False):
-        """Forward propagation.
-
-        Executes block sparse attention computation and saves intermediate results needed for backward pass.
-
-        Key steps:
-        1. Set default softmax scale factor (if not provided)
-        2. Convert block mask to row-reverse format (for forward pass)
-        3. Validate exact_streaming prerequisites
-        4. Call CUDA kernel to perform computation
-        5. Save tensors and parameters needed for backward pass
+    def forward(
+        ctx,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        cu_seqlens_q: Optional[torch.Tensor] = None,
+        cu_seqlens_k: Optional[torch.Tensor] = None,
+        seqused_q: Optional[torch.Tensor] = None,
+        seqused_k: Optional[torch.Tensor] = None,
+        page_table: Optional[torch.Tensor] = None,
+        softmax_scale: Optional[float] = None,
+        causal: bool = False,
+        window_size: Tuple[Optional[int], Optional[int]] = (None, None),
+        learnable_sink: Optional[torch.Tensor] = None,
+        sink_size: Optional[int] = None,
+        enable_streaming: bool = True,
+        softcap: float = 0.0,
+        pack_gqa: Optional[bool] = None,
+        groupwise: bool = False,
+    ):
+        """Forward pass for streaming sparse attention.
 
         Args:
-            ctx: Context object to save information for backward pass
-            q: Query tensor, shape (total_q, num_heads, head_dim)
-            k: Key tensor, shape (total_k, num_heads, head_dim)
-            v: Value tensor, shape (total_k, num_heads, head_dim)
-            cu_seqlens_q: Cumulative sequence lengths for queries, shape (batch_size + 1,)
-            cu_seqlens_k: Cumulative sequence lengths for keys, shape (batch_size + 1,)
-            m_block_dim: Block dimension for query (M dimension), typically 128
-            n_block_dim: Block dimension for key (N dimension), typically 128
-            head_mask_type: Tensor indicating attention type for each head, shape (num_heads,)
-                           0: dense attention, 1+: block sparse (with blockmask ID), -1: streaming
-            streaming_info: Streaming attention configuration (sink size, local window size)
-            base_blockmask: Block mask tensor defining sparse pattern, shape (nrow, ncol, num_blockmasks)
-            max_seqlen_q_: Maximum query sequence length in the batch
-            max_seqlen_k_: Maximum key sequence length in the batch
-            p_dropout: Dropout probability
-            softmax_scale: Scaling factor for softmax, defaults to 1/sqrt(head_dim)
-            is_causal: Whether to apply causal masking
-            exact_streaming: Whether to use exact streaming attention mode
-            return_softmax: Whether to return softmax probabilities (not used in this function)
-            window_size_left: Left window size for local attention (-1 means no limit)
-            window_size_right: Right window size for local attention (-1 means no limit)
-            deterministic: Whether to use deterministic computation
+            ctx: Context object for saving tensors
+            q: Query tensor (batch, seqlen_q, num_heads, head_dim) or (total_q, num_heads, head_dim)
+            k: Key tensor (batch, seqlen_k, num_heads_kv, head_dim) or (total_k, num_heads_kv, head_dim)
+            v: Value tensor (batch, seqlen_k, num_heads_kv, head_dim_v) or (total_k, num_heads_kv, head_dim_v)
+            cu_seqlens_q: Cumulative sequence lengths for queries (optional)
+            cu_seqlens_k: Cumulative sequence lengths for keys (optional)
+            seqused_q: Used sequence lengths for queries (optional)
+            seqused_k: Used sequence lengths for keys (optional)
+            page_table: Page table for paged KV cache (optional)
+            softmax_scale: Scaling factor for softmax (optional)
+            causal: Whether to apply causal masking
+            window_size: Tuple of (left, right) window sizes for local attention
+            learnable_sink: Learnable sink tokens (optional)
+            sink_size: Number of sink tokens (optional)
+            enable_streaming: Whether to enable streaming mode
+            softcap: Softcap value for attention scores
+            pack_gqa: Whether to pack GQA (optional)
+            groupwise: Whether to use groupwise paged KV cache
 
         Returns:
-            out: Output tensor, shape (total_q, num_heads, head_dim)
+            Tuple of (output, lse) where:
+            - output: Attention output tensor
+            - lse: Log-sum-exp values for backward pass
         """
-        # Save rng_state because the backward pass will regenerate the dropout mask
-        # Set default softmax scale to 1/sqrt(head_dim) if not provided
-        if softmax_scale is None:
-            softmax_scale = q.shape[-1] ** (-0.5)
-
-        # Convert block mask to row-reverse format for efficient CUDA kernel processing
-        # This format allows the kernel to quickly find which blocks to compute for each row
-        if base_blockmask is not None:
-            row_blockmask = convert_blockmask_row_reverse(
-                base_blockmask, is_causal)
-        else:
-            row_blockmask = None
-
-        # Validate exact_streaming mode requirements
-        # Exact streaming requires streaming_info and causal masking to be enabled
-        if exact_streaming:
-            assert streaming_info is not None
-            assert is_causal
-
-        # Call the CUDA kernel to perform block sparse attention computation
-        # Returns output, potentially modified q/k/v, padded output, softmax statistics,
-        # dropout mask, and RNG state for backward pass
-        out, q, k, v, out_padded, softmax_lse, S_dmask, rng_state = _block_sparse_attn_forward(
-            q, k, v,
-            cu_seqlens_q, cu_seqlens_k,
-            m_block_dim, n_block_dim,
-            head_mask_type,
-            streaming_info,
-            row_blockmask,
-            max_seqlen_q_, max_seqlen_k_,
-            p_dropout,
-            softmax_scale,
-            is_causal,
-            exact_streaming,
-            return_softmax=False,
-            window_size_left=window_size_left,
-            window_size_right=window_size_right
+        out, lse = _streaming_sparse_attn_forward(
+            q,
+            k,
+            v,
+            cu_seqlens_q=cu_seqlens_q,
+            cu_seqlens_k=cu_seqlens_k,
+            seqused_q=seqused_q,
+            seqused_k=seqused_k,
+            page_table=page_table,
+            softmax_scale=softmax_scale,
+            causal=causal,
+            window_size_left=window_size[0],
+            window_size_right=window_size[1],
+            learnable_sink=learnable_sink,
+            sink_size=sink_size,
+            enable_streaming=enable_streaming,
+            softcap=softcap,
+            pack_gqa=pack_gqa,
+            groupwise=groupwise,
         )
 
-        # Save scalar parameters as context attributes
-        # These define the block structure and attention configuration
-        ctx.m_block_dim = m_block_dim
-        ctx.n_block_dim = n_block_dim
-        ctx.window_size_left = window_size_left
-        ctx.window_size_right = window_size_right
-        ctx.max_seqlen_q_ = max_seqlen_q_
-        ctx.max_seqlen_k_ = max_seqlen_k_
-        ctx.p_dropout = p_dropout
+        # Save tensors for backward pass
+        ctx.save_for_backward(
+            q, k, v, out, lse,
+            cu_seqlens_q, cu_seqlens_k, seqused_q, seqused_k, page_table
+        )
         ctx.softmax_scale = softmax_scale
-        ctx.is_causal = is_causal
-        ctx.exact_streaming = exact_streaming
-        ctx.deterministic = deterministic
+        ctx.causal = causal
+        ctx.window_size = window_size
+        ctx.softcap = softcap
+        ctx.sink_size = sink_size
+        ctx.enable_streaming = enable_streaming
+        ctx.groupwise = groupwise
 
-        return out
+        return out, lse
+
+    @staticmethod
+    def backward(ctx, dout, *args):
+        """Backward pass for streaming sparse attention.
+
+        Note: Backward pass for streaming sparse attention is not yet implemented.
+        """
+        raise NotImplementedError(
+            "Backward pass for streaming sparse attention is not implemented yet. "
+            "If you need gradients, please consider using standard flash attention or "
+            "implementing a custom backward pass."
+        )
 
 
-def block_sparse_attn_func(
+def streaming_sparse_attn_func(
     q: torch.Tensor,
     k: torch.Tensor,
     v: torch.Tensor,
-    cu_seqlens_q: torch.Tensor,
-    cu_seqlens_k: torch.Tensor,
-    head_mask_type: torch.Tensor,
-    streaming_info: torch.Tensor,
-    base_blockmask: torch.Tensor,
-    max_seqlens_q_: int,
-    max_seqlens_k_: int,
-    p_dropout: float = 0.0,
-    deterministic: bool = False,
-    softmax_scale: float = None,
-    is_causal: bool = False,
-    exact_straming: bool = False,
-    return_attn_probs: bool = False
-):
-    head_mask_type, blocksparse_head_num = replace_ones_with_count(
-        head_mask_type)
-    if base_blockmask is not None:
-        assert base_blockmask.shape[1] == blocksparse_head_num, "base_blockmask.shape[1] must be equal to blocksparse_head_num"
-
-    func = BlockSparseAttnFun
-    return func.apply(
-        q, k, v,
-        cu_seqlens_q, cu_seqlens_k,
-        128, 128,
-        head_mask_type,
-        streaming_info,
-        base_blockmask,
-        max_seqlens_q_, max_seqlens_k_,
-        p_dropout,
-        softmax_scale,
-        is_causal,
-        exact_straming,
-        return_attn_probs,
-        -1, -1,
-        deterministic
-    )
-
-
-def block_streaming_attn_func(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    v: torch.Tensor,
-    head_mask_type: torch.Tensor,
-    streaming_info: torch.Tensor,
-    max_seqlen_q_: int,
-    max_seqlen_k_: int,
     cu_seqlens_q: Optional[torch.Tensor] = None,
     cu_seqlens_k: Optional[torch.Tensor] = None,
-    p_dropout: float = 0.0,
+    seqused_q: Optional[torch.Tensor] = None,
+    seqused_k: Optional[torch.Tensor] = None,
+    page_table: Optional[torch.Tensor] = None,
     softmax_scale: Optional[float] = None,
     causal: bool = False,
+    window_size: Tuple[Optional[int], Optional[int]] = (None, None),
+    learnable_sink: Optional[torch.Tensor] = None,
+    sink_size: Optional[int] = None,
+    enable_streaming: bool = True,
     softcap: float = 0.0,
-    alibi_slopes: Optional[torch.Tensor] = None,
-    deterministic: bool = False,
-    return_attn_probs: bool = False,
-    return_softmax_lse: bool = False,
+    pack_gqa: Optional[bool] = None,
+    groupwise: bool = False,
 ):
-    # TODO: Implement block streaming attention
-    pass
+    """User-facing function for streaming sparse attention.
+
+    This function provides a convenient interface for streaming sparse attention,
+    which is optimized for long sequences with sparse attention patterns.
+
+    Args:
+        q: Query tensor (batch, seqlen_q, num_heads, head_dim) or (total_q, num_heads, head_dim)
+        k: Key tensor (batch, seqlen_k, num_heads_kv, head_dim) or (total_k, num_heads_kv, head_dim)
+        v: Value tensor (batch, seqlen_k, num_heads_kv, head_dim_v) or (total_k, num_heads_kv, head_dim_v)
+        cu_seqlens_q: Cumulative sequence lengths for queries (optional)
+        cu_seqlens_k: Cumulative sequence lengths for keys (optional)
+        seqused_q: Used sequence lengths for queries (optional)
+        seqused_k: Used sequence lengths for keys (optional)
+        page_table: Page table for paged KV cache (optional)
+        softmax_scale: Scaling factor for softmax (optional, defaults to 1/sqrt(head_dim))
+        causal: Whether to apply causal masking
+        window_size: Tuple of (left, right) window sizes for local attention
+        learnable_sink: Learnable sink tokens (optional)
+        sink_size: Number of sink tokens (optional)
+        enable_streaming: Whether to enable streaming mode
+        softcap: Softcap value for attention scores
+        pack_gqa: Whether to pack GQA (optional, auto-detected if None)
+        groupwise: Whether to use groupwise paged KV cache
+
+    Returns:
+        Tuple of (output, lse) where:
+        - output: Attention output tensor with shape matching input q
+        - lse: Log-sum-exp values for backward pass (or None if not requires_grad)
+
+    Example:
+        >>> q = torch.randn(2, 1024, 8, 64, device='cuda', dtype=torch.bfloat16)
+        >>> k = torch.randn(2, 1024, 8, 64, device='cuda', dtype=torch.bfloat16)
+        >>> v = torch.randn(2, 1024, 8, 64, device='cuda', dtype=torch.bfloat16)
+        >>> out, lse = streaming_sparse_attn_func(
+        ...     q, k, v,
+        ...     causal=True,
+        ...     sink_size=4,
+        ...     enable_streaming=True
+        ... )
+    """
+    return StreamingSparseAttnFunc.apply(
+        q,
+        k,
+        v,
+        cu_seqlens_q,
+        cu_seqlens_k,
+        seqused_q,
+        seqused_k,
+        page_table,
+        softmax_scale,
+        causal,
+        window_size,
+        learnable_sink,
+        sink_size,
+        enable_streaming,
+        softcap,
+        pack_gqa,
+        groupwise,
+    )
