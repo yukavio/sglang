@@ -138,6 +138,8 @@ class AttentionMask:
                     for c in cutlass.range(cute.size(tScS_mn.shape[1]), unroll_full=True):
                         col_idx = t0ScS_mn[0, c][1]
                         # only consider the column index, so the row index sets to 0.
+
+                        # TODO(KuangjuX): Compilation error.
                         if col_idx >= col_limit_right or col_idx < col_limit_left:
                             acc_S_mn[r, c] = -cutlass.Float32.inf
 

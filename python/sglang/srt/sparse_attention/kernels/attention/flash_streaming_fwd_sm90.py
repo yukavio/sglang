@@ -496,7 +496,7 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
         warp_idx_in_wg = cute.arch.make_warp_uniform(cute.arch.warp_idx()) % 4
         if warp_idx_in_wg == 0:
             q_producer_phase = Int32(1)
-            kv_producer_phase = pipeline.make_pipeline_state(
+            kv_producer_state = pipeline.make_pipeline_state(
                 cutlass.pipeline.PipelineUserType.Producer, self.num_stages
             )
             tile_scheduler = TileSchedulerCls()
@@ -749,8 +749,7 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
             # First iteration with seqlen masking
             if const_expr(self.intra_wg_overlap):
                 acc_S = cute.make_fragment(
-                    tiled_mma_qk.partition_shape_C(
-                        (self.m_block_size, self.n_block_size)), Float32
+                    tiled_mma_qk.partition_shape_C((self.m_block_size, self.n_block_size)), Float32
                 )
                 pipeline_k.consumer_wait(kv_consumer_state)
                 sm90_utils.gemm(

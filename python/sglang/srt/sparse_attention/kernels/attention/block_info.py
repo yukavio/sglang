@@ -17,6 +17,9 @@ class BlockInfo:
     window_size_right: Optional[cutlass.Int32] = None
     qhead_per_kvhead_packgqa: cutlass.Constexpr[int] = 1
 
+    sink_size: cutlass.Constexpr[int] = 0
+    enable_streaming: cutlass.Constexpr[bool] = False
+
     @cute.jit
     def get_n_block_min_max(
         self, seqlen_info: SeqlenInfoQK, m_block: cutlass.Int32
@@ -80,7 +83,7 @@ class BlockInfo:
 
 
     @cute.jit
-    def get_streaming_mask_n_block(
+    def get_streaming_mask_n_block_min_max(
         self,
         seqlen_info: SeqlenInfoQK,
         m_block: cutlass.Int32
@@ -114,7 +117,7 @@ class BlockInfo:
         # The sink region [0, sink_size) always needs to be included
         n_block_min = 0
         
-        if cutlass.const_expr(self.enable_streaming and self.window_size_left is not None):
+        if self.enable_streaming and self.window_size_left is not None:
             # For streaming attention with local window, the leftmost position 
             # (excluding sink) that needs to be processed is determined by the 
             # minimum row index in this block
@@ -132,7 +135,7 @@ class BlockInfo:
             # 1. The sink region [0, sink_size), or
             # 2. The local window [n_idx_left, n_idx_max]
             
-            if cutlass.const_expr(self.sink_size is not None):
+            if self.sink_size > 0:
                 # When sink is present, we must start from block 0 to include the sink region.
                 # Even if there's a gap between sink and local window, we return a single
                 # continuous range [0, n_block_max). The gap will be masked out by
