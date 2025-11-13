@@ -54,7 +54,7 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
         window_size_left: Int32 | int | None = None,
         window_size_right: Int32 | int | None = None,
         learnable_sink: Optional[cute.Tensor] = None,
-        sink_size: Optional[int] = None,
+        sink_size: Int32 | int | None = None,
         enable_streaming: bool = False,
     ):
         """Configures and launches the streaming sparse flash attention kernel.
@@ -227,6 +227,10 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
             window_size_left = Int32(window_size_left)
         if const_expr(window_size_right is not None):
             window_size_right = Int32(window_size_right)
+        
+        # Convert streaming parameters to CUTLASS types
+        if const_expr(sink_size is not None):
+            sink_size = Int32(sink_size)
 
         # Launch the kernel with streaming parameters
         self.kernel(
@@ -265,8 +269,8 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
             TileScheduler,
             SharedStorage,
             self.groupwise,
-            sink_size,  # ✅ Add streaming parameter
-            enable_streaming,  # ✅ Add streaming parameter
+            sink_size, 
+            enable_streaming,
         ).launch(
             grid=grid_dim,
             block=[self.num_threads, 1, 1],
@@ -274,7 +278,7 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
             stream=stream,
         )
 
-    @cute.jit
+    @cute.kernel
     def kernel(
         self,
         mQ: cute.Tensor,
@@ -312,8 +316,8 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
         TileScheduler: cutlass.Constexpr[Callable],
         SharedStorage: cutlass.Constexpr[Callable],
         groupwise: bool,
-        sink_size: Optional[int] = None,
-        enable_streaming: bool = False,
+        sink_size: Optional[Int32],
+        enable_streaming: bool,
     ):
         warp_idx = cute.arch.make_warp_uniform(cute.arch.warp_idx())
 
@@ -792,7 +796,7 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
                     self.warp_scheduler_barrier_sync()
                     kv_consumer_state = mma_one_n_block(
                         n_block_max - 1, kv_consumer_state,
-                        is_first_n_block=True, mask_fn=partial(mask_fn, mask_seqlen=True),
+                        mask_fn=partial(mask_fn, mask_seqlen=True),
                         O_should_accumulate=False
                     )
                     O_should_accumulate = True
