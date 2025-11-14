@@ -32,7 +32,10 @@ from sglang.srt.sparse_attention.kernels.attention.flash_fwd_sm90 import FlashAt
 
 
 class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, sink_size: Optional[int] = None, enable_streaming: bool = False, **kwargs):
+        # sink_size cannot be None for Constexpr[int], use 0 as default
+        self.sink_size = 0 if sink_size is None else sink_size
+        self.enable_streaming = enable_streaming
         super().__init__(*args, **kwargs)
 
     @cute.jit
@@ -54,8 +57,6 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
         window_size_left: Int32 | int | None = None,
         window_size_right: Int32 | int | None = None,
         learnable_sink: Optional[cute.Tensor] = None,
-        sink_size: Int32 | int | None = None,
-        enable_streaming: bool = False,
     ):
         """Configures and launches the streaming sparse flash attention kernel.
 
@@ -228,10 +229,7 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
         if const_expr(window_size_right is not None):
             window_size_right = Int32(window_size_right)
         
-        # Convert streaming parameters to CUTLASS types
-        if const_expr(sink_size is not None):
-            sink_size = Int32(sink_size)
-
+        
         # Launch the kernel with streaming parameters
         self.kernel(
             tma_tensor_Q if const_expr(self.use_tma_Q) else mQ,
@@ -269,8 +267,8 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
             TileScheduler,
             SharedStorage,
             self.groupwise,
-            sink_size, 
-            enable_streaming,
+            self.sink_size,
+            self.enable_streaming,
         ).launch(
             grid=grid_dim,
             block=[self.num_threads, 1, 1],
@@ -316,8 +314,8 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
         TileScheduler: cutlass.Constexpr[Callable],
         SharedStorage: cutlass.Constexpr[Callable],
         groupwise: bool,
-        sink_size: Optional[Int32],
-        enable_streaming: bool,
+        sink_size: cutlass.Constexpr[int],
+        enable_streaming: cutlass.Constexpr[bool],
     ):
         warp_idx = cute.arch.make_warp_uniform(cute.arch.warp_idx())
 
@@ -439,6 +437,8 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
                 SeqlenInfoCls,
                 TileSchedulerCls,
                 groupwise,
+                sink_size,
+                enable_streaming,
             )
 
         else:
@@ -474,6 +474,8 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
                 SeqlenInfoCls,
                 AttentionMaskCls,
                 TileSchedulerCls,
+                sink_size,
+                enable_streaming,
             )
 
     @cute.jit
@@ -496,6 +498,8 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
         SeqlenInfoCls: Callable,
         TileSchedulerCls: Callable,
         groupwise: bool,
+        sink_size: cutlass.Constexpr[int],
+        enable_streaming: cutlass.Constexpr[bool],
     ):
         warp_idx_in_wg = cute.arch.make_warp_uniform(cute.arch.warp_idx()) % 4
         if warp_idx_in_wg == 0:
@@ -623,8 +627,8 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
         SeqlenInfoCls: Callable,
         AttentionMaskCls: Callable,
         TileSchedulerCls: Callable,
-
-        enable_streaming: bool = False,
+        sink_size: cutlass.Constexpr[int],
+        enable_streaming: cutlass.Constexpr[bool],
     ):
         warp_group_idx = cute.arch.make_warp_uniform(
             tidx // self.num_threads_per_warp_group)

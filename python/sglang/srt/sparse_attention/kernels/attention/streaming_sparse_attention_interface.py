@@ -341,6 +341,8 @@ def _streaming_sparse_attn_forward(
             num_stages=2,
             num_threads=num_threads,
             Q_in_regs=False,
+            sink_size=sink_size,
+            enable_streaming=enable_streaming,
             groupwise=groupwise,
         )
 
@@ -349,7 +351,6 @@ def _streaming_sparse_attn_forward(
             cu_seqlens_q_tensor, cu_seqlens_k_tensor, seqused_q_tensor, seqused_k_tensor,
             page_table_tensor,
             softcap, window_size_left, window_size_right, learnable_sink_tensor,
-            sink_size, enable_streaming,
         )
 
     _streaming_sparse_attn_forward.compile_cache[compile_key](
@@ -357,7 +358,6 @@ def _streaming_sparse_attn_forward(
         cu_seqlens_q_tensor, cu_seqlens_k_tensor, seqused_q_tensor, seqused_k_tensor,
         page_table_tensor,
         softcap, window_size_left, window_size_right, learnable_sink_tensor,
-        sink_size, enable_streaming,
     )
 
     return out, lse
