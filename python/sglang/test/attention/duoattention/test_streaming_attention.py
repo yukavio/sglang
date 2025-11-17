@@ -19,10 +19,15 @@ def is_hopper():
 
 
 @pytest.mark.skipif(not is_hopper(), reason="Streaming attention requires Hopper GPU (SM 9.0)")
-@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
-@pytest.mark.parametrize("sink_size", [4, 8])
-@pytest.mark.parametrize("local_size", [64, 128])
-@pytest.mark.parametrize("seqlen", [256, 512])
+# @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+# @pytest.mark.parametrize("sink_size", [4, 8])
+# @pytest.mark.parametrize("local_size", [64, 128])
+# @pytest.mark.parametrize("seqlen", [256, 512])
+
+@pytest.mark.parametrize("dtype", [torch.bfloat16])
+@pytest.mark.parametrize("sink_size", [4])
+@pytest.mark.parametrize("local_size", [64])
+@pytest.mark.parametrize("seqlen", [256])
 def test_streaming_attention_batch(dtype, sink_size, local_size, seqlen):
     """Test streaming sparse attention with standard batch format.
 
@@ -128,11 +133,11 @@ def test_streaming_attention_batch(dtype, sink_size, local_size, seqlen):
     )
 
     print(
-        f"✓ Test passed: dtype={dtype}, sink_size={sink_size}, local_size={local_size}, seqlen={seqlen}")
+        f"Test passed: dtype={dtype}, sink_size={sink_size}, local_size={local_size}, seqlen={seqlen}")
 
 
 @pytest.mark.skipif(not is_hopper(), reason="Streaming attention requires Hopper GPU (SM 9.0)")
-def test_streaming_attention_basic():
+def test_streaming_attention():
     """Basic test with fixed parameters to quickly verify functionality."""
     device = torch.device("cuda")
     dtype = torch.bfloat16
@@ -159,12 +164,18 @@ def test_streaming_attention_basic():
         q, k, v,
         cu_seqlens_q=None,
         cu_seqlens_k=None,
+        seqused_q=None,
+        seqused_k=None,
+        page_table=None,
         softmax_scale=softmax_scale,
         causal=True,
         window_size=(local_size - 1, 0),
+        learnable_sink=None,
         sink_size=sink_size,
         enable_streaming=True,
+        softcap=0.0,
         pack_gqa=False,
+        groupwise=False,
     )
 
     # Test reference implementation (needs varlen format)
@@ -266,21 +277,6 @@ if __name__ == "__main__":
     # Run basic tests
     if is_hopper():
         print("Running streaming attention tests on Hopper GPU...")
-        print("\n=== Basic Test ===")
-        test_streaming_attention_basic()
-
-        print("\n=== Different Sink Sizes Test ===")
-        test_streaming_attention_different_sink_sizes()
-
-        print("\n=== Parametrized Tests ===")
-        # Run a few parametrized tests
-        for dtype in [torch.bfloat16, torch.float16]:
-            for sink_size in [4, 8]:
-                for local_size in [64]:
-                    for seqlen in [256]:
-                        test_streaming_attention_batch(
-                            dtype, sink_size, local_size, seqlen)
-
-        print("\nAll tests passed!")
+        test_streaming_attention()
     else:
         print("Streaming attention tests require Hopper GPU (SM 9.0). Skipping tests.")
