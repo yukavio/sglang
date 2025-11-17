@@ -36,6 +36,8 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
         # sink_size cannot be None for Constexpr[int], use 0 as default
         self.sink_size = 0 if sink_size is None else sink_size
         self.enable_streaming = enable_streaming
+        # TODO(KuangjuX): Disable intra-WG overlap for streaming attention for now
+        self.intra_wg_overlap = False
         super().__init__(*args, **kwargs)
 
     @cute.jit
@@ -700,6 +702,7 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
 
         tile_scheduler = TileSchedulerCls()
         work_tile = tile_scheduler.initial_work_tile_info()
+
         while work_tile.is_valid_tile:
             # Define a score modification function that applies softcapping before masking
             # This function modifies the attention scores (acc_S) by applying a tanh-based softcap
@@ -733,26 +736,29 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
             softmax.reset()
 
             # Load Q if not TMA_Q
-            # if const_expr(not self.use_tma_Q):
-            #     pack_gqa = PackGQA(self.m_block_size, self.head_dim_padded,
-            #                        self.check_hdim_oob, self.qhead_per_kvhead)
-            #     if const_expr(not seqlen.has_cu_seqlens_q):
-            #         mQ_cur = mQ[None, None, head_idx, batch_idx]
-            #     else:
-            #         offset = seqlen.offset_q if const_expr(
-            #             not self.pack_gqa) else (0, seqlen.offset_q)
-            #         mQ_cur = cute.domain_offset(
-            #             (offset, 0), mQ[None, None, head_idx])
-            #     pack_gqa.load_Q(mQ_cur, sQ, gmem_tiled_copy_Q,
-            #                     tidx, m_block, seqlen.seqlen_q)
-            #     utils.cp_async_mbarrier_arrive_shared(mbar_ptr_Q, noinc=True)
+            if const_expr(not self.use_tma_Q):
+                pack_gqa = PackGQA(self.m_block_size, self.head_dim_padded,
+                                   self.check_hdim_oob, self.qhead_per_kvhead)
+                if const_expr(not seqlen.has_cu_seqlens_q):
+                    mQ_cur = mQ[None, None, head_idx, batch_idx]
+                else:
+                    offset = seqlen.offset_q if const_expr(
+                        not self.pack_gqa) else (0, seqlen.offset_q)
+                    mQ_cur = cute.domain_offset(
+                        (offset, 0), mQ[None, None, head_idx])
+                pack_gqa.load_Q(mQ_cur, sQ, gmem_tiled_copy_Q,
+                                tidx, m_block, seqlen.seqlen_q)
+                utils.cp_async_mbarrier_arrive_shared(mbar_ptr_Q, noinc=True)
 
-            # n_block_min, n_block_max = block_info.get_n_block_min_max(
-            #     seqlen, m_block)
-            # cute.arch.mbarrier_wait(mbar_ptr_Q, phase=q_consumer_phase)
-            # q_consumer_phase ^= 1
+            n_block_min, n_block_max = block_info.get_n_block_min_max(
+                seqlen, m_block)
+            cute.arch.mbarrier_wait(mbar_ptr_Q, phase=q_consumer_phase)
+            q_consumer_phase ^= 1
 
-            # O_should_accumulate = False
+            O_should_accumulate = False
+
+            if tidx == 0:
+                cute.printf("n_block_max: %d, n_block_min: %d", n_block_max, n_block_min)
 
             # First iteration with seqlen masking
             # if const_expr(self.intra_wg_overlap):
@@ -840,3 +846,6 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
             #     kv_consumer_state.advance()
             # else:
             #     self.warp_scheduler_barrier_arrive()
+
+            tile_scheduler.advance_to_next_work()
+            work_tile = tile_scheduler.get_current_work()
