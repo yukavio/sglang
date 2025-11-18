@@ -324,7 +324,7 @@ def _streaming_sparse_attn_forward(
         learnable_sink is not None,
         sink_size, enable_streaming,
         m_block_size, n_block_size, num_threads, pack_gqa,
-        compute_capability, groupwise,
+        compute_capability, groupwise
     )
 
     if compile_key not in _streaming_sparse_attn_forward.compile_cache:
@@ -344,6 +344,7 @@ def _streaming_sparse_attn_forward(
             sink_size=sink_size,
             enable_streaming=enable_streaming,
             groupwise=groupwise,
+            intra_wg_overlap=False,
         )
 
         _streaming_sparse_attn_forward.compile_cache[compile_key] = cute.compile(
