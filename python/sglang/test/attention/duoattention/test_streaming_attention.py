@@ -27,7 +27,7 @@ def is_hopper():
 @pytest.mark.parametrize("dtype", [torch.bfloat16])
 @pytest.mark.parametrize("sink_size", [4])
 @pytest.mark.parametrize("local_size", [64])
-@pytest.mark.parametrize("seqlen", [256])
+@pytest.mark.parametrize("seqlen", [256, 512])
 def test_streaming_attention_batch(dtype, sink_size, local_size, seqlen):
     """Test streaming sparse attention with standard batch format.
 
@@ -137,17 +137,17 @@ def test_streaming_attention_batch(dtype, sink_size, local_size, seqlen):
 
 
 @pytest.mark.skipif(not is_hopper(), reason="Streaming attention requires Hopper GPU (SM 9.0)")
-def test_streaming_attention():
+@pytest.mark.parametrize("seqlen", [128, 256, 512, 1024])
+@pytest.mark.parametrize("dtype", [torch.bfloat16])
+@pytest.mark.parametrize("sink_size", [4, 8])
+@pytest.mark.parametrize("local_size", [32])
+def test_streaming_attention(seqlen, dtype, sink_size, local_size):
     """Basic test with fixed parameters to quickly verify functionality."""
     device = torch.device("cuda")
-    dtype = torch.bfloat16
 
     batch_size = 1
-    seqlen = 128
     num_heads = 4
     head_dim = 64
-    sink_size = 4
-    local_size = 32
 
     # Create batch format tensors
     q = torch.randn(batch_size, seqlen, num_heads,
