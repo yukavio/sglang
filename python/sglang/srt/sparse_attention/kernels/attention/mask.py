@@ -23,6 +23,9 @@ class AttentionMask:
     sink_size: Optional[cutlass.Int32] = None
     enable_streaming: cutlass.Constexpr[bool] = False
 
+    # Chunked Attention
+    position_ids: Optional[cute.Tensor] = None
+
     @cute.jit
     def apply_mask(
         self,
@@ -288,11 +291,24 @@ class AttentionMask:
         seqlenk_col_limit = self.seqlen_k - global_col_offset
 
         for r in cutlass.range(cute.size(tScS_mn.shape[0]), unroll_full=True):
-            if cutlass.const_expr(self.qhead_per_kvhead_packgqa == 1):
-                row_idx = tScS_mn[r, 0][0] + m_block * self.m_block_size
+            # if cutlass.const_expr(self.qhead_per_kvhead_packgqa == 1):
+            #     row_idx = tScS_mn[r, 0][0] + m_block * self.m_block_size
+            # else:
+            #     # TODO(KuangjuX): Packed GQA Support
+            #     # Throw runtime error
+            #     raise RuntimeError("Packed GQA is not supported currently.")
+
+            local_row_idx_in_block = tScS_mn[r, 0][0]
+            if cutlass.const_expr(self.position_ids is not None):
+                row_idx = self.position_ids[local_row_idx_in_block]
             else:
-                # TODO(KuangjuX): Packed GQA Support
-                row_idx = 0
+                if cutlass.const_expr(self.qhead_per_kvhead_packgqa == 1):
+                    row_idx = tScS_mn[r, 0][0] + m_block * self.m_block_size
+                else:
+                    # TODO(KuangjuX): Packed GQA Support
+                    # Throw runtime error
+                    raise RuntimeError("Packed GQA is not supported currently.")
+                
                 
             col_limit_right = row_idx + local_row_offset_right
             col_limit_left = row_idx + local_row_offset_left

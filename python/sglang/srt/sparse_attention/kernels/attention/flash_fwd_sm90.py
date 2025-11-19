@@ -142,6 +142,7 @@ class FlashAttentionForwardSm90(FlashAttentionForwardBase):
 
         return SharedStorageQKV if const_expr(not self.Q_in_regs) else SharedStorageSharedQV
 
+
     @cute.jit
     def __call__(
         self,

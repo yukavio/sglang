@@ -40,6 +40,63 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
         # TODO(KuangjuX): Disable intra-WG overlap for streaming attention for now
         self.intra_wg_overlap = False
 
+    def _setup_attributes(self):
+        super()._setup_attributes()
+        self.sPos_layout = cute.make_layout(self.m_block_size)
+
+    def _get_shared_storage_cls(self):
+        # If we use cp.async to load Q, we want sQ to align to 1024 bytes
+        sQ_alignment = 128 if const_expr(self.use_tma_Q) else 1024
+        sK_alignment = 128
+        sV_alignment = 128
+        sQ_struct, sK_struct, sV_struct = [
+            cute.struct.Align[cute.struct.MemRange[self.dtype, cute.cosize(layout)], alignment]
+            for layout, alignment in zip(
+                    (self.sQ_layout, self.sK_layout, self.sV_layout),
+                    (sQ_alignment, sK_alignment, sV_alignment)
+            )
+        ]
+        cosize_sQV = max(cute.cosize(self.sQ_layout), cute.cosize(self.sV_layout))
+        sQV_struct = cute.struct.Align[cute.struct.MemRange[self.dtype, cosize_sQV], 1024]
+        cosize_sP = cute.cosize(self.sP_layout) if const_expr(self.sP_layout is not None) else 0
+        sP_struct = cute.struct.Align[cute.struct.MemRange[self.dtype, cosize_sP], 1024]
+
+        sPos_struct = cute.struct.Align[
+            cute.struct.MemRange[cutlass.Int32, cute.cosize(self.sPos_layout)],
+            16
+        ]
+
+        # 1 for Q, 1 for O, self.num_stages*2 for K, self.num_stages*2 for V,
+        mbar_ptr_QO_struct = cute.struct.MemRange[cutlass.Int64, 2]
+        mbar_ptr_K_struct = cute.struct.MemRange[cutlass.Int64, self.num_stages * 2]
+        mbar_ptr_V_struct = cute.struct.MemRange[cutlass.Int64, self.num_stages * 2]
+
+        @cute.struct
+        class SharedStorageQKV:
+            mbar_ptr: mbar_ptr_QO_struct
+            mbar_ptr_K: mbar_ptr_K_struct
+            mbar_ptr_V: mbar_ptr_V_struct
+            sV: sV_struct
+            sQ: sQ_struct
+            sK: sK_struct
+            sP: sP_struct
+
+            sPos: sPos_struct
+
+        @cute.struct
+        class SharedStorageSharedQV:
+            mbar_ptr: mbar_ptr_QO_struct
+            mbar_ptr_K: mbar_ptr_K_struct
+            mbar_ptr_V: mbar_ptr_V_struct
+            sQ: sQV_struct
+            sK: sK_struct
+            sP: sP_struct
+
+            sPos: sPos_struct
+
+        return SharedStorageQKV if const_expr(not self.Q_in_regs) else SharedStorageSharedQV
+
+
     @cute.jit
     def __call__(
         self,
@@ -59,6 +116,9 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
         window_size_left: Int32 | int | None = None,
         window_size_right: Int32 | int | None = None,
         learnable_sink: Optional[cute.Tensor] = None,
+
+        # Add `position_ids` for chunked attention
+        position_ids: Optional[cute.Tensor] = None,
     ):
         """Configures and launches the streaming sparse flash attention kernel.
 
@@ -121,6 +181,7 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
             self.pack_gqa and self.m_block_size % self.qhead_per_kvhead != 0)
         self.use_tma_O = self.arch >= 90 and mCuSeqlensQ is None and mSeqUsedQ is None and not self.pack_gqa
         self._setup_attributes()
+
         SharedStorage = self._get_shared_storage_cls()
 
         if const_expr(self.pack_gqa):
@@ -271,6 +332,8 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
             self.groupwise,
             self.sink_size,
             self.enable_streaming,
+            position_ids,
+            self.sPos_layout,
         ).launch(
             grid=grid_dim,
             block=[self.num_threads, 1, 1],
@@ -316,8 +379,14 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
         TileScheduler: cutlass.Constexpr[Callable],
         SharedStorage: cutlass.Constexpr[Callable],
         groupwise: bool,
+
+        # Streaming Attention
         sink_size: cutlass.Constexpr[int],
         enable_streaming: cutlass.Constexpr[bool],
+
+        # Chunked Attention
+        position_ids: Optional[cute.Tensor],
+        sPos_layout: cute.Layout,
     ):
         warp_idx = cute.arch.make_warp_uniform(cute.arch.warp_idx())
 
@@ -370,6 +439,10 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
         # TODO: how to get sQ_pi for cp.async if pack_gqa?
         sQ = storage.sQ.get_tensor(sQ_layout.outer, swizzle=sQ_layout.inner)
         sK = storage.sK.get_tensor(sK_layout.outer, swizzle=sK_layout.inner)
+
+        # Add shared memory tensor for position ids
+        sPos = storage.sPos.get_tensor(sPos_layout)
+
         if const_expr(not self.Q_in_regs):
             sV = storage.sV.get_tensor(
                 sV_layout.outer, swizzle=sV_layout.inner)
@@ -415,6 +488,7 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
                 self.pack_gqa) else 1,
             sink_size=sink_size,
             enable_streaming=enable_streaming,
+            position_ids=sPos if const_expr(position_ids is not None) else None,
         )
         TileSchedulerCls = partial(TileScheduler.create, tile_sched_params)
 
@@ -439,8 +513,14 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
                 SeqlenInfoCls,
                 TileSchedulerCls,
                 groupwise,
+
+                # Streaming Mask
                 sink_size,
                 enable_streaming,
+
+                # Chunked Attention
+                position_ids,
+                sPos,
             )
 
         else:
@@ -503,8 +583,15 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
         groupwise: bool,
         sink_size: cutlass.Constexpr[int],
         enable_streaming: cutlass.Constexpr[bool],
+
+        gPos: Optional[cute.Tensor] = None,
+        sPos: Optional[cute.Tensor] = None,
     ):
         warp_idx_in_wg = cute.arch.make_warp_uniform(cute.arch.warp_idx()) % 4
+
+        # Get thread index in warp group
+        tidx_in_wg = cute.arch.thread_idx_in_warp_group()
+
         if warp_idx_in_wg == 0:
             q_producer_phase = Int32(1)
             kv_producer_state = pipeline.make_pipeline_state(
@@ -512,16 +599,30 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
             )
             tile_scheduler = TileSchedulerCls()
             work_tile = tile_scheduler.initial_work_tile_info()
+
             while work_tile.is_valid_tile:
-            # if work_tile.is_valid_tile:
                 m_block, head_idx, batch_idx = work_tile.tile_idx
                 seqlen = SeqlenInfoCls(batch_idx)
+
+                # KuangjuX: Load position_ids into shared memory
+                if const_expr(gPos is not None):
+                    # Assume gPos layout is (batch_size, seqlen)
+                    # Get the starting pointer for the current sequence in the batch
+                    gPos_cur = gPos[batch_idx]
+                    # Calculate the offset for the current `m_block`
+                    gPos_offset = gPos_cur[m_block * self.m_block_size]
+
+                    for i in cutlass.range(self.m_block_size // self.num_producer_threads):
+                        sPos[tidx_in_wg + i * self.num_producer_threads] = gPos_offset[tidx_in_wg + i * self.num_producer_threads]
+
                 if const_expr(not seqlen.has_cu_seqlens_q):
                     mQ_cur = mQ[None, None, head_idx, batch_idx]
                 else:
                     offset = seqlen.offset_q if const_expr(not self.pack_gqa) else (0, seqlen.offset_q)
                     mQ_cur = cute.domain_offset((offset, 0), mQ[None, None, head_idx])
+
                 head_idx_kv = head_idx // self.qhead_per_kvhead if const_expr(not self.pack_gqa) else head_idx
+
                 if const_expr(mPageTable is None):
                     if const_expr(not seqlen.has_cu_seqlens_k):
                         mK_cur, mV_cur = [t[None, None, head_idx_kv, batch_idx] for t in (mK, mV)]
@@ -533,6 +634,7 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
                     mK_cur, mV_cur = [t[None, None, head_idx_kv, None] for t in (mK, mV)]
                     gK = cute.local_tile(mK_cur, (self.n_block_size, self.head_dim_padded), (None, 0, None))
                     gV = cute.local_tile(mV_cur, (self.n_block_size, self.head_dim_v_padded), (0, None, None))
+
                 if const_expr(self.use_tma_Q):
                     gQ = cute.local_tile(mQ_cur, (self.m_block_size, self.head_dim_padded), (m_block, 0))
                     tQsQ, tQgQ = cpasync.tma_partition(
@@ -558,6 +660,7 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
                 )
                 load_K = partial(self.load_K, tma_atom_K, tKgK, tKsK, pipeline_k)
                 load_V = partial(self.load_K, tma_atom_V, tVgV, tVsV, pipeline_v)
+
                 # load_Q
                 if const_expr(self.use_tma_Q):
                     # TODO: wait for Q to be empty
@@ -567,11 +670,10 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
                     cute.copy(tma_atom_Q, tQgQ, tQsQ, tma_bar_ptr=mbar_ptr_Q)
                 # n_block_min, n_block_max = block_info.get_n_block_min_max(seqlen, m_block)
                 n_streaming_block_min, n_streaming_block_max = block_info.get_streaming_mask_n_block_min_max(seqlen, m_block)
-                # if cute.arch.thread_idx()[0] == 0:
-                #     cute.printf("m_block = %d, n_block_min: %d, n_block_max: %d", m_block, n_block_min, n_block_max)
+
+
                 for i in cutlass.range(n_streaming_block_max - n_streaming_block_min, unroll=2):
                     n_block = n_streaming_block_max - i - 1
-                    #page_idx = mPageTable[batch_idx, n_block] if const_expr(mPageTable is not None) else None
                     page_idx = None if const_expr(mPageTable is None) else mPageTable[batch_idx*tile_scheduler.params.num_head+head_idx_kv, n_block] if const_expr(self.groupwise) else mPageTable[batch_idx, n_block]
                     load_K(block=n_block, producer_state=kv_producer_state, page_idx=page_idx)
                     load_V(block=n_block, producer_state=kv_producer_state, page_idx=page_idx)

@@ -148,7 +148,8 @@ def _streaming_sparse_attn_forward(
     num_threads: int = 384,
     pack_gqa: Optional[bool] = None,
     _compute_capability: Optional[int] = None,
-    groupwise: Optional[bool] = False
+    groupwise: Optional[bool] = False,
+    position_ids: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Forward pass for streaming sparse attention.
 
@@ -490,6 +491,7 @@ def streaming_sparse_attn_func(
     softcap: float = 0.0,
     pack_gqa: Optional[bool] = None,
     groupwise: bool = False,
+    position_ids: Optional[torch.Tensor] = None,
 ):
     """User-facing function for streaming sparse attention.
 
@@ -514,6 +516,7 @@ def streaming_sparse_attn_func(
         softcap: Softcap value for attention scores
         pack_gqa: Whether to pack GQA (optional, auto-detected if None)
         groupwise: Whether to use groupwise paged KV cache
+        position_ids: Position IDs for Chunked Attention
 
     Returns:
         Tuple of (output, lse) where:
@@ -547,5 +550,6 @@ def streaming_sparse_attn_func(
         window_size[1],
         learnable_sink,
         sink_size,
-        enable_streaming
+        enable_streaming,
+        position_ids=position_ids
     )
