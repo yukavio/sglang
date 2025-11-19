@@ -713,21 +713,11 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
                 else:
                     offset = seqlen.offset_q if const_expr(not self.pack_gqa) else (0, seqlen.offset_q)
                     mQ_cur = cute.domain_offset((offset, 0), mQ[None, None, head_idx])
-                # gmem_thr_copy_Q = gmem_tiled_copy_Q.get_slice(tidx)
-                # gQ = cute.local_tile(mQ_cur, (self.m_block_size, self.head_dim_padded), (m_block, 0))
-                # self.load_Q(gmem_thr_copy_Q, gQ, sQ, m_block, seqlen=seqlen.seqlen_q,
-                #             headdim=mQ.shape[1])
+
                 pack_gqa.load_Q(mQ_cur, sQ, gmem_tiled_copy_Q, tidx, m_block, seqlen.seqlen_q)
                 utils.cp_async_mbarrier_arrive_shared(mbar_ptr_Q, noinc=True)
 
-            # n_block_min, n_block_max = block_info.get_n_block_min_max(seqlen, m_block)
-
-            # TODO(KuangjuX): Streaming attention
-            # if const_expr(enable_streaming):
-            #     n_block_min_streaming, n_block_max_streaming = block_info.get_streaming_mask_n_block_min_max(seqlen, m_block)
-            #     n_block_min = cutlass.max(n_block_min, n_block_min_streaming)
-            #     n_block_max = cutlass.min(n_block_max, n_block_max_streaming)
-
+            # KuangjuX: get streaming mask `n_block_min_streaming` and `n_block_max_streaming`
             n_block_min_streaming, n_block_max_streaming = block_info.get_streaming_mask_n_block_min_max(seqlen, m_block)
             
 
@@ -750,9 +740,11 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
                 )
                 pipeline_k.consumer_release(kv_consumer_state)
                 scoremod_premask_fn(acc_S)
-                # if cute.arch.thread_idx()[0] == 128: cute.print_tensor(utils.make_acc_tensor_mn_view(acc_S))
-                mask_fn(acc_S, n_block=n_block_max - 1, mask_seqlen=True)
-                # if cute.arch.thread_idx()[0] == 128: cute.print_tensor(utils.make_acc_tensor_mn_view(acc_S))
+
+                # mask_fn(acc_S, n_block=n_block_max - 1, mask_seqlen=True)
+                streaming_mask_fn(acc_S, n_block=n_block_max_streaming - 1, mask_seqlen=True)
+
+
                 softmax.online_softmax(acc_S, is_first=True)
                 tOrP_acc = cute.make_tensor(acc_S.iterator, utils.convert_layout_acc_frgA(acc_S.layout))
                 tOrP = mma_params.tOrP if const_expr(self.mma_pv_is_rs) else cute.make_fragment_like(tOrP_acc, self.dtype)
@@ -771,11 +763,6 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
                 # acc_O.fill(0.0)
             else:
                 self.warp_scheduler_barrier_sync()
-                # kv_consumer_state = mma_one_n_block(
-                #     n_block_max - 1, kv_consumer_state,
-                #     is_first_n_block=True, mask_fn=partial(mask_fn, mask_seqlen=True),
-                #     O_should_accumulate=False
-                # )
                 kv_consumer_state = mma_one_n_block(
                     n_block_max_streaming - 1, kv_consumer_state,
                     is_first_n_block=True, mask_fn=partial(streaming_mask_fn, mask_seqlen=True),

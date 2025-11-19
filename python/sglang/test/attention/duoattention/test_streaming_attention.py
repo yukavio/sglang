@@ -140,7 +140,7 @@ def test_streaming_attention_batch(dtype, sink_size, local_size, seqlen):
 @pytest.mark.parametrize("seqlen", [128, 256, 512, 1024])
 @pytest.mark.parametrize("dtype", [torch.bfloat16])
 @pytest.mark.parametrize("sink_size", [4, 8])
-@pytest.mark.parametrize("local_size", [32])
+@pytest.mark.parametrize("local_size", [32, 64])
 def test_streaming_attention(seqlen, dtype, sink_size, local_size):
     """Basic test with fixed parameters to quickly verify functionality."""
     device = torch.device("cuda")
