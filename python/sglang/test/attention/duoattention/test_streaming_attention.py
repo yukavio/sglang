@@ -126,25 +126,6 @@ def test_chunked_streaming_attention():
 
     softmax_scale = 1.0 / math.sqrt(head_dim)
 
-    # Test CUDA implementation (batch format)
-    # out_cuda, _ = streaming_sparse_attn_func(
-    #     q, k, v,
-    #     cu_seqlens_q=None,
-    #     cu_seqlens_k=None,
-    #     seqused_q=None,
-    #     seqused_k=None,
-    #     page_table=None,
-    #     softmax_scale=softmax_scale,
-    #     causal=True,
-    #     window_size=(local_size - 1, 0),
-    #     learnable_sink=None,
-    #     sink_size=sink_size,
-    #     enable_streaming=True,
-    #     softcap=0.0,
-    #     pack_gqa=False,
-    #     groupwise=False,
-    #     position_ids=None,
-    # )
 
     chunk_size = 256
     num_chunks = total_tokens // chunk_size

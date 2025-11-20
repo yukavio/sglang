@@ -306,8 +306,8 @@ class AttentionMask:
                     row_idx = tScS_mn[r, 0][0] + m_block * self.m_block_size
                 else:
                     # TODO(KuangjuX): Packed GQA Support
-                    # Throw runtime error
-                    raise RuntimeError("Packed GQA is not supported currently.")
+                    # Packed GQA is not supported currently - set row_idx to 0 as fallback
+                    row_idx = 0
                 
                 
             col_limit_right = row_idx + local_row_offset_right

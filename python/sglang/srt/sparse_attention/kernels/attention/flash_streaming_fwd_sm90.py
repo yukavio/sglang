@@ -590,7 +590,8 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
         warp_idx_in_wg = cute.arch.make_warp_uniform(cute.arch.warp_idx()) % 4
 
         # Get thread index in warp group
-        tidx_in_wg = cute.arch.thread_idx_in_warp_group()
+        # tidx_in_wg = cute.arch.thread_idx_in_warp_group()
+        tidx_in_wg = cute.arch.thread_idx()[0] % 128
 
         if warp_idx_in_wg == 0:
             q_producer_phase = Int32(1)
