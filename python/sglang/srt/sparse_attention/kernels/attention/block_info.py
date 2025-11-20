@@ -86,7 +86,8 @@ class BlockInfo:
     def get_streaming_mask_n_block_min_max(
         self,
         seqlen_info: SeqlenInfoQK,
-        m_block: cutlass.Int32
+        m_block: cutlass.Int32,
+        position_ids: Optional[cute.Tensor] = None,
     ) -> Tuple[cutlass.Int32, cutlass.Int32]:
         """
         Get the start and end of the streaming mask for the given m_block.
@@ -146,3 +147,23 @@ class BlockInfo:
                 n_block_min = cutlass.max(n_idx_left // self.n_block_size, 0)
         
         return n_block_min, n_block_max
+
+        # q_pos_min = position_ids[0]
+        # q_pos_max = position_ids[self.m_block_size - 1]
+
+        # k_pos_max = q_pos_max 
+        # n_block_max = cute.ceil_div(k_pos_max + 1, self.n_block_size)
+
+        # n_block_max = cutlass.min(n_block_max, cute.ceil_div(seqlen_info.seqlen_k, self.n_block_size))
+
+        # n_block_min = 0
+
+        # if self.enable_streaming:
+        #     if self.sink_size > 0:
+        #         n_block_min = 0 
+        #     elif self.window_size_left is not None:
+        #         k_pos_min_window = q_pos_min - self.window_size_left
+
+        #         n_block_min = cutlass.max(0, k_pos_min_window // self.n_block_size)
+
+        # return n_block_min, n_block_max

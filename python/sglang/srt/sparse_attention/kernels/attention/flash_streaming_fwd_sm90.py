@@ -560,6 +560,8 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
                 TileSchedulerCls,
                 sink_size,
                 enable_streaming,
+
+                sPos,
             )
 
 
@@ -594,8 +596,6 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
         # Get thread index in warp group
         # tidx_in_wg = cute.arch.thread_idx_in_warp_group()
         tidx_in_wg = cute.arch.thread_idx()[0] % 128
-
-
 
         if warp_idx_in_wg == 0:
             q_producer_phase = Int32(1)
@@ -673,7 +673,7 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
                         cute.arch.mbarrier_arrive_and_expect_tx(mbar_ptr_Q, self.tma_copy_q_bytes)
                     cute.copy(tma_atom_Q, tQgQ, tQsQ, tma_bar_ptr=mbar_ptr_Q)
                 # n_block_min, n_block_max = block_info.get_n_block_min_max(seqlen, m_block)
-                n_streaming_block_min, n_streaming_block_max = block_info.get_streaming_mask_n_block_min_max(seqlen, m_block)
+                n_streaming_block_min, n_streaming_block_max = block_info.get_streaming_mask_n_block_min_max(seqlen, m_block, sPos)
 
 
                 for i in cutlass.range(n_streaming_block_max - n_streaming_block_min, unroll=2):
@@ -728,6 +728,8 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
         TileSchedulerCls: Callable,
         sink_size: cutlass.Constexpr[int],
         enable_streaming: cutlass.Constexpr[bool],
+
+        sPos: Optional[cute.Tensor],
     ):
         warp_group_idx = cute.arch.make_warp_uniform(tidx // self.num_threads_per_warp_group)
         warp_group_thread_layout = cute.make_layout(
@@ -832,7 +834,7 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
                 utils.cp_async_mbarrier_arrive_shared(mbar_ptr_Q, noinc=True)
 
             # KuangjuX: get streaming mask `n_block_min_streaming` and `n_block_max_streaming`
-            n_block_min_streaming, n_block_max_streaming = block_info.get_streaming_mask_n_block_min_max(seqlen, m_block)
+            n_block_min_streaming, n_block_max_streaming = block_info.get_streaming_mask_n_block_min_max(seqlen, m_block, sPos)
             
 
             cute.arch.mbarrier_wait(mbar_ptr_Q, phase=q_consumer_phase)
