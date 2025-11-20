@@ -256,6 +256,86 @@ class AttentionMask:
                         else acc_S[i]
                     )
 
+    # @cute.jit
+    # def apply_streaming_mask(
+    #     self, 
+    #     acc_S: cute.Tensor,
+    #     m_block: cutlass.Int32,
+    #     n_block: cutlass.Int32,
+    #     thr_mma: cute.TiledMma,
+    #     mask_seqlen: cutlass.Constexpr
+    # ):
+    #     acc_S_mn = utils.make_acc_tensor_mn_view(acc_S)
+    #     cS = cute.make_identity_tensor((self.m_block_size, self.n_block_size))
+    #     tScS_mn = utils.make_acc_tensor_mn_view(thr_mma.partition_C(cS))
+    #     t0ScS_mn = utils.make_acc_tensor_mn_view(thr_mma.get_slice(0).partition_C(cS))
+
+    #     # This offset calculation was correct in the original code. It correctly
+    #     # brings global coordinates into a local context for comparison.
+    #     thr_col_offset = tScS_mn[0][1]
+    #     global_col_offset = n_block * self.n_block_size + thr_col_offset
+
+    #     causal_row_offset = (
+    #         self.seqlen_k - self.seqlen_q - global_col_offset
+    #     )
+
+    #     # The rest of the offset calculations remain the same as the original.
+    #     sink_col_limit = self.sink_size - global_col_offset
+    #     local_row_offset_right = causal_row_offset
+
+    #     if cutlass.const_expr(self.window_size_left is not None):
+    #         local_row_offset_left = -self.window_size_left - global_col_offset
+    #     else:
+    #         local_row_offset_left = -self.seqlen_k
+
+    #     seqlenk_col_limit = self.seqlen_k - global_col_offset
+
+    #     for r in cutlass.range(cute.size(tScS_mn.shape[0]), unroll_full=True):
+    #         # if cutlass.const_expr(self.qhead_per_kvhead_packgqa == 1):
+    #         #     row_idx = tScS_mn[r, 0][0] + m_block * self.m_block_size
+    #         # else:
+    #         #     # TODO(KuangjuX): Packed GQA Support
+    #         #     # Throw runtime error
+    #         #     raise RuntimeError("Packed GQA is not supported currently.")
+
+    #         local_row_idx_in_block = tScS_mn[r, 0][0]
+    #         if cutlass.const_expr(self.position_ids is not None):
+    #             row_idx = self.position_ids[local_row_idx_in_block]
+    #         else:
+    #             if cutlass.const_expr(self.qhead_per_kvhead_packgqa == 1):
+    #                 row_idx = tScS_mn[r, 0][0] + m_block * self.m_block_size
+    #             else:
+    #                 # TODO(KuangjuX): Packed GQA Support
+    #                 # Packed GQA is not supported currently - set row_idx to 0 as fallback
+    #                 row_idx = 0
+                
+                
+    #         col_limit_right = row_idx + local_row_offset_right
+    #         col_limit_left = row_idx + local_row_offset_left
+
+    #         if cutlass.const_expr(mask_seqlen):
+    #             # Note: The padding check should still use strict inequality, as sequence length
+    #             # is exclusive (e.g., for seqlen=128, valid indices are 0-127).
+    #             # We apply min to the causal limit, which is fine.
+    #             col_limit_right_with_padding = seqlenk_col_limit - 1
+    #             col_limit_right = cutlass.min(col_limit_right, col_limit_right_with_padding)
+
+    #         for c in cutlass.range(cute.size(tScS_mn.shape[1]), unroll_full=True):
+    #             col_idx = t0ScS_mn[r, c][1]
+
+    #             should_mask = True
+
+    #             is_in_sink = col_idx < sink_col_limit
+    #             is_causal = col_idx <= col_limit_right   
+    #             is_in_window = col_idx >= col_limit_left
+
+    #             if is_causal:
+    #                 if is_in_sink or is_in_window:
+    #                     should_mask = False
+
+    #             if should_mask:
+    #                 acc_S_mn[r, c] = -cutlass.Float32.inf
+
     @cute.jit
     def apply_streaming_mask(
         self, 
@@ -265,73 +345,62 @@ class AttentionMask:
         thr_mma: cute.TiledMma,
         mask_seqlen: cutlass.Constexpr
     ):
+        """
+        A simplified, direct-logic version of the masking function for debugging.
+        It calculates absolute q_pos and k_pos for each element and compares them directly,
+        bypassing the complex offset calculations.
+        """
         acc_S_mn = utils.make_acc_tensor_mn_view(acc_S)
         cS = cute.make_identity_tensor((self.m_block_size, self.n_block_size))
-        tScS_mn = utils.make_acc_tensor_mn_view(thr_mma.partition_C(cS))
-        t0ScS_mn = utils.make_acc_tensor_mn_view(thr_mma.get_slice(0).partition_C(cS))
+        # tScS_mn gives the coordinates (row, col) within the entire MxN block
+        tScS_mn = thr_mma.partition_C(cS)
 
-        # This offset calculation was correct in the original code. It correctly
-        # brings global coordinates into a local context for comparison.
-        thr_col_offset = tScS_mn[0][1]
-        global_col_offset = n_block * self.n_block_size + thr_col_offset
+        # Iterate through each element this thread is responsible for in the accumulator
+        for i in cutlass.range(cute.size(acc_S)):
+            # Get the (row, col) coordinates of this element within the current block
+            # tScS_mn is a "Tensor of Coordinates"
+            coord_in_block = tScS_mn[i]
+            q_coord_in_block = coord_in_block[0]
+            k_coord_in_block = coord_in_block[1]
 
-        causal_row_offset = (
-            self.seqlen_k - self.seqlen_q - global_col_offset
-        )
-
-        # The rest of the offset calculations remain the same as the original.
-        sink_col_limit = self.sink_size - global_col_offset
-        local_row_offset_right = causal_row_offset
-
-        if cutlass.const_expr(self.window_size_left is not None):
-            local_row_offset_left = -self.window_size_left - global_col_offset
-        else:
-            local_row_offset_left = -self.seqlen_k
-
-        seqlenk_col_limit = self.seqlen_k - global_col_offset
-
-        for r in cutlass.range(cute.size(tScS_mn.shape[0]), unroll_full=True):
-            # if cutlass.const_expr(self.qhead_per_kvhead_packgqa == 1):
-            #     row_idx = tScS_mn[r, 0][0] + m_block * self.m_block_size
-            # else:
-            #     # TODO(KuangjuX): Packed GQA Support
-            #     # Throw runtime error
-            #     raise RuntimeError("Packed GQA is not supported currently.")
-
-            local_row_idx_in_block = tScS_mn[r, 0][0]
+            # Step 1: Determine the absolute query position (q_pos)
             if cutlass.const_expr(self.position_ids is not None):
-                row_idx = self.position_ids[local_row_idx_in_block]
+                # For chunked prefill, look up the true absolute position
+                q_pos = self.position_ids[q_coord_in_block]
             else:
-                if cutlass.const_expr(self.qhead_per_kvhead_packgqa == 1):
-                    row_idx = tScS_mn[r, 0][0] + m_block * self.m_block_size
-                else:
-                    # TODO(KuangjuX): Packed GQA Support
-                    # Packed GQA is not supported currently - set row_idx to 0 as fallback
-                    row_idx = 0
-                
-                
-            col_limit_right = row_idx + local_row_offset_right
-            col_limit_left = row_idx + local_row_offset_left
+                # For regular attention, calculate it from the block index
+                q_pos = m_block * self.m_block_size + q_coord_in_block
 
+            # Step 2: Determine the absolute key position (k_pos)
+            k_pos = n_block * self.n_block_size + k_coord_in_block
+
+            # Step 3: Apply masking rules using direct, absolute positions
+            should_mask = True
+
+            # Rule A: Is the key within the sink?
+            is_in_sink = k_pos < self.sink_size
+
+            # Rule B: Is the key within the sliding window?
+            is_in_window = True # Default to true if no window size is specified
+            if cutlass.const_expr(self.window_size_left is not None):
+                is_in_window = (k_pos >= q_pos - self.window_size_left)
+            
+            # Rule C: Is the connection causal?
+            is_causal = (k_pos <= q_pos)
+
+            # An element is NOT masked if it's causal AND (it's in the sink OR it's in the window)
+            if is_causal:
+                if is_in_sink or is_in_window:
+                    should_mask = False
+            
+            # Rule D: Padding mask (optional, based on sequence lengths)
             if cutlass.const_expr(mask_seqlen):
-                # Note: The padding check should still use strict inequality, as sequence length
-                # is exclusive (e.g., for seqlen=128, valid indices are 0-127).
-                # We apply min to the causal limit, which is fine.
-                col_limit_right_with_padding = seqlenk_col_limit - 1
-                col_limit_right = cutlass.min(col_limit_right, col_limit_right_with_padding)
+                # Note: self.seqlen_q is the length of the current Q chunk, not total length
+                # The q_pos check is implicitly handled by the launch grid.
+                # We only need to check k_pos against the total key length.
+                if k_pos >= self.seqlen_k:
+                    should_mask = True
 
-            for c in cutlass.range(cute.size(tScS_mn.shape[1]), unroll_full=True):
-                col_idx = t0ScS_mn[r, c][1]
-
-                should_mask = True
-
-                is_in_sink = col_idx < sink_col_limit
-                is_causal = col_idx <= col_limit_right   
-                is_in_window = col_idx >= col_limit_left
-
-                if is_causal:
-                    if is_in_sink or is_in_window:
-                        should_mask = False
-
-                if should_mask:
-                    acc_S_mn[r, c] = -cutlass.Float32.inf
+            # Step 4: Apply the mask if needed
+            if should_mask:
+                acc_S[i] = -cutlass.Float32.inf

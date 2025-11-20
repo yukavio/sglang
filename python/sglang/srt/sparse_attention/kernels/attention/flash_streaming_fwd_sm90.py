@@ -173,8 +173,8 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
         self.num_producer_threads = 32
         self.num_Q_load_threads = self.num_mma_threads
         self.num_epilogue_threads = self.num_mma_threads
-        self.num_mma_regs = 240
-        self.num_producer_regs = 24
+        self.num_mma_regs = 216
+        self.num_producer_regs = 48
         self.use_scheduler_barrier = (self.num_mma_warp_groups >= 2 and self.head_dim_padded <= 128) if const_expr(
             self.intra_wg_overlap) else (self.num_mma_warp_groups == 2)
         self.use_tma_Q = self.arch >= 90 and not (
@@ -388,8 +388,9 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
         position_ids: Optional[cute.Tensor],
         sPos_layout: cute.Layout,
     ):
-        warp_idx = cute.arch.make_warp_uniform(cute.arch.warp_idx())
 
+
+        warp_idx = cute.arch.make_warp_uniform(cute.arch.warp_idx())
         # TMA prefetch
         if warp_idx == 0:
             if const_expr(tma_atom_Q is not None):
@@ -492,6 +493,7 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
         )
         TileSchedulerCls = partial(TileScheduler.create, tile_sched_params)
 
+
         # Producer
         if warp_idx < 4:  # Producer
             cute.arch.warpgroup_reg_dealloc(self.num_producer_regs)
@@ -593,6 +595,8 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
         # tidx_in_wg = cute.arch.thread_idx_in_warp_group()
         tidx_in_wg = cute.arch.thread_idx()[0] % 128
 
+
+
         if warp_idx_in_wg == 0:
             q_producer_phase = Int32(1)
             kv_producer_state = pipeline.make_pipeline_state(
@@ -609,12 +613,11 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
                 if const_expr(gPos is not None):
                     # Assume gPos layout is (batch_size, seqlen)
                     # Get the starting pointer for the current sequence in the batch
-                    gPos_cur = gPos[batch_idx]
-                    # Calculate the offset for the current `m_block`
-                    gPos_offset = gPos_cur[m_block * self.m_block_size]
 
+                    # TODO(KuangjuX): Assume `batch_size` is 1 for now
                     for i in cutlass.range(self.m_block_size // self.num_producer_threads):
-                        sPos[tidx_in_wg + i * self.num_producer_threads] = gPos_offset[tidx_in_wg + i * self.num_producer_threads]
+                        sPos[tidx_in_wg + i * self.num_producer_threads] = gPos[m_block * self.m_block_size + tidx_in_wg + i * self.num_producer_threads]
+                        # cute.printf("sPos[%d] = %d\n", tidx_in_wg + i * self.num_producer_threads, sPos[tidx_in_wg + i * self.num_producer_threads])
 
                 if const_expr(not seqlen.has_cu_seqlens_q):
                     mQ_cur = mQ[None, None, head_idx, batch_idx]
@@ -679,6 +682,14 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
                     load_K(block=n_block, producer_state=kv_producer_state, page_idx=page_idx)
                     load_V(block=n_block, producer_state=kv_producer_state, page_idx=page_idx)
                     kv_producer_state.advance()
+
+                # if m_block == 1 and tidx_in_wg == 0:
+                #     cute.printf("[DEBUG] LOAD m_block = %d, tidx_in_wg = %d", m_block, tidx_in_wg)
+                    # for i in cutlass.range(16):
+                    #     cute.printf("%d, ", sPos[i])
+                    # cute.printf("...\n");
+
+
                 tile_scheduler.prefetch_next_work()
                 tile_scheduler.advance_to_next_work()
                 work_tile = tile_scheduler.get_current_work()

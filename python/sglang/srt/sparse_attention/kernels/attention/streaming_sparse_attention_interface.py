@@ -290,15 +290,27 @@ def _streaming_sparse_attn_forward(
             leading_dim=t.ndim - 1)
         for t in (q, k, v, out)
     ]
+
+
     lse_tensor = from_dlpack(lse.detach(), assumed_align=4).mark_layout_dynamic(
         leading_dim=lse.ndim - 1) if lse is not None else None
+
     cu_seqlens_q_tensor, cu_seqlens_k_tensor, seqused_q_tensor, seqused_k_tensor, learnable_sink_tensor = [
         from_dlpack(t.detach(), assumed_align=4).mark_layout_dynamic(
             leading_dim=0) if t is not None else None
         for t in (cu_seqlens_q, cu_seqlens_k, seqused_q, seqused_k, learnable_sink)
     ]
+
+
     page_table_tensor = from_dlpack(page_table.detach(), assumed_align=4).mark_layout_dynamic(
         leading_dim=1) if page_table is not None else None
+
+    position_ids_tensor = from_dlpack(position_ids.detach(), assumed_align=4).mark_layout_dynamic(
+        leading_dim=1) if position_ids is not None else None
+
+    if position_ids_tensor is not None:
+        print(f"position_ids_tensor: {position_ids_tensor}")
+        print(f"position_ids_tensor.shape: {position_ids_tensor.shape}")
 
     if causal:
         window_size_right = 0
@@ -352,14 +364,14 @@ def _streaming_sparse_attn_forward(
             fa_fwd, q_tensor, k_tensor, v_tensor, o_tensor, lse_tensor, softmax_scale, current_stream,
             cu_seqlens_q_tensor, cu_seqlens_k_tensor, seqused_q_tensor, seqused_k_tensor,
             page_table_tensor,
-            softcap, window_size_left, window_size_right, learnable_sink_tensor,
+            softcap, window_size_left, window_size_right, learnable_sink_tensor, position_ids_tensor
         )
 
     _streaming_sparse_attn_forward.compile_cache[compile_key](
         q_tensor, k_tensor, v_tensor, o_tensor, lse_tensor, softmax_scale, current_stream,
         cu_seqlens_q_tensor, cu_seqlens_k_tensor, seqused_q_tensor, seqused_k_tensor,
         page_table_tensor,
-        softcap, window_size_left, window_size_right, learnable_sink_tensor,
+        softcap, window_size_left, window_size_right, learnable_sink_tensor, position_ids_tensor
     )
 
     return out, lse
@@ -534,6 +546,7 @@ def streaming_sparse_attn_func(
         ...     enable_streaming=True
         ... )
     """
+
     return _streaming_sparse_attn_forward(
         q,
         k,

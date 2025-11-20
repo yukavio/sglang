@@ -19,7 +19,7 @@ def is_hopper():
 
 
 @pytest.mark.skipif(not is_hopper(), reason="Streaming attention requires Hopper GPU (SM 9.0)")
-@pytest.mark.parametrize("seqlen", [128, 256, 512, 1024])
+@pytest.mark.parametrize("seqlen", [512, 1024, 2048, 4096])
 @pytest.mark.parametrize("dtype", [torch.bfloat16])
 @pytest.mark.parametrize("sink_size", [4, 8])
 @pytest.mark.parametrize("local_size", [32, 64])
@@ -95,13 +95,15 @@ def test_streaming_attention(seqlen, dtype, sink_size, local_size, batch_size):
     print(f"Streaming attention test passed for seqlen={seqlen}, dtype={dtype}, sink_size={sink_size}, local_size={local_size}, batch_size={batch_size}!")
 
 
-def test_chunked_streaming_attention():
+@pytest.mark.skipif(not is_hopper(), reason="Streaming attention requires Hopper GPU (SM 9.0)")
+@pytest.mark.parametrize("seqlen", [512, 1024, 2048, 4096])
+@pytest.mark.parametrize("sink_size", [4, 8])
+@pytest.mark.parametrize("chunk_size", [128, 256])
+def test_chunked_streaming_attention(seqlen, sink_size, chunk_size):
     device = torch.device("cuda")
     num_heads = 4
     head_dim = 64
-    seqlen = 4096
     dtype = torch.bfloat16
-    sink_size = 4
     local_size = 32
     batch_size = 1
     
@@ -111,7 +113,7 @@ def test_chunked_streaming_attention():
                     head_dim, dtype=dtype, device=device)
     v = torch.randn(batch_size, seqlen, num_heads,
                     head_dim, dtype=dtype, device=device)
-    
+
     total_tokens = batch_size * seqlen
 
     q_varlen = q.reshape(total_tokens, num_heads, head_dim)
@@ -120,19 +122,16 @@ def test_chunked_streaming_attention():
     cu_seqlens = torch.arange(
         0, (batch_size + 1) * seqlen, step=seqlen, dtype=torch.int32, device=device
     )
-    position_ids = torch.arange(
-        0, total_tokens, dtype=torch.int32, device=device
-    )
 
     softmax_scale = 1.0 / math.sqrt(head_dim)
 
-
-    chunk_size = 256
     num_chunks = total_tokens // chunk_size
 
     k_cache = []
     v_cache = []
     chunked_outputs = []
+
+    print(f"num_chunks: {num_chunks}")
 
     for i in range(num_chunks): 
         start_idx = i * chunk_size
@@ -149,7 +148,9 @@ def test_chunked_streaming_attention():
         v_context = torch.cat(v_cache, dim=1)
 
         pos_ids_chunk = torch.arange(start_idx, end_idx, dtype=torch.int32, device=device)
-        pos_ids_chunk = pos_ids_chunk.unsqueeze(0).expand(batch_size, -1)
+        pos_ids_chunk = pos_ids_chunk.unsqueeze(0).expand(batch_size, -1).contiguous()
+
+        print(f"pos_ids_chunk: {pos_ids_chunk}")
 
         print(f"    - q_chunk shape: {q_chunk.shape}")
         print(f"    - k_context shape: {k_context.shape}")
@@ -192,14 +193,18 @@ def test_chunked_streaming_attention():
         softmax_scale=softmax_scale,
         is_causal=True,
     )
+    out_ref = out_ref_varlen.reshape(batch_size, seqlen, num_heads, head_dim)
 
     # Check output shape
     assert out_cuda.shape == (batch_size, seqlen, num_heads, head_dim), \
         f"Expected shape {(batch_size, seqlen, num_heads, head_dim)}, got {out_cuda.shape}"
 
-    out_ref = out_ref_varlen.reshape(batch_size, seqlen, num_heads, head_dim)
+
+    print(f"out_cuda: {out_cuda}")
+    print(f"out_ref: {out_ref}")
 
     # Check output values
     torch.testing.assert_close(out_cuda, out_ref, atol=5e-1, rtol=5e-1)
+
 
     print(f"Chunked streaming attention test passed for seqlen={seqlen}, dtype={dtype}, sink_size={sink_size}, local_size={local_size}, batch_size={batch_size}!")
