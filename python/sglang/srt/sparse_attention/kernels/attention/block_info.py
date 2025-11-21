@@ -91,79 +91,89 @@ class BlockInfo:
     ) -> Tuple[cutlass.Int32, cutlass.Int32]:
         """
         Get the start and end of the streaming mask for the given m_block.
-        
-        For streaming attention, a query at position i can attend to:
-        1. Sink region: [0, sink_size)
-        2. Local window: [i - window_size_left + 1, i] (within causal constraint)
-        
-        Returns (n_block_min, n_block_max) where n_block in [n_block_min, n_block_max) 
-        need to be processed.
+        Supports both standard relative attention and absolute position_ids (Chunked Prefill).
         """
-        # Calculate n_block_max based on causal constraint
+        
+        # 1. Get the physical index range of the current Q block in memory.
+        m_idx_min_phys = m_block * self.m_block_size
+        m_idx_max_phys = (m_block + 1) * self.m_block_size
+        
+        # 2. Determine the "base position" and "offset" for mask calculation.
+        # We need to distinguish between using absolute position_ids and standard relative indexing.
+        
+        # NOTE: Using cutlass.const_expr or ensuring position_ids is not None at compile time 
+        # is crucial to avoid JIT errors.
+        if cutlass.const_expr(position_ids is not None):
+            # --- Absolute Position Mode (e.g., Chunked Prefill) ---
+            # We assume position_ids are loaded or accessible.
+            # We also assume position_ids are monotonically increasing within a block.
+            
+            m_pos_min = position_ids[m_idx_min_phys]
+            
+            # Boundary check: ensure we don't access position_ids out of bounds 
+            # if the last block is partial.
+            valid_idx = min(m_idx_max_phys - 1, seqlen_info.seqlen_q - 1)
+            m_pos_max = position_ids[valid_idx]
+            
+            # In absolute position mode, the K index is directly limited by the Q position.
+            # We assume K_physical_index == K_position_id (K cache is continuous from 0).
+            n_idx_max_limit = m_pos_max
+            n_idx_min_limit = m_pos_min
+            
+            # No offset needed because m_pos is already absolute.
+            offset = 0 
+        else:
+            # --- Relative Position Mode (Standard FlashAttn) ---
+            # Fallback to physical indices if position_ids are not provided.
+            n_idx_max_limit = m_idx_max_phys
+            n_idx_min_limit = m_idx_min_phys
+            
+            # Add the diagonal offset: (seqlen_k - seqlen_q)
+            offset = seqlen_info.seqlen_k - seqlen_info.seqlen_q
+
+        # -------------------------------------------------------
+        # 3. Calculate n_block_max (Causal Constraint)
+        # -------------------------------------------------------
         n_block_max = cute.ceil_div(seqlen_info.seqlen_k, self.n_block_size)
         
         if cutlass.const_expr(self.is_causal):
-            # For causal attention, the rightmost position a query at m_block can attend to
-            # is determined by the maximum row index in this block
-            m_idx_max = (m_block + 1) * self.m_block_size
+            # The rightmost K position a query can attend to.
+            m_idx_max_val = n_idx_max_limit
+            
+            # Handle GQA packing if necessary
             if cutlass.const_expr(self.qhead_per_kvhead_packgqa > 1):
-                m_idx_max = cute.ceil_div(m_idx_max, self.qhead_per_kvhead_packgqa)
-            # Adjust for query/key length difference
-            n_idx_max = m_idx_max + seqlen_info.seqlen_k - seqlen_info.seqlen_q
+                m_idx_max_val = cute.ceil_div(m_idx_max_val, self.qhead_per_kvhead_packgqa)
+                
+            # Apply offset (0 for absolute pos, seqlen_diff for relative pos)
+            n_idx_max = m_idx_max_val + offset
+            
             n_block_max = min(
                 n_block_max, cute.ceil_div(n_idx_max, self.n_block_size)
             )
-        
-        # Calculate n_block_min based on local window constraint
-        # The sink region [0, sink_size) always needs to be included
+
+        # -------------------------------------------------------
+        # 4. Calculate n_block_min (Local Window Constraint)
+        # -------------------------------------------------------
         n_block_min = 0
         
         if self.enable_streaming and self.window_size_left is not None:
-            # For streaming attention with local window, the leftmost position 
-            # (excluding sink) that needs to be processed is determined by the 
-            # minimum row index in this block
-            m_idx_min = m_block * self.m_block_size
+            # The leftmost K position (excluding sink) that needs to be processed.
+            m_idx_min_val = n_idx_min_limit
+            
             if cutlass.const_expr(self.qhead_per_kvhead_packgqa > 1):
-                m_idx_min = m_idx_min // self.qhead_per_kvhead_packgqa
+                m_idx_min_val = m_idx_min_val // self.qhead_per_kvhead_packgqa
+                
+            # Apply offset
+            n_idx = m_idx_min_val + offset
             
-            # Adjust for query/key length difference
-            n_idx = m_idx_min + seqlen_info.seqlen_k - seqlen_info.seqlen_q
-            
-            # The left boundary of the local window (excluding sink)
+            # Calculate the left boundary of the local window
             n_idx_left = n_idx - self.window_size_left + 1
             
-            # We need to process blocks that overlap with either:
-            # 1. The sink region [0, sink_size), or
-            # 2. The local window [n_idx_left, n_idx_max]
-            
             if self.sink_size > 0:
-                # When sink is present, we must start from block 0 to include the sink region.
-                # Even if there's a gap between sink and local window, we return a single
-                # continuous range [0, n_block_max). The gap will be masked out by
-                # apply_streaming_mask() which checks each element individually.
+                # If sink is present, start from 0 to include the sink region.
                 n_block_min = 0
             else:
-                # No sink, only local window - start from the left boundary of the window
+                # No sink, start from the window boundary.
                 n_block_min = cutlass.max(n_idx_left // self.n_block_size, 0)
-        
+
         return n_block_min, n_block_max
-
-        # q_pos_min = position_ids[0]
-        # q_pos_max = position_ids[self.m_block_size - 1]
-
-        # k_pos_max = q_pos_max 
-        # n_block_max = cute.ceil_div(k_pos_max + 1, self.n_block_size)
-
-        # n_block_max = cutlass.min(n_block_max, cute.ceil_div(seqlen_info.seqlen_k, self.n_block_size))
-
-        # n_block_min = 0
-
-        # if self.enable_streaming:
-        #     if self.sink_size > 0:
-        #         n_block_min = 0 
-        #     elif self.window_size_left is not None:
-        #         k_pos_min_window = q_pos_min - self.window_size_left
-
-        #         n_block_min = cutlass.max(0, k_pos_min_window // self.n_block_size)
-
-        # return n_block_min, n_block_max
