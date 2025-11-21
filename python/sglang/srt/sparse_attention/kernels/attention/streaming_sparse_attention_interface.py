@@ -504,6 +504,9 @@ def streaming_sparse_attn_func(
     pack_gqa: Optional[bool] = None,
     groupwise: bool = False,
     position_ids: Optional[torch.Tensor] = None,
+
+    m_block_size: int = 128,
+    n_block_size: int = 128,
 ):
     """User-facing function for streaming sparse attention.
 
@@ -564,5 +567,7 @@ def streaming_sparse_attn_func(
         learnable_sink,
         sink_size,
         enable_streaming,
+        m_block_size=m_block_size,
+        n_block_size=n_block_size,
         position_ids=position_ids
     )

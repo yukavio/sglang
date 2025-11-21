@@ -617,7 +617,6 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
                     # TODO(KuangjuX): Assume `batch_size` is 1 for now
                     for i in cutlass.range(self.m_block_size // self.num_producer_threads):
                         sPos[tidx_in_wg + i * self.num_producer_threads] = gPos[m_block * self.m_block_size + tidx_in_wg + i * self.num_producer_threads]
-                        # cute.printf("sPos[%d] = %d\n", tidx_in_wg + i * self.num_producer_threads, sPos[tidx_in_wg + i * self.num_producer_threads])
 
                 if const_expr(not seqlen.has_cu_seqlens_q):
                     mQ_cur = mQ[None, None, head_idx, batch_idx]
@@ -682,13 +681,6 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
                     load_K(block=n_block, producer_state=kv_producer_state, page_idx=page_idx)
                     load_V(block=n_block, producer_state=kv_producer_state, page_idx=page_idx)
                     kv_producer_state.advance()
-
-                # if m_block == 1 and tidx_in_wg == 0:
-                #     cute.printf("[DEBUG] LOAD m_block = %d, tidx_in_wg = %d", m_block, tidx_in_wg)
-                    # for i in cutlass.range(16):
-                    #     cute.printf("%d, ", sPos[i])
-                    # cute.printf("...\n");
-
 
                 tile_scheduler.prefetch_next_work()
                 tile_scheduler.advance_to_next_work()
@@ -801,25 +793,12 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
             m_block, head_idx, batch_idx = work_tile.tile_idx
             seqlen = SeqlenInfoCls(batch_idx)
             mask = AttentionMaskCls(seqlen.seqlen_q, seqlen.seqlen_k)
-            # origin_mask_fn = partial(
-            #     mask.apply_mask, m_block=m_block, thr_mma=thr_mma_qk,
-            #     mask_causal=self.is_causal, mask_local=self.is_local,
-            # )
 
             # KuangjuX: Streaming mask function
             streaming_mask_fn = partial(
                 mask.apply_streaming_mask, m_block=m_block, thr_mma=thr_mma_qk,
             )
             
-            # if const_expr(enable_streaming):
-            #     def combined_mask_fn(acc_S, n_block, mask_seqlen):
-            #         origin_mask_fn(acc_S, n_block, mask_seqlen)
-            #         streaming_mask_fn(acc_S, n_block, mask_seqlen)
-            #     mask_fn = combined_mask_fn
-            # else:
-            #     mask_fn = origin_mask_fn
-                    
-
             softmax.reset()
             # Load Q if not TMA_Q
             if const_expr(not self.use_tma_Q):

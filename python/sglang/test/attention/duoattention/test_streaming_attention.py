@@ -211,16 +211,16 @@ def test_chunked_streaming_attention(seqlen, sink_size, chunk_size):
 
 
 @pytest.mark.skipif(not is_hopper(), reason="Streaming attention requires Hopper GPU (SM 9.0)")
-def test_paged_streaming_attention():
-    seqlen = 1024
-    batch_size = 1
+@pytest.mark.parametrize("seqlen", [512, 1024, 2048, 4096])
+@pytest.mark.parametrize("page_size", [64, 128, 256])
+@pytest.mark.parametrize("sink_size", [4, 8])
+@pytest.mark.parametrize("local_size", [32])
+@pytest.mark.parametrize("batch_size", [1])
+def test_paged_streaming_attention(seqlen, page_size, sink_size, local_size, batch_size):
+    device = torch.device("cuda")
     num_heads = 4
     head_dim = 64
-    page_size = 128
-    sink_size = 4
-    local_size = 32
     dtype = torch.bfloat16
-    device = torch.device("cuda")
 
     q = torch.randn(batch_size, seqlen, num_heads,
                     head_dim, dtype=dtype, device=device)
@@ -246,12 +246,9 @@ def test_paged_streaming_attention():
 
     page_table = torch.zeros(batch_size, num_blocks_per_seq, dtype=torch.int32, device=device)
 
-    for b in batch_size:
+    for b in range(batch_size):
         available_indices = torch.randperm(max_num_blocks, device=device)[:num_blocks_per_seq]
         page_table[b] = available_indices
-
-        k_cache[available_indices] = k[b]
-        v_cache[available_indices] = v[b]
 
         for i, block_idx in enumerate(available_indices):
             start_token = i * page_size
@@ -264,16 +261,15 @@ def test_paged_streaming_attention():
         
         softmax_scale = 1.0 / math.sqrt(head_dim)
 
-        cu_seqlens_k = torch.arange(
-            0, (batch_size + 1) * seqlen, step=seqlen, dtype=torch.int32, device=device
-        )
+
+        seqused_k = torch.full((batch_size,), seqlen, dtype=torch.int32, device=device)
 
         out_cuda, _ = streaming_sparse_attn_func(
             q, k_cache, v_cache,
             cu_seqlens_q=None,
-            cu_seqlens_k=cu_seqlens,
+            cu_seqlens_k=None,
             seqused_q=None,
-            seqused_k=None,
+            seqused_k=seqused_k,
             page_table=page_table,
             softmax_scale=softmax_scale,
             causal=True,
@@ -285,6 +281,9 @@ def test_paged_streaming_attention():
             pack_gqa=False,
             groupwise=False,
             position_ids=None,
+
+            m_block_size=128,
+            n_block_size=page_size
         )
 
 
