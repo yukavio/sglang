@@ -208,3 +208,109 @@ def test_chunked_streaming_attention(seqlen, sink_size, chunk_size):
 
 
     print(f"Chunked streaming attention test passed for seqlen={seqlen}, dtype={dtype}, sink_size={sink_size}, local_size={local_size}, batch_size={batch_size}!")
+
+
+@pytest.mark.skipif(not is_hopper(), reason="Streaming attention requires Hopper GPU (SM 9.0)")
+def test_paged_streaming_attention():
+    seqlen = 1024
+    batch_size = 1
+    num_heads = 4
+    head_dim = 64
+    page_size = 128
+    sink_size = 4
+    local_size = 32
+    dtype = torch.bfloat16
+    device = torch.device("cuda")
+
+    q = torch.randn(batch_size, seqlen, num_heads,
+                    head_dim, dtype=dtype, device=device)
+    k = torch.randn(batch_size, seqlen, num_heads,
+                    head_dim, dtype=dtype, device=device)
+    v = torch.randn(batch_size, seqlen, num_heads,
+                    head_dim, dtype=dtype, device=device)
+
+    total_tokens = batch_size * seqlen
+
+    q_varlen = q.reshape(total_tokens, num_heads, head_dim)
+    k_varlen = k.reshape(total_tokens, num_heads, head_dim)
+    v_varlen = v.reshape(total_tokens, num_heads, head_dim)
+    cu_seqlens = torch.arange(
+        0, (batch_size + 1) * seqlen, step=seqlen, dtype=torch.int32, device=device
+    )
+
+    num_blocks_per_seq = (seqlen + page_size - 1) // page_size
+    max_num_blocks = num_blocks_per_seq * batch_size * 2 
+
+    k_cache = torch.zeros(max_num_blocks, page_size, num_heads, head_dim, dtype=dtype, device=device)
+    v_cache = torch.zeros(max_num_blocks, page_size, num_heads, head_dim, dtype=dtype, device=device)
+
+    page_table = torch.zeros(batch_size, num_blocks_per_seq, dtype=torch.int32, device=device)
+
+    for b in batch_size:
+        available_indices = torch.randperm(max_num_blocks, device=device)[:num_blocks_per_seq]
+        page_table[b] = available_indices
+
+        k_cache[available_indices] = k[b]
+        v_cache[available_indices] = v[b]
+
+        for i, block_idx in enumerate(available_indices):
+            start_token = i * page_size
+            end_token = min((i + 1) * page_size, seqlen)
+            valid_len = end_token - start_token
+
+            if valid_len > 0:
+                k_cache[block_idx, :valid_len, :, :] = k[b, start_token:end_token, :, :]
+                v_cache[block_idx, :valid_len, :, :] = v[b, start_token:end_token, :, :]
+        
+        softmax_scale = 1.0 / math.sqrt(head_dim)
+
+        cu_seqlens_k = torch.arange(
+            0, (batch_size + 1) * seqlen, step=seqlen, dtype=torch.int32, device=device
+        )
+
+        out_cuda, _ = streaming_sparse_attn_func(
+            q, k_cache, v_cache,
+            cu_seqlens_q=None,
+            cu_seqlens_k=cu_seqlens,
+            seqused_q=None,
+            seqused_k=None,
+            page_table=page_table,
+            softmax_scale=softmax_scale,
+            causal=True,
+            window_size=(local_size - 1, 0),
+            learnable_sink=None,
+            sink_size=sink_size,
+            enable_streaming=True,
+            softcap=0.0,
+            pack_gqa=False,
+            groupwise=False,
+            position_ids=None,
+        )
+
+
+    head_mask_type = torch.full(
+        (num_heads,), -1, dtype=torch.int32, device=device)
+
+    out_ref_varlen, _ = block_streaming_attention_ref(
+        q_varlen, k_varlen, v_varlen,
+        cu_seqlens_q=cu_seqlens,
+        cu_seqlens_k=cu_seqlens,
+        max_seqlen_q=seqlen,
+        max_seqlen_k=seqlen,
+        head_mask_type=head_mask_type,
+        sink_size=sink_size,
+        local_size=local_size,
+        softmax_scale=softmax_scale,
+        is_causal=True,
+    )
+
+    out_ref = out_ref_varlen.reshape(batch_size, seqlen, num_heads, head_dim)
+
+    # Check output shape
+    assert out_cuda.shape == (batch_size, seqlen, num_heads, head_dim), \
+        f"Expected shape {(batch_size, seqlen, num_heads, head_dim)}, got {out_cuda.shape}"
+
+    # Check output values
+    torch.testing.assert_close(out_cuda, out_ref, atol=5e-1, rtol=5e-1)
+
+    print(f"Paged streaming attention test passed for seqlen={seqlen}, dtype={dtype}, batch_size={batch_size}!")
