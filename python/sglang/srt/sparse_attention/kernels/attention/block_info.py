@@ -95,8 +95,11 @@ class BlockInfo:
         """
         
         # 1. Get the physical index range of the current Q block in memory.
-        m_idx_min_phys = m_block * self.m_block_size
-        m_idx_max_phys = (m_block + 1) * self.m_block_size
+        # m_idx_min_phys = m_block * self.m_block_size
+        # m_idx_max_phys = (m_block + 1) * self.m_block_size
+
+        m_idx_min_phys = 0
+        m_idx_max_phys = self.m_block_size
         
         # 2. Determine the "base position" and "offset" for mask calculation.
         # We need to distinguish between using absolute position_ids and standard relative indexing.

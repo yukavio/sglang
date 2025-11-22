@@ -99,13 +99,13 @@ def test_streaming_attention(seqlen, dtype, sink_size, local_size, batch_size):
 @pytest.mark.parametrize("seqlen", [512, 1024, 2048, 4096])
 @pytest.mark.parametrize("sink_size", [4, 8])
 @pytest.mark.parametrize("chunk_size", [128, 256])
-def test_chunked_streaming_attention(seqlen, sink_size, chunk_size):
+@pytest.mark.parametrize("batch_size", [1, 2, 4])
+def test_chunked_streaming_attention(seqlen, sink_size, chunk_size, batch_size):
     device = torch.device("cuda")
     num_heads = 4
     head_dim = 64
     dtype = torch.bfloat16
     local_size = 32
-    batch_size = 1
     
     q = torch.randn(batch_size, seqlen, num_heads,
                     head_dim, dtype=dtype, device=device)
@@ -125,7 +125,8 @@ def test_chunked_streaming_attention(seqlen, sink_size, chunk_size):
 
     softmax_scale = 1.0 / math.sqrt(head_dim)
 
-    num_chunks = total_tokens // chunk_size
+    # num_chunks = total_tokens // chunk_size
+    num_chunks = seqlen // chunk_size
 
     k_cache = []
     v_cache = []
@@ -149,12 +150,6 @@ def test_chunked_streaming_attention(seqlen, sink_size, chunk_size):
 
         pos_ids_chunk = torch.arange(start_idx, end_idx, dtype=torch.int32, device=device)
         pos_ids_chunk = pos_ids_chunk.unsqueeze(0).expand(batch_size, -1).contiguous()
-
-        print(f"pos_ids_chunk: {pos_ids_chunk}")
-
-        print(f"    - q_chunk shape: {q_chunk.shape}")
-        print(f"    - k_context shape: {k_context.shape}")
-        print(f"    - position_ids: from {pos_ids_chunk[0, 0]} to {pos_ids_chunk[0, -1]}")
 
         out_chunk, _ = streaming_sparse_attn_func(
             q_chunk, k_context, v_context,
@@ -317,23 +312,17 @@ def test_paged_streaming_attention(seqlen, page_size, sink_size, local_size, bat
 
 
 @pytest.mark.skipif(not is_hopper(), reason="Streaming attention requires Hopper GPU (SM 9.0)")
-@pytest.mark.parametrize("seqlen", [512, 1024, 2048, 4096])
+@pytest.mark.parametrize("seqlen", [1024])
 @pytest.mark.parametrize("page_size", [64, 128])
 @pytest.mark.parametrize("chunk_size", [128, 256])
-@pytest.mark.parametrize("sink_size", [4, 8])
+@pytest.mark.parametrize("sink_size", [4])
 @pytest.mark.parametrize("local_size", [32])
-@pytest.mark.parametrize("batch_size", [1])
+@pytest.mark.parametrize("batch_size", [1,])
 def test_paged_chunked_streaming_attention(seqlen, page_size, chunk_size, sink_size, local_size, batch_size):
     device = torch.device("cuda")
     num_heads = 4
     head_dim = 64
     dtype = torch.bfloat16
-    seqlen = 1024
-    batch_size = 1
-    page_size = 128
-    sink_size = 4
-    local_size = 32
-    chunk_size = 128
 
     q = torch.randn(batch_size, seqlen, num_heads,
                     head_dim, dtype=dtype, device=device)

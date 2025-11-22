@@ -77,12 +77,6 @@ def _streaming_sparse_attn_forward(
     def maybe_contiguous(x):
         return x.contiguous() if x is not None and x.stride(-1) != 1 else x
 
-    torch2cute_dtype_map = {
-        torch.float16: cutlass.Float16,
-        torch.bfloat16: cutlass.BFloat16,
-        torch.float32: cutlass.Float32,
-    }
-
     q, k, v = [maybe_contiguous(t) for t in (q, k, v)]
     num_head, head_dim = q.shape[-2:]
     num_head_kv = k.shape[-2]
@@ -199,10 +193,6 @@ def _streaming_sparse_attn_forward(
 
     position_ids_tensor = from_dlpack(position_ids.detach(), assumed_align=4).mark_layout_dynamic(
         leading_dim=1) if position_ids is not None else None
-
-    if position_ids_tensor is not None:
-        print(f"position_ids_tensor: {position_ids_tensor}")
-        print(f"position_ids_tensor.shape: {position_ids_tensor.shape}")
 
     if causal:
         window_size_right = 0

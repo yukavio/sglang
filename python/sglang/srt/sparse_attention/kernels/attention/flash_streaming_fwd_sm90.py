@@ -561,7 +561,7 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
                 sink_size,
                 enable_streaming,
 
-                position_ids,
+                sPos,
             )
 
 
@@ -614,9 +614,8 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
                     # Assume gPos layout is (batch_size, seqlen)
                     # Get the starting pointer for the current sequence in the batch
 
-                    # TODO(KuangjuX): Assume `batch_size` is 1 for now
                     for i in cutlass.range(self.m_block_size // self.num_producer_threads):
-                        sPos[tidx_in_wg + i * self.num_producer_threads] = gPos[m_block * self.m_block_size + tidx_in_wg + i * self.num_producer_threads]
+                        sPos[tidx_in_wg + i * self.num_producer_threads] = gPos[batch_idx, m_block * self.m_block_size + tidx_in_wg + i * self.num_producer_threads]
 
                 if const_expr(not seqlen.has_cu_seqlens_q):
                     mQ_cur = mQ[None, None, head_idx, batch_idx]
@@ -672,7 +671,7 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
                         cute.arch.mbarrier_arrive_and_expect_tx(mbar_ptr_Q, self.tma_copy_q_bytes)
                     cute.copy(tma_atom_Q, tQgQ, tQsQ, tma_bar_ptr=mbar_ptr_Q)
                 # n_block_min, n_block_max = block_info.get_n_block_min_max(seqlen, m_block)
-                n_streaming_block_min, n_streaming_block_max = block_info.get_streaming_mask_n_block_min_max(seqlen, m_block, gPos)
+                n_streaming_block_min, n_streaming_block_max = block_info.get_streaming_mask_n_block_min_max(seqlen, m_block, sPos)
 
 
                 for i in cutlass.range(n_streaming_block_max - n_streaming_block_min, unroll=2):
