@@ -210,7 +210,7 @@ def test_chunked_streaming_attention(seqlen, sink_size, chunk_size, batch_size):
 @pytest.mark.parametrize("page_size", [64, 128, 256])
 @pytest.mark.parametrize("sink_size", [4, 8])
 @pytest.mark.parametrize("local_size", [32])
-@pytest.mark.parametrize("batch_size", [1])
+@pytest.mark.parametrize("batch_size", [1, 2, 4])
 def test_paged_streaming_attention(seqlen, page_size, sink_size, local_size, batch_size):
     device = torch.device("cuda")
     num_heads = 4
@@ -242,8 +242,13 @@ def test_paged_streaming_attention(seqlen, page_size, sink_size, local_size, bat
 
     page_table = torch.zeros(batch_size, num_blocks_per_seq, dtype=torch.int32, device=device)
 
+    all_random_indices = torch.randperm(max_num_blocks, device=device, dtype=torch.int32)
+
     for b in range(batch_size):
-        available_indices = torch.randperm(max_num_blocks, device=device)[:num_blocks_per_seq]
+        start_idx = b * num_blocks_per_seq
+        end_idx = start_idx + num_blocks_per_seq
+
+        available_indices = all_random_indices[start_idx:end_idx]
         page_table[b] = available_indices
 
         for i, block_idx in enumerate(available_indices):
@@ -277,7 +282,6 @@ def test_paged_streaming_attention(seqlen, page_size, sink_size, local_size, bat
             pack_gqa=False,
             groupwise=False,
             position_ids=None,
-
             m_block_size=128,
             n_block_size=page_size
         )
@@ -318,7 +322,7 @@ def test_paged_streaming_attention(seqlen, page_size, sink_size, local_size, bat
 @pytest.mark.parametrize("chunk_size", [128, 256])
 @pytest.mark.parametrize("sink_size", [4, 8])
 @pytest.mark.parametrize("local_size", [32])
-@pytest.mark.parametrize("batch_size", [1])
+@pytest.mark.parametrize("batch_size", [1, 2, 4])
 def test_paged_chunked_streaming_attention(seqlen, page_size, chunk_size, sink_size, local_size, batch_size):
     device = torch.device("cuda")
     num_heads = 4
@@ -348,9 +352,13 @@ def test_paged_chunked_streaming_attention(seqlen, page_size, chunk_size, sink_s
     v_cache = torch.zeros(max_num_blocks, page_size, num_heads, head_dim, dtype=dtype, device=device)
 
     page_table = torch.zeros(batch_size, num_blocks_per_seq, dtype=torch.int32, device=device)
+    all_random_indices = torch.randperm(max_num_blocks, device=device, dtype=torch.int32)
 
     for b in range(batch_size):
-        available_indices = torch.randperm(max_num_blocks, device=device)[:num_blocks_per_seq]
+        start_idx = b * num_blocks_per_seq
+        end_idx = start_idx + num_blocks_per_seq
+
+        available_indices = all_random_indices[start_idx:end_idx]
         page_table[b] = available_indices
 
         for i, block_idx in enumerate(available_indices):
