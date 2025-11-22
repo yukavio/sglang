@@ -217,6 +217,7 @@ def test_paged_streaming_attention(seqlen, page_size, sink_size, local_size, bat
     head_dim = 64
     dtype = torch.bfloat16
 
+
     q = torch.randn(batch_size, seqlen, num_heads,
                     head_dim, dtype=dtype, device=device)
     k = torch.randn(batch_size, seqlen, num_heads,
@@ -312,12 +313,12 @@ def test_paged_streaming_attention(seqlen, page_size, sink_size, local_size, bat
 
 
 @pytest.mark.skipif(not is_hopper(), reason="Streaming attention requires Hopper GPU (SM 9.0)")
-@pytest.mark.parametrize("seqlen", [1024])
+@pytest.mark.parametrize("seqlen", [512, 1024, 2048, 4096])
 @pytest.mark.parametrize("page_size", [64, 128])
 @pytest.mark.parametrize("chunk_size", [128, 256])
-@pytest.mark.parametrize("sink_size", [4])
+@pytest.mark.parametrize("sink_size", [4, 8])
 @pytest.mark.parametrize("local_size", [32])
-@pytest.mark.parametrize("batch_size", [1,])
+@pytest.mark.parametrize("batch_size", [1])
 def test_paged_chunked_streaming_attention(seqlen, page_size, chunk_size, sink_size, local_size, batch_size):
     device = torch.device("cuda")
     num_heads = 4
@@ -340,11 +341,11 @@ def test_paged_chunked_streaming_attention(seqlen, page_size, chunk_size, sink_s
         0, (batch_size + 1) * seqlen, step=seqlen, dtype=torch.int32, device=device
     )
 
-    num_blocks_per_seq = (seqlen + chunk_size - 1) // chunk_size
+    num_blocks_per_seq = (seqlen + page_size - 1) // page_size
     max_num_blocks = num_blocks_per_seq * batch_size * 2 
 
-    k_cache = torch.zeros(max_num_blocks, chunk_size, num_heads, head_dim, dtype=dtype, device=device)
-    v_cache = torch.zeros(max_num_blocks, chunk_size, num_heads, head_dim, dtype=dtype, device=device)
+    k_cache = torch.zeros(max_num_blocks, page_size, num_heads, head_dim, dtype=dtype, device=device)
+    v_cache = torch.zeros(max_num_blocks, page_size, num_heads, head_dim, dtype=dtype, device=device)
 
     page_table = torch.zeros(batch_size, num_blocks_per_seq, dtype=torch.int32, device=device)
 
@@ -395,8 +396,8 @@ def test_paged_chunked_streaming_attention(seqlen, page_size, chunk_size, sink_s
             pack_gqa=False,
             groupwise=False,
             position_ids=pos_ids_chunk,
-
-            n_block_size=chunk_size
+            m_block_size=128,
+            n_block_size=page_size
         )
 
         chunked_outputs.append(out_chunk)
