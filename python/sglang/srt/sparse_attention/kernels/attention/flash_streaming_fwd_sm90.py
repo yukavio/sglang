@@ -775,8 +775,8 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
 
         tile_scheduler = TileSchedulerCls()
         work_tile = tile_scheduler.initial_work_tile_info()
+        
         while work_tile.is_valid_tile:
-        # if work_tile.is_valid_tile:
             # Softcapping needs to happen before masking since if we apply after masking, softcapping can turn
             # -inf to e.g. -50.0, which can affect the attention softmax.
             def scoremod_premask_fn(acc_S):
@@ -865,43 +865,7 @@ class FlashStreamingForwardSm90(FlashAttentionForwardSm90):
                 O_should_accumulate = True
 
 
-            # n_block_max -= 1
             n_block_max_streaming -= 1
-            # Next couple of iterations with causal masking
-            # if const_expr(self.is_causal or self.is_local):
-            #     n_block_min_causal_local_mask = block_info.get_n_block_min_causal_local_mask(
-            #         seqlen, m_block, n_block_min
-            #     )
-            #     # if cute.arch.thread_idx()[0] == 128: cute.printf("n_block_min_causal_local_mask = {}", n_block_min_causal_local_mask)
-            #     for n_tile in cutlass.range(n_block_max - n_block_min_causal_local_mask, unroll=1):
-            #         n_block = n_block_max - 1 - n_tile
-            #         kv_consumer_state = mma_one_n_block(
-            #             n_block, kv_consumer_state, mask_fn=partial(mask_fn, mask_seqlen=False),
-            #             O_should_accumulate=O_should_accumulate
-            #         )
-            #         O_should_accumulate = True
-            #     n_block_max = cutlass.min(n_block_max, n_block_min_causal_local_mask)
-            # # The remaining iterations have no masking
-            # n_block_min_before_local_mask = block_info.get_n_block_min_before_local_mask(
-            #     seqlen, m_block, n_block_min
-            # )
-            # # if cute.arch.thread_idx()[0] == 128: cute.printf("n_block_min_before_local_mask = {}, n_block_min = {}", n_block_min_before_local_mask, n_block_min)
-            # for n_tile in cutlass.range(n_block_max - n_block_min_before_local_mask, unroll=1):
-            #     n_block = n_block_max - 1 - n_tile
-            #     kv_consumer_state = mma_one_n_block(n_block, kv_consumer_state, check_inf=True, O_should_accumulate=O_should_accumulate)
-            #     O_should_accumulate = True
-            # # Separate iterations with local masking on the left
-            # if const_expr(self.is_local and block_info.window_size_left is not None):
-            #     n_block_max = cutlass.min(n_block_max, n_block_min_before_local_mask)
-            #     for n_tile in cutlass.range(n_block_max - n_block_min, unroll=1):
-            #         n_block = n_block_max - 1 - n_tile
-            #         kv_consumer_state = mma_one_n_block(
-            #             n_block, kv_consumer_state,
-            #             check_inf=True, mask_fn=partial(mask_fn, mask_seqlen=False),
-            #             O_should_accumulate=O_should_accumulate
-            #         )
-            #         O_should_accumulate = True
-
 
             for n_tile in cutlass.range(n_block_max_streaming - n_block_min_streaming, unroll=1):
                 n_block = n_block_max_streaming - n_tile - 1
