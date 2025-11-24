@@ -24,7 +24,9 @@ from sglang.srt.sparse_attention.cache_manager.cache_manager import ManagerConfi
 from sglang.srt.sparse_attention.kernels.attention.interface import (
     flash_attn_with_kvcache as cute_flash_attn_with_kvcache,
 )
-from sglang.srt.sparse_attention.kernels.attention.streaming_sparse_attention_interface import streaming_sparse_attn_func as cute_streaming_sparse_attn_with_kv_cache
+from sglang.srt.sparse_attention.kernels.attention.streaming_sparse_attention_interface import (
+    streaming_sparse_attn_func as cute_streaming_sparse_attn_with_kv_cache,
+)
 from sglang.srt.sparse_attention.updater.flashattention.cache_updater import (
     LServerUpdaterFlashAttentionBackend,
 )
@@ -779,7 +781,9 @@ class FlashAttentionBackend(AttentionBackend):
                 cu_seqlens_k = metadata.encoder_cu_seqlens_k
                 window_size = (-1, -1)
 
-            is_duo_attn = hasattr(layer, "duo_attn_config") and layer.duo_attn_config is not None
+            is_duo_attn = (
+                hasattr(layer, "duo_attn_config") and layer.duo_attn_config is not None
+            )
 
             if is_duo_attn:
                 # Get the DuoAttention config
@@ -797,8 +801,12 @@ class FlashAttentionBackend(AttentionBackend):
                     kv_retrieval_idx = retrieval_idx
                     kv_streaming_idx = streaming_idx
                 else:
-                    kv_retrieval_idx = [i // gqa_group_size for i in retrieval_idx[::gqa_group_size]]
-                    kv_streaming_idx = [i // gqa_group_size for i in streaming_idx[::gqa_group_size]]
+                    kv_retrieval_idx = [
+                        i // gqa_group_size for i in retrieval_idx[::gqa_group_size]
+                    ]
+                    kv_streaming_idx = [
+                        i // gqa_group_size for i in streaming_idx[::gqa_group_size]
+                    ]
 
                 k_cache_ret = key_cache[:, kv_retrieval_idx, :]
                 v_cache_ret = value_cache[:, kv_retrieval_idx, :]
@@ -814,17 +822,14 @@ class FlashAttentionBackend(AttentionBackend):
                     cache_seqlens=cache_seqlens,
                     cu_seqlens_q=cu_seqlens_q,
                     cu_seqlens_k_new=cu_seqlens_k if not use_local_attn else None,
-
                     max_seqlen_q=max_seqlen_q,
                     softmax_scale=layer.scaling,
                     causal=False if use_cascade_attn else causal,
                     window_size=(1, -1),
-
                     softcap=layer.logit_cap,
                     k_descale=None,
                     v_descale=None,
                     return_softmax_lse=True,
-
                     **kwargs,
                 )
 
@@ -843,7 +848,6 @@ class FlashAttentionBackend(AttentionBackend):
                     causal=causal,
                     window_size=(streaming_window, 0),
                     learnable_sink=None,
-
                     sink_size=sink_size,
                     enable_streaming=True,
                     softcap=layer.logit_cap,
@@ -857,7 +861,6 @@ class FlashAttentionBackend(AttentionBackend):
                 o = torch.empty_like(q_view)
                 o[:, retrieval_idx, :] = o_retrieval
                 o[:, streaming_idx, :] = o_streaming
-
 
             result = flash_attn_with_kvcache(
                 q=q.contiguous().view(-1, layer.tp_q_head_num, layer.head_dim),
