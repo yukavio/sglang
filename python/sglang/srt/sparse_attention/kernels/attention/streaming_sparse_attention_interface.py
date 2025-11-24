@@ -1,12 +1,10 @@
-
 import math
 from typing import Optional, Tuple
-import torch
 
 import cuda.bindings.driver as cuda
-
 import cutlass
 import cutlass.cute as cute
+import torch
 from cutlass.cute.runtime import from_dlpack
 
 from .flash_streaming_fwd_sm90 import FlashStreamingForwardSm90
@@ -17,6 +15,7 @@ torch2cute_dtype_map = {
     torch.bfloat16: cutlass.BFloat16,
     torch.float32: cutlass.Float32,
 }
+
 
 def _streaming_sparse_attn_forward(
     q: torch.Tensor,
@@ -74,6 +73,7 @@ def _streaming_sparse_attn_forward(
         - output: Attention output tensor
         - lse: Log-sum-exp values for backward pass (if requires_grad)
     """
+
     def maybe_contiguous(x):
         return x.contiguous() if x is not None and x.stride(-1) != 1 else x
 
@@ -94,12 +94,12 @@ def _streaming_sparse_attn_forward(
     if page_table is not None:
         assert cu_seqlens_k is None, "page_table is not supported with cu_seqlens_k"
         assert page_table.dtype == torch.int32, "page_table must be int32"
-        assert page_table.stride(
-            -1) == 1, "page_table must be contiguous in the last dimension"
+        assert (
+            page_table.stride(-1) == 1
+        ), "page_table must be contiguous in the last dimension"
         max_num_pages_per_seq = page_table.shape[1]
         if groupwise:
-            assert page_table.shape == (
-                batch_size * num_head_kv, max_num_pages_per_seq)
+            assert page_table.shape == (batch_size * num_head_kv, max_num_pages_per_seq)
         else:
             assert page_table.shape == (batch_size, max_num_pages_per_seq)
         num_pages, page_size = k.shape[:2]
@@ -119,31 +119,52 @@ def _streaming_sparse_attn_forward(
         assert k.shape == (seqlen_k, num_head_kv, head_dim)
         assert v.shape == (seqlen_k, num_head_kv, head_dim_v)
         assert cu_seqlens_k.shape == (
-            batch_size + 1,), "cu_seqlens_k must have shape (batch_size + 1,)"
+            batch_size + 1,
+        ), "cu_seqlens_k must have shape (batch_size + 1,)"
 
     if cu_seqlens_q is not None:
         assert cu_seqlens_q.shape == (
-            batch_size + 1,), "cu_seqlens_q must have shape (batch_size + 1,)"
+            batch_size + 1,
+        ), "cu_seqlens_q must have shape (batch_size + 1,)"
     assert seqused_q is None or seqused_q.shape == (
-        batch_size,), "seqused_q must have shape (batch_size,)"
+        batch_size,
+    ), "seqused_q must have shape (batch_size,)"
     assert seqused_k is None or seqused_k.shape == (
-        batch_size,), "seqused_k must have shape (batch_size,)"
-    assert q.dtype in [torch.float16,
-                       torch.bfloat16], "inputs must be float16 or bfloat16"
+        batch_size,
+    ), "seqused_k must have shape (batch_size,)"
+    assert q.dtype in [
+        torch.float16,
+        torch.bfloat16,
+    ], "inputs must be float16 or bfloat16"
     assert q.dtype == k.dtype == v.dtype, "inputs must have the same dtype"
 
     for t in [cu_seqlens_q, cu_seqlens_k, seqused_q, seqused_k]:
         if t is not None:
-            assert t.dtype == torch.int32, "cu_seqlens_q, cu_seqlens_k, seqused_q, seqused_k must be int32"
-            assert t.stride(
-                0) == 1, "cu_seqlens_q, cu_seqlens_k, seqused_q, seqused_k must be contiguous"
+            assert (
+                t.dtype == torch.int32
+            ), "cu_seqlens_q, cu_seqlens_k, seqused_q, seqused_k must be int32"
+            assert (
+                t.stride(0) == 1
+            ), "cu_seqlens_q, cu_seqlens_k, seqused_q, seqused_k must be contiguous"
 
     if learnable_sink is not None:
         assert learnable_sink.shape == (num_head,)
         assert learnable_sink.dtype == torch.bfloat16, "learnable_sink must be bfloat16"
 
-    assert all(t is None or t.is_cuda for t in (q, k, v, cu_seqlens_q, cu_seqlens_k,
-               seqused_q, seqused_k, page_table, learnable_sink)), "inputs must be on CUDA device"
+    assert all(
+        t is None or t.is_cuda
+        for t in (
+            q,
+            k,
+            v,
+            cu_seqlens_q,
+            cu_seqlens_k,
+            seqused_q,
+            seqused_k,
+            page_table,
+            learnable_sink,
+        )
+    ), "inputs must be on CUDA device"
     assert num_head % num_head_kv == 0, "num_head must be divisible by num_head_kv"
     assert head_dim <= 256, "head_dim must be less than or equal to 256"
 
@@ -161,38 +182,73 @@ def _streaming_sparse_attn_forward(
     out_torch_dtype = q.dtype
     device = q.device
     q_batch_seqlen_shape = (
-        batch_size, seqlen_q) if cu_seqlens_q is None else (total_q,)
-    out = torch.empty(*q_batch_seqlen_shape, num_head,
-                      head_dim_v, dtype=out_torch_dtype, device=device)
-    lse_shape = (batch_size, num_head, seqlen_q) if cu_seqlens_q is None else (
-        num_head, total_q)
+        (batch_size, seqlen_q) if cu_seqlens_q is None else (total_q,)
+    )
+    out = torch.empty(
+        *q_batch_seqlen_shape,
+        num_head,
+        head_dim_v,
+        dtype=out_torch_dtype,
+        device=device,
+    )
+    lse_shape = (
+        (batch_size, num_head, seqlen_q)
+        if cu_seqlens_q is None
+        else (num_head, total_q)
+    )
     requires_grad = q.requires_grad or k.requires_grad or v.requires_grad
-    lse = torch.empty(lse_shape, dtype=torch.float32,
-                      device=device) if requires_grad else None
+    lse = (
+        torch.empty(lse_shape, dtype=torch.float32, device=device)
+        if requires_grad
+        else None
+    )
 
     dtype = torch2cute_dtype_map[q.dtype]
     q_tensor, k_tensor, v_tensor, o_tensor = [
         from_dlpack(t.detach(), assumed_align=16).mark_layout_dynamic(
-            leading_dim=t.ndim - 1)
+            leading_dim=t.ndim - 1
+        )
         for t in (q, k, v, out)
     ]
 
+    lse_tensor = (
+        from_dlpack(lse.detach(), assumed_align=4).mark_layout_dynamic(
+            leading_dim=lse.ndim - 1
+        )
+        if lse is not None
+        else None
+    )
 
-    lse_tensor = from_dlpack(lse.detach(), assumed_align=4).mark_layout_dynamic(
-        leading_dim=lse.ndim - 1) if lse is not None else None
-
-    cu_seqlens_q_tensor, cu_seqlens_k_tensor, seqused_q_tensor, seqused_k_tensor, learnable_sink_tensor = [
-        from_dlpack(t.detach(), assumed_align=4).mark_layout_dynamic(
-            leading_dim=0) if t is not None else None
+    (
+        cu_seqlens_q_tensor,
+        cu_seqlens_k_tensor,
+        seqused_q_tensor,
+        seqused_k_tensor,
+        learnable_sink_tensor,
+    ) = [
+        (
+            from_dlpack(t.detach(), assumed_align=4).mark_layout_dynamic(leading_dim=0)
+            if t is not None
+            else None
+        )
         for t in (cu_seqlens_q, cu_seqlens_k, seqused_q, seqused_k, learnable_sink)
     ]
 
+    page_table_tensor = (
+        from_dlpack(page_table.detach(), assumed_align=4).mark_layout_dynamic(
+            leading_dim=1
+        )
+        if page_table is not None
+        else None
+    )
 
-    page_table_tensor = from_dlpack(page_table.detach(), assumed_align=4).mark_layout_dynamic(
-        leading_dim=1) if page_table is not None else None
-
-    position_ids_tensor = from_dlpack(position_ids.detach(), assumed_align=4).mark_layout_dynamic(
-        leading_dim=1) if position_ids is not None else None
+    position_ids_tensor = (
+        from_dlpack(position_ids.detach(), assumed_align=4).mark_layout_dynamic(
+            leading_dim=1
+        )
+        if position_ids is not None
+        else None
+    )
 
     if causal:
         window_size_right = 0
@@ -203,23 +259,47 @@ def _streaming_sparse_attn_forward(
         else:
             causal, local = False, True
 
-    compute_capability = torch.cuda.get_device_capability(
-    )[0] if _compute_capability is None else _compute_capability
-    assert compute_capability == 9, "Streaming sparse attention only supports compute capability 9.x (Hopper)"
+    compute_capability = (
+        torch.cuda.get_device_capability()[0]
+        if _compute_capability is None
+        else _compute_capability
+    )
+    assert (
+        compute_capability == 9
+    ), "Streaming sparse attention only supports compute capability 9.x (Hopper)"
     current_stream = cuda.CUstream(torch.cuda.current_stream().cuda_stream)
 
-    if pack_gqa and (128 % qhead_per_kvhead != 0) or (cu_seqlens_q is not None or seqused_q is not None):
+    if (
+        pack_gqa
+        and (128 % qhead_per_kvhead != 0)
+        or (cu_seqlens_q is not None or seqused_q is not None)
+    ):
         pack_gqa = False
 
     compile_key = (
-        dtype, head_dim, head_dim_v, qhead_per_kvhead, causal, softcap is not None,
-        lse is None, cu_seqlens_q is None, cu_seqlens_k is None, seqused_q is None, seqused_k is None,
+        dtype,
+        head_dim,
+        head_dim_v,
+        qhead_per_kvhead,
+        causal,
+        softcap is not None,
+        lse is None,
+        cu_seqlens_q is None,
+        cu_seqlens_k is None,
+        seqused_q is None,
+        seqused_k is None,
         page_table is not None,
-        window_size_left is not None, window_size_right is not None,
+        window_size_left is not None,
+        window_size_right is not None,
         learnable_sink is not None,
-        sink_size, enable_streaming,
-        m_block_size, n_block_size, num_threads, pack_gqa,
-        compute_capability, groupwise
+        sink_size,
+        enable_streaming,
+        m_block_size,
+        n_block_size,
+        num_threads,
+        pack_gqa,
+        compute_capability,
+        groupwise,
     )
 
     if compile_key not in _streaming_sparse_attn_forward.compile_cache:
@@ -243,24 +323,50 @@ def _streaming_sparse_attn_forward(
         )
 
         _streaming_sparse_attn_forward.compile_cache[compile_key] = cute.compile(
-            fa_fwd, q_tensor, k_tensor, v_tensor, o_tensor, lse_tensor, softmax_scale, current_stream,
-            cu_seqlens_q_tensor, cu_seqlens_k_tensor, seqused_q_tensor, seqused_k_tensor,
+            fa_fwd,
+            q_tensor,
+            k_tensor,
+            v_tensor,
+            o_tensor,
+            lse_tensor,
+            softmax_scale,
+            current_stream,
+            cu_seqlens_q_tensor,
+            cu_seqlens_k_tensor,
+            seqused_q_tensor,
+            seqused_k_tensor,
             page_table_tensor,
-            softcap, window_size_left, window_size_right, learnable_sink_tensor, position_ids_tensor
+            softcap,
+            window_size_left,
+            window_size_right,
+            learnable_sink_tensor,
+            position_ids_tensor,
         )
 
     _streaming_sparse_attn_forward.compile_cache[compile_key](
-        q_tensor, k_tensor, v_tensor, o_tensor, lse_tensor, softmax_scale, current_stream,
-        cu_seqlens_q_tensor, cu_seqlens_k_tensor, seqused_q_tensor, seqused_k_tensor,
+        q_tensor,
+        k_tensor,
+        v_tensor,
+        o_tensor,
+        lse_tensor,
+        softmax_scale,
+        current_stream,
+        cu_seqlens_q_tensor,
+        cu_seqlens_k_tensor,
+        seqused_q_tensor,
+        seqused_k_tensor,
         page_table_tensor,
-        softcap, window_size_left, window_size_right, learnable_sink_tensor, position_ids_tensor
+        softcap,
+        window_size_left,
+        window_size_right,
+        learnable_sink_tensor,
+        position_ids_tensor,
     )
 
     return out, lse
 
 
 _streaming_sparse_attn_forward.compile_cache = {}
-
 
 
 class StreamingSparseAttnFunc(torch.autograd.Function):
@@ -341,8 +447,16 @@ class StreamingSparseAttnFunc(torch.autograd.Function):
 
         # Save tensors for backward pass
         ctx.save_for_backward(
-            q, k, v, out, lse,
-            cu_seqlens_q, cu_seqlens_k, seqused_q, seqused_k, page_table
+            q,
+            k,
+            v,
+            out,
+            lse,
+            cu_seqlens_q,
+            cu_seqlens_k,
+            seqused_q,
+            seqused_k,
+            page_table,
         )
         ctx.softmax_scale = softmax_scale
         ctx.causal = causal
@@ -386,7 +500,6 @@ def streaming_sparse_attn_func(
     pack_gqa: Optional[bool] = None,
     groupwise: bool = False,
     position_ids: Optional[torch.Tensor] = None,
-
     m_block_size: int = 128,
     n_block_size: int = 128,
 ):
@@ -442,7 +555,7 @@ def streaming_sparse_attn_func(
         seqused_k,
         page_table,
         softmax_scale,
-        causal, 
+        causal,
         softcap,
         window_size[0],
         window_size[1],
@@ -451,5 +564,5 @@ def streaming_sparse_attn_func(
         enable_streaming,
         m_block_size=m_block_size,
         n_block_size=n_block_size,
-        position_ids=position_ids
+        position_ids=position_ids,
     )

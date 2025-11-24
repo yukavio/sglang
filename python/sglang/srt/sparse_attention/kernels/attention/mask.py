@@ -1,7 +1,7 @@
 # Copyright (c) 2025, Tri Dao.
 
-from typing import Optional
 from dataclasses import dataclass
+from typing import Optional
 
 import cutlass
 import cutlass.cute as cute
@@ -17,7 +17,9 @@ class AttentionMask:
     seqlen_k: cutlass.Int32
     window_size_left: Optional[cutlass.Int32] = None
     window_size_right: Optional[cutlass.Int32] = None
-    qhead_per_kvhead_packgqa: cutlass.Constexpr[int] = 1  # only pass in if we're doing PackGQA
+    qhead_per_kvhead_packgqa: cutlass.Constexpr[int] = (
+        1  # only pass in if we're doing PackGQA
+    )
 
     # Streaming mask
     sink_size: Optional[cutlass.Int32] = None
@@ -37,7 +39,9 @@ class AttentionMask:
         mask_causal: cutlass.Constexpr[bool],
         mask_local: cutlass.Constexpr[bool] = False,
     ) -> None:
-        assert not (mask_causal and mask_local), "mask_causal and mask_local cannot be both True"
+        assert not (
+            mask_causal and mask_local
+        ), "mask_causal and mask_local cannot be both True"
         acc_S_mn = utils.make_acc_tensor_mn_view(acc_S)
         cS = cute.make_identity_tensor((self.m_block_size, self.n_block_size))
         tScS_mn = utils.make_acc_tensor_mn_view(thr_mma.partition_C(cS))
@@ -50,15 +54,23 @@ class AttentionMask:
             if cutlass.const_expr(mask_seqlen):
                 if cutlass.const_expr(False):
                     # traverse column index.
-                    for c in cutlass.range(cute.size(tScS_mn.shape[1]), unroll_full=True):
+                    for c in cutlass.range(
+                        cute.size(tScS_mn.shape[1]), unroll_full=True
+                    ):
                         oob = t0ScS_mn[0, c][1] >= seqlenk_col_limit
-                        for r in cutlass.range(cute.size(tScS_mn.shape[0]), unroll_full=True):
-                            acc_S_mn[r, c] = -cutlass.Float32.inf if oob else acc_S_mn[r, c]
+                        for r in cutlass.range(
+                            cute.size(tScS_mn.shape[0]), unroll_full=True
+                        ):
+                            acc_S_mn[r, c] = (
+                                -cutlass.Float32.inf if oob else acc_S_mn[r, c]
+                            )
                 else:  # R2P trick, see apply_mask_sm100
                     # Instead of comparing limit to 0, 1, 8, 9, 16, 17, ...,
                     # we compare a transformed version of limit to 0, 1, 2, 3, 4, 5, ...
                     # This is so that we can use the R2P instruction.
-                    col_limit_transformed = seqlenk_col_limit // 8 * 2 + min(seqlenk_col_limit % 8, 2)
+                    col_limit_transformed = seqlenk_col_limit // 8 * 2 + min(
+                        seqlenk_col_limit % 8, 2
+                    )
                     ncol = cutlass.const_expr(cute.size(tScS_mn.shape[1]))
                     for s in cutlass.range_constexpr(cute.ceil_div(ncol, 24)):
                         col_limit_right_s = max(col_limit_transformed - s * 24, 0)
@@ -66,22 +78,30 @@ class AttentionMask:
                         for i in cutlass.range_constexpr(min(24, ncol - s * 24)):
                             in_bound = cutlass.Boolean(mask & (1 << i))
                             c = s * 24 + i
-                            for r in cutlass.range(cute.size(tScS_mn.shape[0]), unroll_full=True):
-                                acc_S_mn[r, c] = acc_S_mn[r, c] if in_bound else -cutlass.Float32.inf
+                            for r in cutlass.range(
+                                cute.size(tScS_mn.shape[0]), unroll_full=True
+                            ):
+                                acc_S_mn[r, c] = (
+                                    acc_S_mn[r, c] if in_bound else -cutlass.Float32.inf
+                                )
         else:  # Causal or local
             # If PackGQA, we split the work of compute divmod among threads in the same row
             threads_per_row = thr_mma.tv_layout_C.shape[0][0]
             if cutlass.const_expr(self.qhead_per_kvhead_packgqa != 1):
-                assert cute.arch.WARP_SIZE % threads_per_row == 0, (
-                    "threads_per_row must divide WARP_SIZE"
-                )
+                assert (
+                    cute.arch.WARP_SIZE % threads_per_row == 0
+                ), "threads_per_row must divide WARP_SIZE"
                 assert cute.size(acc_S_mn.shape[0]) <= threads_per_row
                 tidx = thr_mma.thr_idx
                 mma_m_idx = (
                     m_block * self.m_block_size + tScS_mn[tidx % threads_per_row, 0][0]
                 ) // self.qhead_per_kvhead_packgqa
             causal_row_offset = (
-                1 + self.seqlen_k - n_block * self.n_block_size - self.seqlen_q - thr_col_offset
+                1
+                + self.seqlen_k
+                - n_block * self.n_block_size
+                - self.seqlen_q
+                - thr_col_offset
             )
             if cutlass.const_expr(mask_causal):
                 for r in cutlass.range(cute.size(tScS_mn.shape[0]), unroll_full=True):
@@ -94,13 +114,23 @@ class AttentionMask:
                         )
                     col_limit_right = row_idx + causal_row_offset
                     if cutlass.const_expr(mask_seqlen):
-                        col_limit_right = cutlass.min(col_limit_right, seqlenk_col_limit)
+                        col_limit_right = cutlass.min(
+                            col_limit_right, seqlenk_col_limit
+                        )
                     if cutlass.const_expr(False):
                         # traverse column index.
-                        for c in cutlass.range(cute.size(tScS_mn.shape[1]), unroll_full=True):
-                            acc_S_mn[r, c] = -cutlass.Float32.inf if t0ScS_mn[0, c][1] >= col_limit_right else acc_S_mn[r, c]
+                        for c in cutlass.range(
+                            cute.size(tScS_mn.shape[1]), unroll_full=True
+                        ):
+                            acc_S_mn[r, c] = (
+                                -cutlass.Float32.inf
+                                if t0ScS_mn[0, c][1] >= col_limit_right
+                                else acc_S_mn[r, c]
+                            )
                     else:  # R2P trick, see apply_mask_sm100
-                        col_limit_transformed = col_limit_right // 8 * 2 + min(col_limit_right % 8, 2)
+                        col_limit_transformed = col_limit_right // 8 * 2 + min(
+                            col_limit_right % 8, 2
+                        )
                         ncol = cutlass.const_expr(cute.size(tScS_mn.shape[1]))
                         for s in cutlass.range_constexpr(cute.ceil_div(ncol, 24)):
                             col_limit_right_s = max(col_limit_transformed - s * 24, 0)
@@ -108,7 +138,9 @@ class AttentionMask:
                             for i in cutlass.range_constexpr(min(24, ncol - s * 24)):
                                 in_bound = cutlass.Boolean(mask & (1 << i))
                                 c = s * 24 + i
-                                acc_S_mn[r, c] = acc_S_mn[r, c] if in_bound else -cutlass.Float32.inf
+                                acc_S_mn[r, c] = (
+                                    acc_S_mn[r, c] if in_bound else -cutlass.Float32.inf
+                                )
             else:  # Local
                 local_row_offset_right = (
                     causal_row_offset + self.window_size_right
@@ -130,15 +162,21 @@ class AttentionMask:
                     if cutlass.const_expr(self.window_size_right is not None):
                         col_limit_right = row_idx + local_row_offset_right
                         if cutlass.const_expr(mask_seqlen):
-                            col_limit_right = cutlass.min(col_limit_right, seqlenk_col_limit)
+                            col_limit_right = cutlass.min(
+                                col_limit_right, seqlenk_col_limit
+                            )
                     else:
                         col_limit_right = self.n_block_size
                     col_limit_left = (
-                        row_idx + local_row_offset_left if cutlass.const_expr(self.window_size_left is not None) else 0
+                        row_idx + local_row_offset_left
+                        if cutlass.const_expr(self.window_size_left is not None)
+                        else 0
                     )
                     # if cute.arch.thread_idx()[0] == 128: cute.printf("n_block = {}, r = {}, row_idx = {}, causal_row_offset = {}, col_limit_right = {}, col_limit_left = {}", n_block, r, row_idx, causal_row_offset, col_limit_right, col_limit_left)
                     # traverse column index.
-                    for c in cutlass.range(cute.size(tScS_mn.shape[1]), unroll_full=True):
+                    for c in cutlass.range(
+                        cute.size(tScS_mn.shape[1]), unroll_full=True
+                    ):
                         col_idx = t0ScS_mn[0, c][1]
                         # only consider the column index, so the row index sets to 0.
 
@@ -158,7 +196,9 @@ class AttentionMask:
         mask_causal: cutlass.Constexpr,
         mask_local: cutlass.Constexpr,
     ) -> None:
-        assert not (mask_causal and mask_local), "mask_causal and mask_local cannot be both True"
+        assert not (
+            mask_causal and mask_local
+        ), "mask_causal and mask_local cannot be both True"
         cS = cute.make_identity_tensor((self.m_block_size, self.n_block_size))
         tScS = thr_mma.partition_C(cS)
         tScS_t2r = thr_tmem_load.partition_D(tScS)
@@ -172,7 +212,9 @@ class AttentionMask:
                         #     acc_S[i] = -cutlass.Float32.inf
                         # For some reason the 2 lines above generate really bad SASS
                         acc_S[i] = (
-                            -cutlass.Float32.inf if tScS_t2r[i][1] >= seqlenk_col_limit else acc_S[i]
+                            -cutlass.Float32.inf
+                            if tScS_t2r[i][1] >= seqlenk_col_limit
+                            else acc_S[i]
                         )
                 else:
                     # Bit manipulation, compiles down to the R2P instruction
@@ -193,12 +235,18 @@ class AttentionMask:
                             # the R2P instruction, so it's slower.
                             # Instead we just move by 24 instead of 32.
                             # if tidx == 0: cute.printf("mask_i_bit = %d, after shift = 0x%x, i = %d, s = %d", mask_i_bit, utils.shr_u32(mask, i), i, s)
-                            acc_S[s * 24 + i] = acc_S[s * 24 + i] if cutlass.Boolean(mask & (1 << i)) else -cutlass.Float32.inf
+                            acc_S[s * 24 + i] = (
+                                acc_S[s * 24 + i]
+                                if cutlass.Boolean(mask & (1 << i))
+                                else -cutlass.Float32.inf
+                            )
                             # This is the equivalent of:
                             # acc_S[s * 24 + i] = acc_S[s * 24 + i] if col_limit_right_s <= i else -cutlass.Float32.inf
                     # if tidx == 0: cute.print_tensor(acc_S)
         else:  # Causal or local
-            causal_row_offset = 1 + self.seqlen_k - n_block * self.n_block_size - self.seqlen_q
+            causal_row_offset = (
+                1 + self.seqlen_k - n_block * self.n_block_size - self.seqlen_q
+            )
             row_idx = tScS_t2r[0][0] + m_block * self.m_block_size
             if cutlass.const_expr(self.qhead_per_kvhead_packgqa != 1):
                 row_idx = row_idx // self.qhead_per_kvhead_packgqa
@@ -212,7 +260,9 @@ class AttentionMask:
                 if cutlass.const_expr(False):
                     for i in cutlass.range(ncol, unroll_full=True):
                         acc_S[i] = (
-                            -cutlass.Float32.inf if tScS_t2r[i][1] >= col_limit_right else acc_S[i]
+                            -cutlass.Float32.inf
+                            if tScS_t2r[i][1] >= col_limit_right
+                            else acc_S[i]
                         )
                 else:
                     # Bit manipulation, compiles down to the R2P instruction
@@ -224,7 +274,11 @@ class AttentionMask:
                         # This needs to be range_constexpr, otherwise the compiler can't generate
                         # the R2P instruction
                         for i in cutlass.range_constexpr(min(24, ncol - s * 24)):
-                            acc_S[s * 24 + i] = acc_S[s * 24 + i] if cutlass.Boolean(mask & (1 << i)) else -cutlass.Float32.inf
+                            acc_S[s * 24 + i] = (
+                                acc_S[s * 24 + i]
+                                if cutlass.Boolean(mask & (1 << i))
+                                else -cutlass.Float32.inf
+                            )
                             # This is the equivalent of:
                             # acc_S[s * 24 + i] = acc_S[s * 24 + i] if col_limit_right_s <= i else -cutlass.Float32.inf
             else:
@@ -241,11 +295,15 @@ class AttentionMask:
                 if cutlass.const_expr(self.window_size_right is not None):
                     col_limit_right = row_idx + local_row_offset_right
                     if cutlass.const_expr(mask_seqlen):
-                        col_limit_right = cutlass.min(col_limit_right, seqlenk_col_limit)
+                        col_limit_right = cutlass.min(
+                            col_limit_right, seqlenk_col_limit
+                        )
                 else:
                     col_limit_right = self.n_block_size
                 col_limit_left = (
-                    row_idx + local_row_offset_left if cutlass.const_expr(self.window_size_left is not None) else 0
+                    row_idx + local_row_offset_left
+                    if cutlass.const_expr(self.window_size_left is not None)
+                    else 0
                 )
                 # if cute.arch.thread_idx()[0] == 0 or cute.arch.thread_idx()[0] == 128: cute.printf("m_block = {}, n_block = {}, row_idx = {}, causal_row_offset = {}, col_limit_right = {}, col_limit_left = {}", m_block, n_block, row_idx, causal_row_offset, col_limit_right, col_limit_left)
                 for i in cutlass.range(cute.size(tScS_t2r.shape), unroll_full=True):
@@ -258,7 +316,7 @@ class AttentionMask:
 
     # @cute.jit
     # def apply_streaming_mask(
-    #     self, 
+    #     self,
     #     acc_S: cute.Tensor,
     #     m_block: cutlass.Int32,
     #     n_block: cutlass.Int32,
@@ -308,8 +366,7 @@ class AttentionMask:
     #                 # TODO(KuangjuX): Packed GQA Support
     #                 # Packed GQA is not supported currently - set row_idx to 0 as fallback
     #                 row_idx = 0
-                
-                
+
     #         col_limit_right = row_idx + local_row_offset_right
     #         col_limit_left = row_idx + local_row_offset_left
 
@@ -326,7 +383,7 @@ class AttentionMask:
     #             should_mask = True
 
     #             is_in_sink = col_idx < sink_col_limit
-    #             is_causal = col_idx <= col_limit_right   
+    #             is_causal = col_idx <= col_limit_right
     #             is_in_window = col_idx >= col_limit_left
 
     #             if is_causal:
@@ -338,12 +395,12 @@ class AttentionMask:
 
     @cute.jit
     def apply_streaming_mask(
-        self, 
+        self,
         acc_S: cute.Tensor,
         m_block: cutlass.Int32,
         n_block: cutlass.Int32,
         thr_mma: cute.TiledMma,
-        mask_seqlen: cutlass.Constexpr
+        mask_seqlen: cutlass.Constexpr,
     ):
         """
         A simplified, direct-logic version of the masking function for debugging.
@@ -381,18 +438,18 @@ class AttentionMask:
             is_in_sink = k_pos < self.sink_size
 
             # Rule B: Is the key within the sliding window?
-            is_in_window = True # Default to true if no window size is specified
+            is_in_window = True  # Default to true if no window size is specified
             if cutlass.const_expr(self.window_size_left is not None):
-                is_in_window = (k_pos >= q_pos - self.window_size_left)
-            
+                is_in_window = k_pos >= q_pos - self.window_size_left
+
             # Rule C: Is the connection causal?
-            is_causal = (k_pos <= q_pos)
+            is_causal = k_pos <= q_pos
 
             # An element is NOT masked if it's causal AND (it's in the sink OR it's in the window)
             if is_causal:
                 if is_in_sink or is_in_window:
                     should_mask = False
-            
+
             # Rule D: Padding mask (optional, based on sequence lengths)
             if cutlass.const_expr(mask_seqlen):
                 # Note: self.seqlen_q is the length of the current Q chunk, not total length
