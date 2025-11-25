@@ -12,7 +12,7 @@ from sglang.test.test_utils import (
 )
 
 
-class TestEp(CustomTestCase):
+class TestEpMoE(CustomTestCase):
     @classmethod
     def setUpClass(cls):
         cls.model = DEFAULT_MLA_MODEL_NAME_FOR_TEST
@@ -34,6 +34,18 @@ class TestEp(CustomTestCase):
     def tearDownClass(cls):
         kill_process_tree(cls.process.pid)
 
+    def test_mmlu(self):
+        args = SimpleNamespace(
+            base_url=self.base_url,
+            model=self.model,
+            eval_name="mmlu",
+            num_examples=64,
+            num_threads=32,
+        )
+
+        metrics = run_eval(args)
+        self.assertGreaterEqual(metrics["score"], 0.5)
+
     def test_mgsm_en(self):
         args = SimpleNamespace(
             base_url=self.base_url,
@@ -47,7 +59,7 @@ class TestEp(CustomTestCase):
         self.assertGreaterEqual(metrics["score"], 0.8)
 
 
-class TestEpDeepGEMM(CustomTestCase):
+class TestEpMoEFP8(CustomTestCase):
     @classmethod
     def setUpClass(cls):
         cls.model = DEFAULT_MLA_MODEL_NAME_FOR_TEST
@@ -64,14 +76,24 @@ class TestEpDeepGEMM(CustomTestCase):
                 "2",
                 "--quantization",
                 "fp8",
-                "--moe-runner-backend",
-                "deep_gemm",
             ],
         )
 
     @classmethod
     def tearDownClass(cls):
         kill_process_tree(cls.process.pid)
+
+    def test_mmlu(self):
+        args = SimpleNamespace(
+            base_url=self.base_url,
+            model=self.model,
+            eval_name="mmlu",
+            num_examples=64,
+            num_threads=32,
+        )
+
+        metrics = run_eval(args)
+        self.assertGreaterEqual(metrics["score"], 0.5)
 
     def test_mgsm_en(self):
         args = SimpleNamespace(

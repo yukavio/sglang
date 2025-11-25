@@ -3,7 +3,6 @@
 import logging
 import os
 from enum import Enum
-from functools import cache
 from typing import Union
 
 import torch
@@ -32,7 +31,6 @@ except Exception:
     quick_ar = False
 
 
-@cache
 def qr_rocm_arch_available():
     if not _is_hip:
         return False

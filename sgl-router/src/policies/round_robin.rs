@@ -1,12 +1,9 @@
 //! Round-robin load balancing policy
 
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
-};
-
 use super::{get_healthy_worker_indices, LoadBalancingPolicy};
-use crate::{core::Worker, metrics::RouterMetrics};
+use crate::core::Worker;
+use crate::metrics::RouterMetrics;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Round-robin selection policy
 ///
@@ -27,7 +24,7 @@ impl RoundRobinPolicy {
 impl LoadBalancingPolicy for RoundRobinPolicy {
     fn select_worker(
         &self,
-        workers: &[Arc<dyn Worker>],
+        workers: &[Box<dyn Worker>],
         _request_text: Option<&str>,
     ) -> Option<usize> {
         let healthy_indices = get_healthy_worker_indices(workers);
@@ -62,27 +59,24 @@ impl LoadBalancingPolicy for RoundRobinPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{BasicWorkerBuilder, WorkerType};
+    use crate::core::{BasicWorker, WorkerType};
 
     #[test]
     fn test_round_robin_selection() {
         let policy = RoundRobinPolicy::new();
-        let workers: Vec<Arc<dyn Worker>> = vec![
-            Arc::new(
-                BasicWorkerBuilder::new("http://w1:8000")
-                    .worker_type(WorkerType::Regular)
-                    .build(),
-            ),
-            Arc::new(
-                BasicWorkerBuilder::new("http://w2:8000")
-                    .worker_type(WorkerType::Regular)
-                    .build(),
-            ),
-            Arc::new(
-                BasicWorkerBuilder::new("http://w3:8000")
-                    .worker_type(WorkerType::Regular)
-                    .build(),
-            ),
+        let workers: Vec<Box<dyn Worker>> = vec![
+            Box::new(BasicWorker::new(
+                "http://w1:8000".to_string(),
+                WorkerType::Regular,
+            )),
+            Box::new(BasicWorker::new(
+                "http://w2:8000".to_string(),
+                WorkerType::Regular,
+            )),
+            Box::new(BasicWorker::new(
+                "http://w3:8000".to_string(),
+                WorkerType::Regular,
+            )),
         ];
 
         // Should select workers in order: 0, 1, 2, 0, 1, 2, ...
@@ -96,22 +90,19 @@ mod tests {
     #[test]
     fn test_round_robin_with_unhealthy_workers() {
         let policy = RoundRobinPolicy::new();
-        let workers: Vec<Arc<dyn Worker>> = vec![
-            Arc::new(
-                BasicWorkerBuilder::new("http://w1:8000")
-                    .worker_type(WorkerType::Regular)
-                    .build(),
-            ),
-            Arc::new(
-                BasicWorkerBuilder::new("http://w2:8000")
-                    .worker_type(WorkerType::Regular)
-                    .build(),
-            ),
-            Arc::new(
-                BasicWorkerBuilder::new("http://w3:8000")
-                    .worker_type(WorkerType::Regular)
-                    .build(),
-            ),
+        let workers: Vec<Box<dyn Worker>> = vec![
+            Box::new(BasicWorker::new(
+                "http://w1:8000".to_string(),
+                WorkerType::Regular,
+            )),
+            Box::new(BasicWorker::new(
+                "http://w2:8000".to_string(),
+                WorkerType::Regular,
+            )),
+            Box::new(BasicWorker::new(
+                "http://w3:8000".to_string(),
+                WorkerType::Regular,
+            )),
         ];
 
         // Mark middle worker as unhealthy
@@ -127,17 +118,15 @@ mod tests {
     #[test]
     fn test_round_robin_reset() {
         let policy = RoundRobinPolicy::new();
-        let workers: Vec<Arc<dyn Worker>> = vec![
-            Arc::new(
-                BasicWorkerBuilder::new("http://w1:8000")
-                    .worker_type(WorkerType::Regular)
-                    .build(),
-            ),
-            Arc::new(
-                BasicWorkerBuilder::new("http://w2:8000")
-                    .worker_type(WorkerType::Regular)
-                    .build(),
-            ),
+        let workers: Vec<Box<dyn Worker>> = vec![
+            Box::new(BasicWorker::new(
+                "http://w1:8000".to_string(),
+                WorkerType::Regular,
+            )),
+            Box::new(BasicWorker::new(
+                "http://w2:8000".to_string(),
+                WorkerType::Regular,
+            )),
         ];
 
         // Advance the counter

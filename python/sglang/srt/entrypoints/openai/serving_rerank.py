@@ -45,9 +45,7 @@ class OpenAIServingRerank(OpenAIServingBase):
         return None
 
     def _convert_to_internal_request(
-        self,
-        request: V1RerankReqInput,
-        raw_request: Request = None,
+        self, request: V1RerankReqInput
     ) -> tuple[EmbeddingReqInput, V1RerankReqInput]:
         """Convert OpenAI rerank request to internal embedding format"""
         # Create pairs of [query, document] for each document

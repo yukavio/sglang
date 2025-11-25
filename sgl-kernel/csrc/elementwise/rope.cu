@@ -14,13 +14,8 @@
  * limitations under the License.
  */
 
-#include <ATen/cuda/Exceptions.h>
-#include <c10/cuda/CUDAGuard.h>
-#include <c10/cuda/CUDAStream.h>
-#include <torch/all.h>
-
 #include "pos_enc.cuh"
-#include "utils.h"
+#include "pytorch_extension_utils.h"
 
 using namespace flashinfer;
 
@@ -32,7 +27,7 @@ void apply_rope_pos_ids_cos_sin_cache(
     at::Tensor cos_sin_cache,
     at::Tensor pos_ids,
     bool interleave,
-    bool enable_pdl,
+    int64_t cuda_stream,
     const std::optional<at::Tensor>& v,
     const std::optional<at::Tensor>& k_buffer,
     const std::optional<at::Tensor>& v_buffer,
@@ -92,8 +87,8 @@ void apply_rope_pos_ids_cos_sin_cache(
   size_t k_rope_stride_n = k_rope.stride(0);
   size_t k_rope_stride_h = k_rope.stride(1);
 
-  const cudaStream_t stream = at::cuda::getCurrentCUDAStream();
-  DISPATCH_PYTORCH_DTYPE_TO_CTYPE_FLOAT_FP16(q.scalar_type(), c_type, [&] {
+  cudaStream_t stream = reinterpret_cast<cudaStream_t>(cuda_stream);
+  DISPATCH_PYTORCH_DTYPE_TO_CTYPE_FP16(q.scalar_type(), c_type, [&] {
     // TODO temporarily only use `BatchQKApplyRotaryPosIdsCosSinCacheEnhanced` when save_kv_cache
     // to avoid changing original code path; but this branch is feature-complete and should switch to this later
     if (save_kv_cache) {
@@ -129,14 +124,12 @@ void apply_rope_pos_ids_cos_sin_cache(
           kv_cache_loc_ptr,
           interleave,
           save_kv_cache,
-          enable_pdl,
           stream);
       TORCH_CHECK(
           status == cudaSuccess,
           "BatchQKApplyRotaryPosIdsCosSinCacheEnhanced failed with error code " +
               std::string(cudaGetErrorString(status)));
     } else {
-      TORCH_CHECK(!enable_pdl);
       cudaError_t status = BatchQKApplyRotaryPosIdsCosSinCache(
           static_cast<c_type*>(q.data_ptr()),
           static_cast<c_type*>(k.data_ptr()),

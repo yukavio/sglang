@@ -1,7 +1,8 @@
 import logging
 import math
+from collections.abc import Iterable
 from math import sqrt
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Literal, Optional, Tuple, TypedDict, Union
 
 import torch
 from torch import nn
@@ -56,6 +57,7 @@ from sglang.srt.managers.schedule_batch import (
     Modality,
     MultimodalDataItem,
     MultimodalInputs,
+    global_server_args_dict,
 )
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch
 from sglang.srt.model_loader.weight_utils import default_weight_loader
@@ -131,7 +133,7 @@ class Step3TextMoEMLP(nn.Module):
             use_grouped_topk=False,
         )
 
-        self.experts = get_moe_impl_class(quant_config)(
+        self.experts = get_moe_impl_class()(
             num_experts=config.moe_num_experts,
             top_k=config.moe_top_k,
             hidden_size=config.hidden_size,
@@ -298,7 +300,7 @@ class Step3TextDecoderLayer(nn.Module):
         # self.n_shared_experts = 1
         # self.num_fused_shared_experts = (
         #     0
-        #     if global_server_args.disable_shared_experts_fusion
+        #     if global_server_args_dict["disable_shared_experts_fusion"]
         #     else self.n_shared_experts
         # )
         self.num_fused_shared_experts = 0
@@ -571,6 +573,7 @@ class Step3VisionAttention(nn.Module):
         self,
         dim: int,
         num_heads: int = 16,
+        qkv_backend="fa3",
         quant_config=None,
         prefix: str = "",
     ) -> None:
@@ -592,7 +595,9 @@ class Step3VisionAttention(nn.Module):
             num_heads=num_heads,
             projection_size=dim,
             use_qkv_parallel=True,
+            rotary_embed="normal",
             proj_bias=True,
+            qkv_backend=qkv_backend,
             quant_config=quant_config,
             prefix=add_prefix("attn", prefix),
         )
@@ -769,7 +774,7 @@ class Step3VLForConditionalGeneration(nn.Module):
         # self.n_shared_experts = 1
         # self.num_fused_shared_experts = (
         #     0
-        #     if global_server_args.disable_shared_experts_fusion
+        #     if global_server_args_dict["disable_shared_experts_fusion"]
         #     else self.n_shared_experts
         # )
         self.num_fused_shared_experts = 0

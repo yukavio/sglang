@@ -66,7 +66,7 @@ class MockModelRunner:
             enable_memory_saver=False,
         )
         # Required by torch native backend
-        self.server_args = ServerArgs(model_path="dummy")
+        self.server_args = ServerArgs(model_path="fake_model_path")
 
 
 @unittest.skipIf(not torch.cuda.is_available(), "Test requires CUDA")

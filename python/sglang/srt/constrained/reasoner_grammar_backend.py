@@ -17,11 +17,7 @@ from typing import List, Optional, Tuple
 
 import torch
 
-from .base_grammar_backend import (
-    INVALID_GRAMMAR_OBJ,
-    BaseGrammarBackend,
-    BaseGrammarObject,
-)
+from .base_grammar_backend import BaseGrammarBackend, BaseGrammarObject
 
 
 class ReasonerGrammarObject(BaseGrammarObject):
@@ -85,9 +81,10 @@ class ReasonerGrammarBackend(BaseGrammarBackend):
         self.grammar_backend = grammar_backend
         self.think_end_id = think_end_id
 
-    def _init_value_dispatch(self, key: Tuple[str, str]) -> Optional[BaseGrammarObject]:
+    def _init_value_dispatch(
+        self, key: Tuple[str, str]
+    ) -> Optional[ReasonerGrammarObject]:
         ret = self.grammar_backend._init_value_dispatch(key)
-        # avoid wrapping invalid grammar, so that the scheduler can detect it
-        if ret is None or ret is INVALID_GRAMMAR_OBJ:
-            return ret
+        if ret is None:
+            return None
         return ReasonerGrammarObject(ret, self.think_end_id)

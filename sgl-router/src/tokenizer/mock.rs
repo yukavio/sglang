@@ -1,10 +1,8 @@
 //! Mock tokenizer implementation for testing
 
-use std::collections::HashMap;
-
-use anyhow::Result;
-
 use super::traits::{Decoder, Encoder, Encoding, SpecialTokens, Tokenizer as TokenizerTrait};
+use anyhow::Result;
+use std::collections::HashMap;
 
 /// Mock tokenizer for testing purposes
 pub struct MockTokenizer {
@@ -34,12 +32,6 @@ impl MockTokenizer {
             (".", 6),
             ("<eos>", 999),
             ("<bos>", 1000),
-            ("<|im_start|>", 1001),
-            ("<|im_end|>", 1002),
-            ("<|eot_id|>", 1003),
-            ("system", 7),
-            ("user", 8),
-            ("assistant", 9),
         ];
 
         for (token, id) in tokens {
@@ -68,8 +60,7 @@ impl MockTokenizer {
 
 impl Encoder for MockTokenizer {
     fn encode(&self, input: &str) -> Result<Encoding> {
-        // Simple word-based tokenization using the vocab
-        // Split by whitespace and look up each word (decoder adds spaces back)
+        // Simple word-based tokenization for testing
         let tokens: Vec<u32> = input
             .split_whitespace()
             .filter_map(|word| self.vocab.get(word).copied())
@@ -117,9 +108,5 @@ impl TokenizerTrait for MockTokenizer {
 
     fn id_to_token(&self, id: u32) -> Option<String> {
         self.reverse_vocab.get(&id).cloned()
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
     }
 }

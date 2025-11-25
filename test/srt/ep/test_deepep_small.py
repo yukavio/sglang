@@ -268,7 +268,7 @@ class TestMTP(CustomTestCase):
                 "deepep",
                 "--speculative-algo",
                 "EAGLE",
-                "--speculative-draft-model-path",
+                "--speculative-draft",
                 DEFAULT_MODEL_NAME_FOR_TEST_MLA_NEXTN,
                 "--speculative-num-steps",
                 "2",
@@ -317,6 +317,7 @@ class TestMTP(CustomTestCase):
 class TestMTPWithTBO(CustomTestCase):
     @classmethod
     def setUpClass(cls):
+        import os
 
         cls.model = DEFAULT_MODEL_NAME_FOR_TEST_MLA
         cls.base_url = DEFAULT_URL_FOR_TEST
@@ -342,7 +343,7 @@ class TestMTPWithTBO(CustomTestCase):
                 "3",
                 "--speculative-num-draft-tokens",
                 "3",
-                "--speculative-draft-model-path",
+                "--speculative-draft",
                 DEFAULT_MODEL_NAME_FOR_TEST_MLA_NEXTN,
                 "--chunked-prefill-size",
                 "256",

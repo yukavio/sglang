@@ -1,4 +1,5 @@
 import itertools
+import os
 import unittest
 
 import torch
@@ -576,7 +577,7 @@ class TestW8A8BlockFP8BatchedDeepGemm(CustomTestCase):
         if not torch.cuda.is_available():
             raise unittest.SkipTest("CUDA is not available")
         try:
-            import deep_gemm  # noqa: F401
+            import deep_gemm
         except ImportError:
             raise unittest.SkipTest("DeepGEMM is not available")
         torch.set_default_device("cuda")
@@ -620,11 +621,11 @@ class TestW8A8BlockFP8BatchedDeepGemm(CustomTestCase):
             w_s,
         )
 
-        from deep_gemm import fp8_m_grouped_gemm_nt_masked
+        from deep_gemm import m_grouped_gemm_fp8_fp8_bf16_nt_masked
 
         with torch.inference_mode():
             ref_out = torch_w8a8_block_fp8_bmm(a, a_s, w, w_s, block_size, dtype)
-            fp8_m_grouped_gemm_nt_masked(lhs, rhs, oe, masked_m, expected_m)
+            m_grouped_gemm_fp8_fp8_bf16_nt_masked(lhs, rhs, oe, masked_m, expected_m)
             out = oe[:, :M, :]
 
         self.assertTrue(

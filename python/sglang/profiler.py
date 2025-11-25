@@ -15,7 +15,7 @@ from typing import List, Optional
 
 import requests
 
-PROFILER_DIR = os.getenv("SGLANG_TORCH_PROFILER_DIR", "/tmp")
+PARENT_FOLDER = "/tmp/sglang-profile"
 
 
 def _run_profile(
@@ -25,10 +25,9 @@ def _run_profile(
     output_dir: Optional[str] = None,
     profile_name: Optional[str] = None,
     profile_by_stage: bool = False,
-    merge_profiles: bool = False,
 ) -> str:
     if output_dir is None:
-        output_dir = PROFILER_DIR
+        output_dir = PARENT_FOLDER
 
     output_dir = os.path.normpath(output_dir)
     output_dir = os.path.abspath(output_dir)
@@ -61,7 +60,6 @@ def _run_profile(
         "num_steps": str(num_steps),
         "activities": activities,
         "profile_by_stage": profile_by_stage,
-        "merge_profiles": merge_profiles,
     }
 
     response = requests.post(url=url + "/start_profile", json=json_data)
@@ -78,17 +76,10 @@ def run_profile(
     output_dir: Optional[str] = None,
     profile_name: Optional[str] = None,
     profile_by_stage: bool = False,
-    merge_profiles: bool = False,
 ):
     # step based profile will self terminate on num_steps constraints
     link = _run_profile(
-        url,
-        num_steps,
-        activities,
-        output_dir,
-        profile_name,
-        profile_by_stage,
-        merge_profiles,
+        url, num_steps, activities, output_dir, profile_name, profile_by_stage
     )
     return link
 
@@ -124,7 +115,7 @@ if __name__ == "__main__":
         action=argparse.BooleanOptionalAction,
         type=bool,
         default=False,
-        help="Whether to profile prefill and decode separately",
+        help="The number of forward steps to profile.",
     )
     parser.add_argument(
         "--cpu",
@@ -154,13 +145,6 @@ if __name__ == "__main__":
         default=False,
         help="Whether to use rpd profiler (https://github.com/ROCm/rocmProfileData)",
     )
-    parser.add_argument(
-        "--merge-profiles",
-        action=argparse.BooleanOptionalAction,
-        type=bool,
-        default=False,
-        help="Whether to merge profiles from all ranks into a single trace file",
-    )
 
     args = parser.parse_args()
     activities = []
@@ -179,5 +163,4 @@ if __name__ == "__main__":
         args.output_dir,
         args.profile_name,
         args.profile_by_stage,
-        args.merge_profiles,
     )

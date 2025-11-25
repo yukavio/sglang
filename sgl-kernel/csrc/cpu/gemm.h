@@ -27,10 +27,10 @@ template <>
 inline bool can_use_brgemm<at::Half>(int M) {
   return true;
 }
-// this requires PyTorch 2.7 or above
+// TODO: add u8s8 brgemm, this requires PyTorch 2.7
 template <>
 inline bool can_use_brgemm<int8_t>(int M) {
-  return M > 4;
+  return false;
 }
 
 template <>
@@ -198,5 +198,4 @@ void tinygemm_kernel(
     int64_t ldb,
     int64_t ldc,
     bool brg,
-    int64_t block_size_K,
-    bool do_unpack = true);
+    int64_t block_size_K);

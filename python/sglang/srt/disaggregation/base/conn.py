@@ -20,10 +20,6 @@ class KVArgs:
     aux_data_ptrs: List[int]
     aux_data_lens: List[int]
     aux_item_lens: List[int]
-    state_data_ptrs: List[int]
-    state_data_lens: List[int]
-    state_item_lens: List[int]
-    state_type: str  # "none", "mamba", "swa"
     ib_device: str
     ib_traffic_class: str
     gpu_id: int
@@ -48,7 +44,7 @@ class KVPoll:
 
 
 class BaseKVManager(ABC):
-    """Base class for managing transfer states"""
+    """Base class for managing transfers states"""
 
     @abstractmethod
     def __init__(
@@ -75,32 +71,28 @@ class BaseKVSender(ABC):
     @abstractmethod
     def init(self, num_kv_indices: int, aux_index: Optional[int] = None):
         """
-        Set req's index metadata locally or notify the decoder server about the kv indices length and aux index.
+        Notify the decoder server about the kv indices length and aux index
         """
         ...
 
     @abstractmethod
-    def send(
-        self,
-        kv_indices: npt.NDArray[np.int32],
-        state_indices: Optional[List[int]] = None,
-    ):
+    def send(self, kv_indices: npt.NDArray[np.int32]):
         """
-        Send the kv cache at the given kv indices and the extra cache/state at the given indices to the decoder server.
+        Send the kv cache at the given kv indices to the decoder server
         """
         ...
 
     @abstractmethod
     def poll(self) -> KVPoll:
         """
-        Check the status of the kv cache transfer.
+        Check the status of the kv cache transfer
         """
         ...
 
     @abstractmethod
     def failure_exception(self):
         """
-        Raise an exception if the kv cache transfer fails.
+        Raise an exception if the kv cache transfer fails
         """
         ...
 
@@ -116,44 +108,27 @@ class BaseKVReceiver(ABC):
     ): ...
 
     @abstractmethod
-    def init(
-        self,
-        kv_indices: npt.NDArray[np.int32],
-        aux_index: Optional[int] = None,
-        state_indices: Optional[List[int]] = None,
-    ):
+    def init(self, kv_indices: npt.NDArray[np.int32], aux_index: Optional[int] = None):
         """
-        Set req's index metadata locally or notify the prefill server about the kv indices, aux index, and state_indices.
+        Notify the prefill server about the kv indices and aux index
         """
         ...
 
     @abstractmethod
     def poll(self) -> KVPoll:
         """
-        Check the status of the kv cache transfer.
+        Check the status of the kv cache transfer
         """
         ...
 
     @abstractmethod
     def failure_exception(self):
         """
-        Raise an exception if the kv cache transfer fails.
+        Raise an exception if the kv cache transfer fails
         """
         ...
-
-    def clear(self):
-        """
-        Clear any internal states.
-        """
-        pass
-
-    def abort(self):
-        """
-        Abort the current transfer.
-        """
-        pass
 
 
 class BaseKVBootstrapServer(ABC):
     @abstractmethod
-    def __init__(self, host: str, port: int): ...
+    def __init__(self, port: int): ...

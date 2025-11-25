@@ -36,17 +36,6 @@ def proj_filter(
     return "proj" in fqn
 
 
-# TODO: implement a more general filter function
-def proj_filter_conv3d(
-    module: torch.nn.Module,
-    fqn: str,
-):
-    if isinstance(module, torch.nn.Conv3d):
-        logger.warning(f"Quantize: skipping {fqn} because it's a Conv3d")
-        return False
-    return "proj" in fqn
-
-
 def apply_torchao_config_to_model(
     model: torch.nn.Module,
     torchao_config: str,
@@ -74,7 +63,7 @@ def apply_torchao_config_to_model(
     if torchao_config == "" or torchao_config is None:
         return model
     elif "int8wo" in torchao_config:
-        quantize_(model, int8_weight_only(), filter_fn=proj_filter_conv3d)
+        quantize_(model, int8_weight_only(), filter_fn=filter_fn)
     elif "int8dq" in torchao_config:
         quantize_(model, int8_dynamic_activation_int8_weight(), filter_fn=filter_fn)
     elif "int4wo" in torchao_config:
@@ -112,7 +101,7 @@ def apply_torchao_config_to_model(
     elif "fp8wo" in torchao_config:
         # this requires newer hardware
         # [rank0]: AssertionError: fp8e4nv data type is not supported on CUDA arch < 89
-        quantize_(model, float8_weight_only(), filter_fn=proj_filter_conv3d)
+        quantize_(model, float8_weight_only(), filter_fn=filter_fn)
     elif "fp8dq" in torchao_config:
         granularity = torchao_config.split("-")[-1]
         GRANULARITY_MAP = {
@@ -127,7 +116,7 @@ def apply_torchao_config_to_model(
             float8_dynamic_activation_float8_weight(
                 granularity=GRANULARITY_MAP[granularity]
             ),
-            filter_fn=proj_filter_conv3d,
+            filter_fn=filter_fn,
         )
     else:
         raise ValueError(f"Unexpected config: {torchao_config}")

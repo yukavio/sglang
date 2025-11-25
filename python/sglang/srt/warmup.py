@@ -1,24 +1,20 @@
-from __future__ import annotations
-
 import logging
-from typing import TYPE_CHECKING, List
+from typing import List
 
 import numpy as np
 import tqdm
 
 from sglang.srt.disaggregation.utils import FAKE_BOOTSTRAP_HOST
 from sglang.srt.managers.io_struct import GenerateReqInput
-
-if TYPE_CHECKING:
-    from sglang.srt.managers.tokenizer_manager import TokenizerManager
+from sglang.srt.managers.tokenizer_manager import TokenizerManager
 
 logger = logging.getLogger(__file__)
 
 _warmup_registry = {}
 
 
-def warmup(name: str):
-    def decorator(fn):
+def warmup(name: str) -> callable:
+    def decorator(fn: callable):
         _warmup_registry[name] = fn
         return fn
 
