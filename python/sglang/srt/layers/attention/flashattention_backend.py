@@ -26,6 +26,9 @@ from sglang.srt.sparse_attention.cache_manager.cache_manager import ManagerConfi
 from sglang.srt.sparse_attention.kernels.attention.interface import (
     flash_attn_with_kvcache as cute_flash_attn_with_kvcache,
 )
+from sglang.srt.sparse_attention.kernels.attention.streaming_sparse_attention_interface import (
+    streaming_sparse_attn_func as cute_streaming_sparse_attn_with_kv_cache,
+)
 from sglang.srt.sparse_attention.updater.flashattention.cache_updater import (
     LServerUpdaterFlashAttentionBackend,
 )
@@ -825,6 +828,87 @@ class FlashAttentionBackend(AttentionBackend):
                 cache_seqlens = metadata.encoder_lens_int32
                 cu_seqlens_k = metadata.encoder_cu_seqlens_k
                 window_size = (-1, -1)
+
+            is_duo_attn = (
+                hasattr(layer, "duo_attn_config") and layer.duo_attn_config is not None
+            )
+
+            if is_duo_attn:
+                # Get the DuoAttention config
+                retrieval_idx = layer.duo_attn_config["retrival_idx"]
+                streaming_idx = layer.duo_attn_config["streaming_idx"]
+
+                q_view = q.contiguous().view(-1, layer.tp_q_head_num, layer.head_dim)
+
+                q_retrieval = q_view[:, retrieval_idx, :]
+                q_streaming = q_view[:, streaming_idx, :]
+
+                gqa_group_size = layer.tp_q_head_num // layer.tp_k_head_num
+
+                if gqa_group_size == 1:
+                    kv_retrieval_idx = retrieval_idx
+                    kv_streaming_idx = streaming_idx
+                else:
+                    kv_retrieval_idx = [
+                        i // gqa_group_size for i in retrieval_idx[::gqa_group_size]
+                    ]
+                    kv_streaming_idx = [
+                        i // gqa_group_size for i in streaming_idx[::gqa_group_size]
+                    ]
+
+                k_cache_ret = key_cache[:, kv_retrieval_idx, :]
+                v_cache_ret = value_cache[:, kv_retrieval_idx, :]
+
+                k_cache_streaming = key_cache[:, kv_streaming_idx, :]
+                v_cache_streaming = value_cache[:, kv_streaming_idx, :]
+
+                o_retrieval, lse_retrieval, *rest_retrieval = flash_attn_with_kvcache(
+                    q=q_retrieval,
+                    k_cache=k_cache_ret,
+                    v_cache=v_cache_ret,
+                    page_table=page_table,
+                    cache_seqlens=cache_seqlens,
+                    cu_seqlens_q=cu_seqlens_q,
+                    cu_seqlens_k_new=cu_seqlens_k if not use_local_attn else None,
+                    max_seqlen_q=max_seqlen_q,
+                    softmax_scale=layer.scaling,
+                    causal=False if use_cascade_attn else causal,
+                    window_size=(1, -1),
+                    softcap=layer.logit_cap,
+                    k_descale=None,
+                    v_descale=None,
+                    return_softmax_lse=True,
+                    **kwargs,
+                )
+
+                streaming_window = layer.duo_attn_config.get("window_size", 128)
+                sink_size = layer.duo_attn_config.get("sink_size", 4)
+
+                o_streaming, lse_streaming = cute_streaming_sparse_attn_with_kv_cache(
+                    q=q_streaming,
+                    k=k_cache_streaming,
+                    v=v_cache_streaming,
+                    cu_seqlens_q=cu_seqlens_q,
+                    cu_seqlens_k=cu_seqlens_k,
+                    seqused_k=cache_seqlens,
+                    page_table=page_table,
+                    softmax_scale=layer.scaling,
+                    causal=causal,
+                    window_size=(streaming_window, 0),
+                    learnable_sink=None,
+                    sink_size=sink_size,
+                    enable_streaming=True,
+                    softcap=layer.logit_cap,
+                    pack_gqa=True if gqa_group_size > 1 else False,
+                    groupwise=False,
+                    position_ids=None,
+                    m_block_size=128,
+                    n_block_size=128,
+                )
+
+                o = torch.empty_like(q_view)
+                o[:, retrieval_idx, :] = o_retrieval
+                o[:, streaming_idx, :] = o_streaming
 
             result = flash_attn_with_kvcache(
                 q=q.contiguous().view(-1, layer.tp_q_head_num, layer.head_dim),
