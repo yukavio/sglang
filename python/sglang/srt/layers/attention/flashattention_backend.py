@@ -345,6 +345,14 @@ class FlashAttentionBackend(AttentionBackend):
         self.speculative_step_id = speculative_step_id
         self.sparse_attn = model_runner.server_args.is_sparse_attn
         self.sparse_attn_algo = model_runner.server_args.sparse_attn_algo
+
+        # DuoAttention
+        self.enable_duo_attention = model_runner.server_args.enable_duo_attention
+        self.duo_attn_sink_size = model_runner.server_args.duo_attn_sink_size
+        self.duo_attn_streaming_window = model_runner.server_args.duo_attn_streaming_window
+        self.duo_attn_retrieval_idx = model_runner.server_args.duo_attn_retrieval_idx
+        self.duo_attn_streaming_idx = model_runner.server_args.duo_attn_streaming_idx
+
         if self.sparse_attn:
             manager_config = ManagerConfig(
                 keys=model_runner.token_to_kv_pool.k_buffer,
@@ -781,14 +789,9 @@ class FlashAttentionBackend(AttentionBackend):
                 cu_seqlens_k = metadata.encoder_cu_seqlens_k
                 window_size = (-1, -1)
 
-            is_duo_attn = (
-                hasattr(layer, "duo_attn_config") and layer.duo_attn_config is not None
-            )
-
-            if is_duo_attn:
-                # Get the DuoAttention config
-                retrieval_idx = layer.duo_attn_config["retrival_idx"]
-                streaming_idx = layer.duo_attn_config["streaming_idx"]
+            if self.enable_duo_attention:
+                retrieval_idx = self.duo_attn_retrieval_idx
+                streaming_idx = self.duo_attn_streaming_idx
 
                 q_view = q.contiguous().view(-1, layer.tp_q_head_num, layer.head_dim)
 
@@ -833,8 +836,8 @@ class FlashAttentionBackend(AttentionBackend):
                     **kwargs,
                 )
 
-                streaming_window = layer.duo_attn_config.get("window_size", 128)
-                sink_size = layer.duo_attn_config.get("sink_size", 4)
+                sink_size = self.duo_attn_sink_size
+                streaming_window = self.duo_attn_streaming_window
 
                 o_streaming, lse_streaming = cute_streaming_sparse_attn_with_kv_cache(
                     q=q_streaming,
@@ -861,25 +864,26 @@ class FlashAttentionBackend(AttentionBackend):
                 o = torch.empty_like(q_view)
                 o[:, retrieval_idx, :] = o_retrieval
                 o[:, streaming_idx, :] = o_streaming
-
-            result = flash_attn_with_kvcache(
-                q=q.contiguous().view(-1, layer.tp_q_head_num, layer.head_dim),
-                k_cache=key_cache,
-                v_cache=value_cache,
-                page_table=page_table,
-                cache_seqlens=cache_seqlens,
-                cu_seqlens_q=cu_seqlens_q,
-                cu_seqlens_k_new=cu_seqlens_k if not use_local_attn else None,
-                max_seqlen_q=max_seqlen_q,
-                softmax_scale=layer.scaling,
-                causal=False if use_cascade_attn else causal,
-                window_size=window_size,
-                softcap=layer.logit_cap,
-                k_descale=k_descale,
-                v_descale=v_descale,
-                return_softmax_lse=use_cascade_attn,
-                **kwargs,
-            )
+            
+            else:
+                result = flash_attn_with_kvcache(
+                    q=q.contiguous().view(-1, layer.tp_q_head_num, layer.head_dim),
+                    k_cache=key_cache,
+                    v_cache=value_cache,
+                    page_table=page_table,
+                    cache_seqlens=cache_seqlens,
+                    cu_seqlens_q=cu_seqlens_q,
+                    cu_seqlens_k_new=cu_seqlens_k if not use_local_attn else None,
+                    max_seqlen_q=max_seqlen_q,
+                    softmax_scale=layer.scaling,
+                    causal=False if use_cascade_attn else causal,
+                    window_size=window_size,
+                    softcap=layer.logit_cap,
+                    k_descale=k_descale,
+                    v_descale=v_descale,
+                    return_softmax_lse=use_cascade_attn,
+                    **kwargs,
+                )
 
             if use_cascade_attn:
                 o, softmax_lse, *rest = result

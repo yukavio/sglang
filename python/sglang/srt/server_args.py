@@ -302,6 +302,13 @@ class ServerArgs:
     sparse_moving_average_factor: float = 0.4
     sparse_skip_first_n_layers: int = 0
 
+    # DuoAttention
+    enable_duo_attention: bool = False
+    duo_attn_sink_size: int = 4
+    duo_attn_streaming_window: int = 128
+    duo_attn_retrieval_idx: int = 0
+    duo_attn_streaming_idx: int = 1
+
     def __post_init__(self):
         # Check deprecated arguments
         def print_deprecated_warning(message: str):
@@ -2041,6 +2048,38 @@ class ServerArgs:
             default=ServerArgs.sparse_skip_first_n_layers,
             help="The number of layers to skip at the beginning of the model for sparse attention.",
         )
+
+        # DuoAttention
+        parser.add_argument(
+            "--enable-duo-attention",
+            action="store_true",
+            help="Enable DuoAttention for the model.",
+        )
+        parser.add_argument(
+            "--duo-attn-sink-size",
+            type=int,
+            default=ServerArgs.duo_attn_sink_size,
+            help="The sink size for DuoAttention.",
+        )
+        parser.add_argument(
+            "--duo-attn-streaming-window",
+            type=int,
+            default=ServerArgs.duo_attn_streaming_window,
+            help="The streaming window for DuoAttention.",
+        )
+        parser.add_argument(
+            "--duo-attn-retrieval-idx",
+            type=int,
+            default=ServerArgs.duo_attn_retrieval_idx,
+            help="The retrieval index for DuoAttention.",
+        )
+        parser.add_argument(
+            "--duo-attn-streaming-idx",
+            type=int,
+            default=ServerArgs.duo_attn_streaming_idx,
+            help="The streaming index for DuoAttention.",
+        )
+
 
     @classmethod
     def from_cli_args(cls, args: argparse.Namespace):
