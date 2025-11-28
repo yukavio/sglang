@@ -727,6 +727,14 @@ class ModelRunner:
 
         self.dtype = self.model_config.dtype
 
+        if self.server_args.enable_duo_attention:
+            try:
+                logger.info(f"Initializing DuoAttention (Sparsity: {self.server_args.duo_attn_sparsity})")
+                self._init_duo_attention()
+            except Exception as e:
+                logger.error(f"Failed to initialize DuoAttention: {e}")
+                raise e
+
         after_avail_memory = get_available_gpu_memory(self.device, self.gpu_id)
         self.weight_load_mem_usage = before_avail_memory - after_avail_memory
         logger.info(
@@ -1890,6 +1898,92 @@ def _unwrap_tensor(tensor, tp_rank, device):
     if isinstance(tensor, LocalSerializedTensor):
         tensor = tensor.get(tp_rank)
     return tensor.to(device)
+
+
+def _init_duo_attention(self):
+    sink_size = self.server_args.duo_attn_sink_size
+    recent_size = self.server_args.duo_attn_streaming_window
+    full_attention_heads = self.server_args.duo_attn_retrieval_idx
+
+    _reorder_weights_for_duo_attn(self, full_attention_heads, sink_size, recent_size)
+
+
+def _reorder_weights_for_duo_attn(self, full_attention_heads, sink_size, recent_size):
+    model_config = self.model_config
+    device = self.device
+
+    num_heads = model_config.num_attention_heads
+    num_kv_heads = model_config.num_key_value_heads
+    head_dim = model_config.hidden_size // num_heads
+    group_size = num_heads // num_kv_heads
+
+    print(f"Applying DuoAttention reordering for {num_heads} heads, {num_kv_heads} kv heads, {head_dim} head dim, {group_size} group size")
+
+    layers = self.model.model.layers
+
+    for i, layer in enumerate(layers):
+        attn = layer.self_attn
+        pattern = full_attention_heads[i]
+
+        full_idx = [h for h, val in enumerate(pattern) if val > 0.5]
+        stream_idx = [h for h, val in enumerate(pattern) if val <= 0.5]
+
+        num_full = len(full_idx)
+        num_stream = len(stream_idx)
+
+        new_q_order = full_idx + stream_idx
+        new_q_indices = torch.tensor(new_q_order, device=device, dtype=torch.long)
+
+        new_kv_order = []
+        seen_kv = set()
+        for q_h in new_q_order:
+            kv_h = q_h // group_size
+            if kv_h not in seen_kv:
+                new_kv_order.append(kv_h)
+                seen_kv.add(kv_h)
+        new_kv_indices = torch.tensor(new_kv_order, device=device, dtype=torch.long)
+
+        qkv_weight = attn.qkv_proj.weight.data
+        total_dim = qkv_weight.shape[0]
+        
+        q_end = num_heads * head_dim
+        k_end = q_end + num_kv_heads * head_dim
+        
+        w_q = qkv_weight[:q_end, :]
+        w_k = qkv_weight[q_end:k_end, :]
+        w_v = qkv_weight[k_end:, :]
+
+        q_perm_idx = []
+        for h in new_q_indices:
+            start = h * head_dim
+            q_perm_idx.append(torch.arange(start, start + head_dim, device=device))
+        q_perm_idx = torch.cat(q_perm_idx)
+        w_q_new = w_q[q_perm_idx] # Row select
+
+        kv_perm_idx = []
+        for h in new_kv_indices:
+            start = h * head_dim
+            kv_perm_idx.append(torch.arange(start, start + head_dim, device=device))
+        kv_perm_idx = torch.cat(kv_perm_idx)
+        w_k_new = w_k[kv_perm_idx]
+        w_v_new = w_v[kv_perm_idx]
+
+        attn.qkv_proj.weight.data = torch.cat([w_q_new, w_k_new, w_v_new], dim=0)
+
+        o_weight = attn.o_proj.weight.data
+        w_o_new = o_weight[:, q_perm_idx] # Column select
+        attn.o_proj.weight.data = w_o_new
+
+        attn.duo_attn_retrieval_idx = slice(0, num_full)
+        attn.duo_attn_streaming_idx = slice(num_full, num_heads)
+
+        attn.duo_attn_sink_size = sink_size
+        attn.duo_attn_recent_size = recent_size
+
+        attn.enable_duo_attention = True
+
+    print("Reordered weights for DuoAttention")
+
 
 
 @dataclass
