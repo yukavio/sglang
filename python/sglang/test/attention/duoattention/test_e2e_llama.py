@@ -31,11 +31,13 @@ def main():
             full_attention_heads, None, sparsity
         )
 
+        flat_full_attn_heads = full_attention_heads.flatten().as_type(int)
+
         print(f"Computed DuoAttention sparsity: {final_sparsity}")
-        print(f"Sparsified attention heads: {full_attention_heads}")
+        print(f"Sparsified attention heads: {flat_full_attn_heads}")
 
         # 将 list 转为字符串
-        retrieval_heads_str = ",".join(map(str, full_attention_heads))
+        retrieval_heads_str = ",".join(map(str, flat_full_attn_heads))
         print(f"Retrieval heads: {retrieval_heads_str}")
 
         # 准备启动参数

@@ -306,8 +306,10 @@ class ServerArgs:
     enable_duo_attention: bool = False
     duo_attn_sink_size: int = 4
     duo_attn_streaming_window: int = 128
-    duo_attn_retrieval_idx: int = 0
-    duo_attn_streaming_idx: int = 1
+    # duo_attn_retrieval_idx: int = 0
+    # duo_attn_streaming_idx: int = 1
+    duo_attn_retrieval_idx: List[int] = dataclasses.field(default_factory=list)
+    duo_attn_streaming_idx: int = 0
 
     def __post_init__(self):
         # Check deprecated arguments
@@ -2069,9 +2071,9 @@ class ServerArgs:
         )
         parser.add_argument(
             "--duo-attn-retrieval-idx",
-            type=int,
-            default=ServerArgs.duo_attn_retrieval_idx,
-            help="The retrieval index for DuoAttention.",
+            type=lambda s: [int(x) for x in s.split(",")] if s else [],
+            default=None,
+            help="The retrieval indices (comma separated list) for DuoAttention.",
         )
         parser.add_argument(
             "--duo-attn-streaming-idx",
