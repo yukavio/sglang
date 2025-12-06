@@ -31,14 +31,19 @@ def main():
             full_attention_heads, None, sparsity
         )
 
-        flat_full_attn_heads = full_attention_heads.flatten().astype(int)
 
         print(f"Computed DuoAttention sparsity: {final_sparsity}")
-        print(f"Sparsified attention heads: {flat_full_attn_heads}")
+        print(f"Sparsified attention heads: {full_attention_heads}")
 
         # 将 list 转为字符串
-        retrieval_heads_str = ",".join(map(str, flat_full_attn_heads))
+        # retrieval_heads_str = ",".join(map(str, full_attention_heads))
+        retrieval_heads_str = ";".join(
+            ",".join(str(int(val)) for val in layer)
+            for layer in full_attention_heads
+        )
         print(f"Retrieval heads: {retrieval_heads_str}")
+
+        print(f"BASE_URL: {BASE_URL}")
 
         # 准备启动参数
         other_args = [
@@ -47,11 +52,11 @@ def main():
             "--context-length", "32000",
 
             # DuoAttention Args
-            "--enable-duo-attention",
-            "--duo-attn-sink-size", str(sink_size),
-            "--duo-attn-streaming-window", "128", # 注意：这里你保留了硬编码 128
-            "--duo-attn-retrieval-idx", retrieval_heads_str,
-            "--duo-attn-streaming-idx", str(recent_size),
+            # "--enable-duo-attention",
+            # "--duo-attn-sink-size", str(sink_size),
+            # "--duo-attn-streaming-window", "128", # 注意：这里你保留了硬编码 128
+            # "--duo-attn-retrieval-idx", retrieval_heads_str,
+            # "--duo-attn-streaming-idx", str(recent_size),
         ]
 
         # ==========================================
@@ -106,7 +111,7 @@ def main():
 
         print("Sending request to model...")
         start_time = time.time()
-        response = requests.post(BASE_URL + "generate", json=payload).json()
+        response = requests.post(BASE_URL + "/generate", json=payload).json()
         end_time = time.time()
 
 

@@ -308,7 +308,7 @@ class ServerArgs:
     duo_attn_streaming_window: int = 128
     # duo_attn_retrieval_idx: int = 0
     # duo_attn_streaming_idx: int = 1
-    duo_attn_retrieval_idx: List[int] = dataclasses.field(default_factory=list)
+    duo_attn_retrieval_idx: List[List[int]] = dataclasses.field(default_factory=list)
     duo_attn_streaming_idx: int = 0
 
     def __post_init__(self):
@@ -2071,7 +2071,7 @@ class ServerArgs:
         )
         parser.add_argument(
             "--duo-attn-retrieval-idx",
-            type=lambda s: [int(x) for x in s.split(",")] if s else [],
+            type=lambda s: [[int(x) for x in layer.split(",")] for layer in s.split(";")] if s else [],
             default=None,
             help="The retrieval indices (comma separated list) for DuoAttention.",
         )
