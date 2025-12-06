@@ -12,7 +12,7 @@ from sglang.test.attention.duoattention.utils import load_attn_pattern, sparsify
 
 
 ROOT_PATH = "/mnt/cephfs/chengqi/"
-LLAMA_LONG_MODEL_PATH = os.path.join(ROOT_PATH, "models/Llama-3-8B-Instruct-Graident-1048k")
+LLAMA_LONG_MODEL_PATH = os.path.join(ROOT_PATH, "models/Llama-3-8B-Instruct-Gradient-1048k")
 ATTN_PATTERN_PATH = os.path.join(ROOT_PATH, "attn_patterns/Llama-3-8B-Instruct-Gradient-4194k/lr=0.02-reg=0.05-ctx=1000_32000-multi_passkey10")
 BASE_URL = DEFAULT_URL_FOR_TEST
 
@@ -31,7 +31,7 @@ def main():
             full_attention_heads, None, sparsity
         )
 
-        flat_full_attn_heads = full_attention_heads.flatten().as_type(int)
+        flat_full_attn_heads = full_attention_heads.flatten().astype(int)
 
         print(f"Computed DuoAttention sparsity: {final_sparsity}")
         print(f"Sparsified attention heads: {flat_full_attn_heads}")
