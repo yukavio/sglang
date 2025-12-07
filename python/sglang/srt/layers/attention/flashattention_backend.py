@@ -350,8 +350,8 @@ class FlashAttentionBackend(AttentionBackend):
         self.enable_duo_attention = model_runner.server_args.enable_duo_attention
         self.duo_attn_sink_size = model_runner.server_args.duo_attn_sink_size
         self.duo_attn_streaming_window = model_runner.server_args.duo_attn_streaming_window
-        self.duo_attn_retrieval_idx = model_runner.server_args.duo_attn_retrieval_idx
-        self.duo_attn_streaming_idx = model_runner.server_args.duo_attn_streaming_idx
+        # self.duo_attn_retrieval_idx = model_runner.server_args.duo_attn_retrieval_idx
+        # self.duo_attn_streaming_idx = model_runner.server_args.duo_attn_streaming_idx
 
         if self.sparse_attn:
             manager_config = ManagerConfig(
@@ -689,6 +689,11 @@ class FlashAttentionBackend(AttentionBackend):
         k_rope: Optional[torch.Tensor] = None,
         sinks: Optional[torch.Tensor] = None,
     ):
+
+        print(f"DEBUG: layer type = {type(layer)}")
+        print(f"DEBUG: layer is RadixAttention = {type(layer).__name__ == 'RadixAttention'}")
+        print(f"DEBUG: hasattr(layer, 'self_attn') = {hasattr(layer, 'self_attn')}")
+        print(f"DEBUG: hasattr(layer, 'enable_duo_attention') = {hasattr(layer, 'enable_duo_attention')}")
         if k is not None:
             assert v is not None
             if save_kv_cache:
@@ -789,9 +794,18 @@ class FlashAttentionBackend(AttentionBackend):
                 cu_seqlens_k = metadata.encoder_cu_seqlens_k
                 window_size = (-1, -1)
 
+
             if self.enable_duo_attention:
-                retrieval_idx = self.duo_attn_retrieval_idx
-                streaming_idx = self.duo_attn_streaming_idx
+                # retrieval_idx = self.duo_attn_retrieval_idx
+                # streaming_idx = self.duo_attn_streaming_idx
+
+                attn = layer.self_attn if hasattr(layer, 'self_attn') else layer
+
+                retrieval_idx = attn.duo_attn_retrieval_idx
+                streaming_idx = attn.duo_attn_streaming_idx
+
+                print(f"retrieval_idx: {retrieval_idx}")
+                print(f"streaming_idx: {streaming_idx}")
 
                 q_view = q.contiguous().view(-1, layer.tp_q_head_num, layer.head_dim)
 

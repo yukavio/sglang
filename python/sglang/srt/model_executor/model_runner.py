@@ -1902,7 +1902,7 @@ class ModelRunner:
         print(f"Sink size: {sink_size}")
         print(f"Recent size: {recent_size}")
 
-        # self._reorder_weights_for_duo_attn(full_attention_heads, sink_size, recent_size)
+        self._reorder_weights_for_duo_attn(full_attention_heads, sink_size, recent_size)
 
 
     def _reorder_weights_for_duo_attn(self, full_attention_heads, sink_size, recent_size):
@@ -1920,66 +1920,98 @@ class ModelRunner:
 
         for i, layer in enumerate(layers):
             attn = layer.self_attn
-            pattern = full_attention_heads[i]
 
-            full_idx = [h for h, val in enumerate(pattern) if val > 0.5]
-            stream_idx = [h for h, val in enumerate(pattern) if val <= 0.5]
+            kv_pattern = torch.tensor(
+                full_attention_heads[i],
+                device=device,
+                dtype=torch.float32,
+            )
 
-            num_full = len(full_idx)
-            num_stream = len(stream_idx)
+            print(f"DEBUG: layer type: {type(layer)}")
+            print(f"Layer {i}:")
+            print(f"  Original qkv_proj.weight.shape: {attn.qkv_proj.weight.shape}")
+            print(f"  Expected output dim: {num_heads*head_dim + 2*num_kv_heads*head_dim}")
 
-            new_q_order = full_idx + stream_idx
-            new_q_indices = torch.tensor(new_q_order, device=device, dtype=torch.long)
-
-            new_kv_order = []
-            seen_kv = set()
-            for q_h in new_q_order:
-                kv_h = q_h // group_size
-                if kv_h not in seen_kv:
-                    new_kv_order.append(kv_h)
-                    seen_kv.add(kv_h)
-            new_kv_indices = torch.tensor(new_kv_order, device=device, dtype=torch.long)
+            assert len(kv_pattern) == num_kv_heads, \
+                f"Layer {i} has {len(kv_pattern)} heads, expected {num_heads}"
 
             qkv_weight = attn.qkv_proj.weight.data
-            total_dim = qkv_weight.shape[0]
+            q_size = num_heads * head_dim
+            kv_size = num_kv_heads * head_dim
+
+            w_q = qkv_weight[:q_size, :]
+
+            q_pattern_expand = torch.repeat_interleave(
+                kv_pattern,
+                repeats=group_size * head_dim
+            )
             
-            q_end = num_heads * head_dim
-            k_end = q_end + num_kv_heads * head_dim
+            assert len(q_pattern_expand) == q_size, \
+                f"Layer {i} has {len(q_pattern_expand)} heads, expected {q_size}"
+
+            full_mask = q_pattern_expand > 0.5
+            w_q_full = w_q[full_mask, :]
+            w_q_stream = w_q[~full_mask, :]
+            w_q_new = torch.cat([w_q_full, w_q_stream], dim=0)
+
+            w_k = qkv_weight[q_size:q_size+kv_size, :]
+
+            kv_pattern_expand = torch.repeat_interleave(
+                kv_pattern,
+                repeats=head_dim
+            )
             
-            w_q = qkv_weight[:q_end, :]
-            w_k = qkv_weight[q_end:k_end, :]
-            w_v = qkv_weight[k_end:, :]
+            assert len(kv_pattern_expand) == kv_size, \
+                f"Layer {i} has {len(kv_pattern_expand)} heads, expected {kv_size}"
+                
+            full_mask_k = kv_pattern_expand > 0.5
+            w_k_full = w_k[full_mask_k, :]
+            w_k_stream = w_k[~full_mask_k, :]
+            w_k_new = torch.cat([w_k_full, w_k_stream], dim=0)
 
-            q_perm_idx = []
-            for h in new_q_indices:
-                start = h * head_dim
-                q_perm_idx.append(torch.arange(start, start + head_dim, device=device))
-            q_perm_idx = torch.cat(q_perm_idx)
-            w_q_new = w_q[q_perm_idx] # Row select
+            w_v = qkv_weight[q_size+kv_size:q_size+2*kv_size, :]
 
-            kv_perm_idx = []
-            for h in new_kv_indices:
-                start = h * head_dim
-                kv_perm_idx.append(torch.arange(start, start + head_dim, device=device))
-            kv_perm_idx = torch.cat(kv_perm_idx)
-            w_k_new = w_k[kv_perm_idx]
-            w_v_new = w_v[kv_perm_idx]
+            v_pattern_expand = torch.repeat_interleave(
+                kv_pattern,
+                repeats=head_dim
+            )
 
-            attn.qkv_proj.weight.data = torch.cat([w_q_new, w_k_new, w_v_new], dim=0)
+            assert len(v_pattern_expand) == kv_size, \
+                f"Layer {i} has {len(v_pattern_expand)} heads, expected {kv_size}"
+
+            full_mask_v = v_pattern_expand > 0.5
+            w_v_full = w_v[full_mask_v, :]
+            w_v_stream = w_v[~full_mask_v, :]
+            w_v_new = torch.cat([w_v_full, w_v_stream], dim=0)
+
+            new_qkv_weight = torch.cat([w_q_new, w_k_new, w_v_new], dim=0)
+
+            assert new_qkv_weight.shape == attn.qkv_proj.weight.shape, \
+                f"Layer {i} has {new_qkv_weight.shape} weights, expected {attn.qkv_proj.weight.shape}"
+
+            attn.qkv_proj.weight.data = new_qkv_weight
 
             o_weight = attn.o_proj.weight.data
-            w_o_new = o_weight[:, q_perm_idx] # Column select
-            attn.o_proj.weight.data = w_o_new
 
-            attn.duo_attn_retrieval_idx = slice(0, num_full)
-            attn.duo_attn_streaming_idx = slice(num_full, num_heads)
+            o_full = o_weight[:, full_mask]
+            o_stream = o_weight[:, ~full_mask]
+            o_new = torch.cat([o_full, o_stream], dim=1)
+            attn.o_proj.weight.data = o_new
 
+            num_full_q = full_mask.sum().item()
+            num_stream_q = (~full_mask).sum().item()
+            num_full_kv = (kv_pattern > 0.5).sum().item()
+            num_stream_kv = (kv_pattern <= 0.5).sum().item()
+
+            print(f"Layer {i}:")
+            print(f"  Full: {num_full_q}/{num_heads} Q heads, {num_full_kv}/{num_kv_heads} KV heads")
+            print(f"  Stream: {num_stream_q}/{num_heads} Q heads, {num_stream_kv}/{num_kv_heads} KV heads")
+
+            attn.duo_attn_retrieval_idx = slice(0, num_full_q)
+            attn.duo_attn_streaming_idx = slice(num_full_q, num_heads)
             attn.duo_attn_sink_size = sink_size
             attn.duo_attn_recent_size = recent_size
-
             attn.enable_duo_attention = True
-
-        print("Reordered weights for DuoAttention")
 
 
 def _model_load_weights_direct(model, named_tensors: List[Tuple[str, torch.Tensor]]):

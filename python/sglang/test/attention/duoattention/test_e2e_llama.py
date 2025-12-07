@@ -52,11 +52,11 @@ def main():
             "--context-length", "32000",
 
             # DuoAttention Args
-            # "--enable-duo-attention",
-            # "--duo-attn-sink-size", str(sink_size),
-            # "--duo-attn-streaming-window", "128", # 注意：这里你保留了硬编码 128
-            # "--duo-attn-retrieval-idx", retrieval_heads_str,
-            # "--duo-attn-streaming-idx", str(recent_size),
+            "--enable-duo-attention",
+            "--duo-attn-sink-size", str(sink_size),
+            "--duo-attn-streaming-window", "128", # 注意：这里你保留了硬编码 128
+            "--duo-attn-retrieval-idx", retrieval_heads_str,
+            "--duo-attn-streaming-idx", str(recent_size),
         ]
 
         # ==========================================
