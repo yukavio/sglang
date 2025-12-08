@@ -41,3 +41,33 @@ def sparsify_attention_heads(
     full_attention_heads = (full_attention_heads >= threshold).astype(float)
     sparsity = 1 - np.mean(full_attention_heads)
     return full_attention_heads, sparsity
+
+
+def count_attention_head_types(
+    full_attention_heads: np.ndarray,
+    threshold: float = 0.5
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    统计每个 layer 中 full attention heads 和 streaming attention heads 的数量。
+    
+    Args:
+        full_attention_heads: 二维数组，形状为 [num_layers, num_heads]，
+                             每个值表示该 head 是 full attention 的概率
+        threshold: 阈值，用于判断是 full attention 还是 streaming attention。
+                   如果概率值 >= threshold，则认为是 full attention head
+    
+    Returns:
+        full_heads_count: 一维数组，每个值表示每个 layer 的 full attention heads 数量
+        streaming_heads_count: 一维数组，每个值表示每个 layer 的 streaming attention heads 数量
+    """
+    # 将概率值转换为二值判断：>= threshold 为 full attention (1)，否则为 streaming attention (0)
+    is_full_attention = (full_attention_heads >= threshold).astype(int)
+    
+    # 统计每个 layer 的 full attention heads 数量（即值为 1 的数量）
+    full_heads_count = np.sum(is_full_attention, axis=1)
+    
+    # 统计每个 layer 的 streaming attention heads 数量（即值为 0 的数量）
+    streaming_heads_count = full_attention_heads.shape[1] - full_heads_count
+    
+    return full_heads_count, streaming_heads_count
+

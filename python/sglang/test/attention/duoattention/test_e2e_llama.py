@@ -8,7 +8,11 @@ from sglang.test.test_utils import (
     CustomTestCase,
     popen_launch_server,
 )
-from sglang.test.attention.duoattention.utils import load_attn_pattern, sparsify_attention_heads
+from sglang.test.attention.duoattention.utils import (
+    load_attn_pattern, 
+    sparsify_attention_heads,
+    count_attention_head_types
+)
 
 
 ROOT_PATH = "/mnt/cephfs/chengqi/"
@@ -31,9 +35,14 @@ def main():
             full_attention_heads, None, sparsity
         )
 
+        full_heads_count, streaming_heads_count = count_attention_head_types(
+            full_attention_heads
+        )
 
         print(f"Computed DuoAttention sparsity: {final_sparsity}")
         print(f"Sparsified attention heads: {full_attention_heads}")
+        print(f"Full heads count: {full_heads_count}")
+        print(f"Streaming heads count: {streaming_heads_count}")
 
         # 将 list 转为字符串
         # retrieval_heads_str = ",".join(map(str, full_attention_heads))

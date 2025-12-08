@@ -353,6 +353,8 @@ class FlashAttentionBackend(AttentionBackend):
         # self.duo_attn_retrieval_idx = model_runner.server_args.duo_attn_retrieval_idx
         # self.duo_attn_streaming_idx = model_runner.server_args.duo_attn_streaming_idx
 
+        self.duo_attn_config = model_runner.model_config.duo_attn_config
+
         if self.sparse_attn:
             manager_config = ManagerConfig(
                 keys=model_runner.token_to_kv_pool.k_buffer,
@@ -690,10 +692,11 @@ class FlashAttentionBackend(AttentionBackend):
         sinks: Optional[torch.Tensor] = None,
     ):
 
+        layer_idx = layer.layer_id
         print(f"DEBUG: layer type = {type(layer)}")
         print(f"DEBUG: layer is RadixAttention = {type(layer).__name__ == 'RadixAttention'}")
-        print(f"DEBUG: hasattr(layer, 'self_attn') = {hasattr(layer, 'self_attn')}")
-        print(f"DEBUG: hasattr(layer, 'enable_duo_attention') = {hasattr(layer, 'enable_duo_attention')}")
+        print(f"DEBUG: layer_idx = {layer_idx}")
+        print(f"DEBUG: model_config.duo_attn_config = {self.duo_attn_config}")
         if k is not None:
             assert v is not None
             if save_kv_cache:
@@ -799,37 +802,42 @@ class FlashAttentionBackend(AttentionBackend):
                 # retrieval_idx = self.duo_attn_retrieval_idx
                 # streaming_idx = self.duo_attn_streaming_idx
 
-                attn = layer.self_attn if hasattr(layer, 'self_attn') else layer
-
-                retrieval_idx = attn.duo_attn_retrieval_idx
-                streaming_idx = attn.duo_attn_streaming_idx
+                retrieval_idx = self.duo_attn_config["retrieval_idx"][layer_idx]
+                streaming_idx = self.duo_attn_config["streaming_idx"][layer_idx]
 
                 print(f"retrieval_idx: {retrieval_idx}")
                 print(f"streaming_idx: {streaming_idx}")
 
+                num_retrieval_heads = retrieval_idx.stop - retrieval_idx.start
+                num_streaming_heads = streaming_idx.stop - streaming_idx.start
+
+
                 q_view = q.contiguous().view(-1, layer.tp_q_head_num, layer.head_dim)
 
-                q_retrieval = q_view[:, retrieval_idx, :]
-                q_streaming = q_view[:, streaming_idx, :]
+                # q_retrieval = q_view[:, retrieval_idx, :]
+                # q_streaming = q_view[:, streaming_idx, :]
+
+                q_retrieval = q_view[:, retrieval_idx.start:retrieval_idx.stop, :]
+                q_streaming = q_view[:, streaming_idx.start:streaming_idx.stop, :]
 
                 gqa_group_size = layer.tp_q_head_num // layer.tp_k_head_num
 
                 if gqa_group_size == 1:
-                    kv_retrieval_idx = retrieval_idx
-                    kv_streaming_idx = streaming_idx
+                    kv_retrieval_start = retrieval_idx.start
+                    kv_retrieval_stop = retrieval_idx.stop
+                    kv_streaming_start = streaming_idx.start
+                    kv_streaming_stop = streaming_idx.stop
                 else:
-                    kv_retrieval_idx = [
-                        i // gqa_group_size for i in retrieval_idx[::gqa_group_size]
-                    ]
-                    kv_streaming_idx = [
-                        i // gqa_group_size for i in streaming_idx[::gqa_group_size]
-                    ]
+                    kv_retrieval_start = retrieval_idx.start // gqa_group_size
+                    kv_retrieval_stop = retrieval_idx.stop // gqa_group_size
+                    kv_streaming_start = streaming_idx.start // gqa_group_size
+                    kv_streaming_stop = streaming_idx.stop // gqa_group_size
 
-                k_cache_ret = key_cache[:, kv_retrieval_idx, :]
-                v_cache_ret = value_cache[:, kv_retrieval_idx, :]
+                k_cache_ret = key_cache[:, :, kv_retrieval_start:kv_retrieval_stop, :]
+                v_cache_ret = value_cache[:, :, kv_retrieval_start:kv_retrieval_stop, :]
 
-                k_cache_streaming = key_cache[:, kv_streaming_idx, :]
-                v_cache_streaming = value_cache[:, kv_streaming_idx, :]
+                k_cache_streaming = key_cache[:, :, kv_streaming_start:kv_streaming_stop, :]
+                v_cache_streaming = value_cache[:, :, kv_streaming_start:kv_streaming_stop, :]
 
                 o_retrieval, lse_retrieval, *rest_retrieval = flash_attn_with_kvcache(
                     q=q_retrieval,
@@ -858,7 +866,8 @@ class FlashAttentionBackend(AttentionBackend):
                     k=k_cache_streaming,
                     v=v_cache_streaming,
                     cu_seqlens_q=cu_seqlens_q,
-                    cu_seqlens_k=cu_seqlens_k,
+                    # cu_seqlens_k=cu_seqlens_k,
+                    cu_seqlens_k=None,
                     seqused_k=cache_seqlens,
                     page_table=page_table,
                     softmax_scale=layer.scaling,
@@ -876,8 +885,10 @@ class FlashAttentionBackend(AttentionBackend):
                 )
 
                 o = torch.empty_like(q_view)
-                o[:, retrieval_idx, :] = o_retrieval
-                o[:, streaming_idx, :] = o_streaming
+                o[:, retrieval_idx.start:retrieval_idx.stop, :] = o_retrieval
+                o[:, streaming_idx.start:streaming_idx.stop, :] = o_streaming
+
+                result = o
             
             else:
                 result = flash_attn_with_kvcache(
@@ -899,7 +910,7 @@ class FlashAttentionBackend(AttentionBackend):
                     **kwargs,
                 )
 
-            if use_cascade_attn:
+            if use_cascade_attn and not self.enable_duo_attention:
                 o, softmax_lse, *rest = result
                 o_expand, softmax_lse_expand, *rest_expand = flash_attn_with_kvcache(
                     q=q.contiguous().view(-1, layer.tp_q_head_num, layer.head_dim),

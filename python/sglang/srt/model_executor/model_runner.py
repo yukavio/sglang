@@ -1907,6 +1907,13 @@ class ModelRunner:
 
     def _reorder_weights_for_duo_attn(self, full_attention_heads, sink_size, recent_size):
         model_config = self.model_config
+        model_config.duo_attn_config = {
+            "retrieval_idx": [],
+            "streaming_idx": [],
+            "sink_size": sink_size,
+            "recent_size": recent_size,
+            "enable_duo_attention": True,
+        }
         device = self.device
 
         num_heads = model_config.num_attention_heads
@@ -1927,7 +1934,6 @@ class ModelRunner:
                 dtype=torch.float32,
             )
 
-            print(f"DEBUG: layer type: {type(layer)}")
             print(f"Layer {i}:")
             print(f"  Original qkv_proj.weight.shape: {attn.qkv_proj.weight.shape}")
             print(f"  Expected output dim: {num_heads*head_dim + 2*num_kv_heads*head_dim}")
@@ -2003,15 +2009,17 @@ class ModelRunner:
             num_full_kv = (kv_pattern > 0.5).sum().item()
             num_stream_kv = (kv_pattern <= 0.5).sum().item()
 
-            print(f"Layer {i}:")
-            print(f"  Full: {num_full_q}/{num_heads} Q heads, {num_full_kv}/{num_kv_heads} KV heads")
-            print(f"  Stream: {num_stream_q}/{num_heads} Q heads, {num_stream_kv}/{num_kv_heads} KV heads")
+            num_full_heads = num_full_q // head_dim 
+            num_stream_heads = num_stream_q // head_dim
 
-            attn.duo_attn_retrieval_idx = slice(0, num_full_q)
-            attn.duo_attn_streaming_idx = slice(num_full_q, num_heads)
-            attn.duo_attn_sink_size = sink_size
-            attn.duo_attn_recent_size = recent_size
-            attn.enable_duo_attention = True
+
+            print(f"Layer {i}:")
+            print(f"  Full: {num_full_heads}/{num_heads} Q heads, {num_full_kv}/{num_kv_heads} KV heads")
+            print(f"  Stream: {num_stream_heads}/{num_heads} Q heads, {num_stream_kv}/{num_kv_heads} KV heads")
+
+
+            model_config.duo_attn_config["retrieval_idx"].append(slice(0, num_full_heads))
+            model_config.duo_attn_config["streaming_idx"].append(slice(num_full_heads, num_heads))
 
 
 def _model_load_weights_direct(model, named_tensors: List[Tuple[str, torch.Tensor]]):
