@@ -1919,105 +1919,85 @@ class ModelRunner:
         num_heads = model_config.num_attention_heads
         num_kv_heads = model_config.num_key_value_heads
         head_dim = model_config.hidden_size // num_heads
-        group_size = num_heads // num_kv_heads
+        gqa_group_size = num_heads // num_kv_heads
+        hidden_size = model_config.hidden_size
 
-        print(f"Applying DuoAttention reordering for {num_heads} heads, {num_kv_heads} kv heads, {head_dim} head dim, {group_size} group size")
+        # print(f"Applying DuoAttention reordering for {num_heads} heads, {num_kv_heads} kv heads, {head_dim} head dim, {group_size} group size")
 
         layers = self.model.model.layers
 
         for i, layer in enumerate(layers):
             attn = layer.self_attn
 
-            kv_pattern = torch.tensor(
-                full_attention_heads[i],
-                device=device,
-                dtype=torch.float32,
-            )
-
-            print(f"Layer {i}:")
-            print(f"  Original qkv_proj.weight.shape: {attn.qkv_proj.weight.shape}")
-            print(f"  Expected output dim: {num_heads*head_dim + 2*num_kv_heads*head_dim}")
-
+            # --- 1. Define Head Patterns and Indices ---
+            # kv_pattern defines which KV head group is full (1) or streaming (0)
+            kv_pattern = torch.tensor(full_attention_heads[i], device=device, dtype=torch.int)
             assert len(kv_pattern) == num_kv_heads, \
-                f"Layer {i} has {len(kv_pattern)} heads, expected {num_heads}"
+                f"Layer {i}: Pattern length ({len(kv_pattern)}) must match num_kv_heads ({num_kv_heads})"
 
-            qkv_weight = attn.qkv_proj.weight.data
-            q_size = num_heads * head_dim
-            kv_size = num_kv_heads * head_dim
-
-            w_q = qkv_weight[:q_size, :]
-
-            q_pattern_expand = torch.repeat_interleave(
-                kv_pattern,
-                repeats=group_size * head_dim
-            )
+            # Get the indices for full and streaming KV heads
+            kv_full_indices = torch.where(kv_pattern == 1)[0]
+            kv_stream_indices = torch.where(kv_pattern == 0)[0]
             
-            assert len(q_pattern_expand) == q_size, \
-                f"Layer {i} has {len(q_pattern_expand)} heads, expected {q_size}"
+            # Expand the KV pattern to the Q heads
+            q_head_pattern = torch.repeat_interleave(kv_pattern, repeats=gqa_group_size)
+            q_full_indices = torch.where(q_head_pattern == 1)[0]
+            q_stream_indices = torch.where(q_head_pattern == 0)[0]
 
-            full_mask = q_pattern_expand > 0.5
-            w_q_full = w_q[full_mask, :]
-            w_q_stream = w_q[~full_mask, :]
-            w_q_new = torch.cat([w_q_full, w_q_stream], dim=0)
+            # --- 2. Reorder Q, K, V Projection Weights ---
+            # For models with a combined QKV projection matrix (e.g., Llama)
+            if hasattr(attn, 'qkv_proj'):
+                qkv_weight = attn.qkv_proj.weight.data
+                q_size = num_heads * head_dim
+                k_size = num_kv_heads * head_dim
+                v_size = num_kv_heads * head_dim
 
-            w_k = qkv_weight[q_size:q_size+kv_size, :]
+                # --- Reorder Q weights ---
+                w_q = qkv_weight[:q_size, :]
+                w_q_reshaped = w_q.view(num_heads, head_dim, hidden_size)
+                w_q_reordered = torch.cat([
+                    w_q_reshaped[q_full_indices],
+                    w_q_reshaped[q_stream_indices]
+                ], dim=0).view(q_size, hidden_size)
 
-            kv_pattern_expand = torch.repeat_interleave(
-                kv_pattern,
-                repeats=head_dim
-            )
-            
-            assert len(kv_pattern_expand) == kv_size, \
-                f"Layer {i} has {len(kv_pattern_expand)} heads, expected {kv_size}"
+                # --- Reorder K weights ---
+                w_k = qkv_weight[q_size : q_size + k_size, :]
+                w_k_reshaped = w_k.view(num_kv_heads, head_dim, hidden_size)
+                w_k_reordered = torch.cat([
+                    w_k_reshaped[kv_full_indices],
+                    w_k_reshaped[kv_stream_indices]
+                ], dim=0).view(k_size, hidden_size)
+
+                # --- Reorder V weights ---
+                w_v = qkv_weight[q_size + k_size :, :]
+                w_v_reshaped = w_v.view(num_kv_heads, head_dim, hidden_size)
+                w_v_reordered = torch.cat([
+                    w_v_reshaped[kv_full_indices],
+                    w_v_reshaped[kv_stream_indices]
+                ], dim=0).view(v_size, hidden_size)
                 
-            full_mask_k = kv_pattern_expand > 0.5
-            w_k_full = w_k[full_mask_k, :]
-            w_k_stream = w_k[~full_mask_k, :]
-            w_k_new = torch.cat([w_k_full, w_k_stream], dim=0)
+                # Combine back into a single QKV weight
+                new_qkv_weight = torch.cat([w_q_reordered, w_k_reordered, w_v_reordered], dim=0)
+                attn.qkv_proj.weight.data = new_qkv_weight
 
-            w_v = qkv_weight[q_size+kv_size:q_size+2*kv_size, :]
+            # For models with separate Q, K, V projections (add elif blocks if needed)
+            # elif hasattr(attn, 'q_proj') and hasattr(attn, 'k_proj') and hasattr(attn, 'v_proj'):
+            #     # Implement reordering for separate weights here
+            #     pass
 
-            v_pattern_expand = torch.repeat_interleave(
-                kv_pattern,
-                repeats=head_dim
-            )
-
-            assert len(v_pattern_expand) == kv_size, \
-                f"Layer {i} has {len(v_pattern_expand)} heads, expected {kv_size}"
-
-            full_mask_v = v_pattern_expand > 0.5
-            w_v_full = w_v[full_mask_v, :]
-            w_v_stream = w_v[~full_mask_v, :]
-            w_v_new = torch.cat([w_v_full, w_v_stream], dim=0)
-
-            new_qkv_weight = torch.cat([w_q_new, w_k_new, w_v_new], dim=0)
-
-            assert new_qkv_weight.shape == attn.qkv_proj.weight.shape, \
-                f"Layer {i} has {new_qkv_weight.shape} weights, expected {attn.qkv_proj.weight.shape}"
-
-            attn.qkv_proj.weight.data = new_qkv_weight
-
+            # --- 3. Reorder O Projection Weights ---
             o_weight = attn.o_proj.weight.data
+            # Input to o_proj is concatenation of head outputs. We need to reorder the columns.
+            o_weight_reshaped = o_weight.view(hidden_size, num_heads, head_dim)
+            o_weight_reordered = torch.cat([
+                o_weight_reshaped[:, q_full_indices, :],
+                o_weight_reshaped[:, q_stream_indices, :]
+            ], dim=1).view(hidden_size, q_size)
+            attn.o_proj.weight.data = o_weight_reordered
 
-            o_full = o_weight[:, full_mask]
-            o_stream = o_weight[:, ~full_mask]
-            o_new = torch.cat([o_full, o_stream], dim=1)
-            attn.o_proj.weight.data = o_new
-
-            num_full_q = full_mask.sum().item()
-            num_stream_q = (~full_mask).sum().item()
-            num_full_kv = (kv_pattern > 0.5).sum().item()
-            num_stream_kv = (kv_pattern <= 0.5).sum().item()
-
-            num_full_heads = num_full_q // head_dim 
-            num_stream_heads = num_stream_q // head_dim
-
-
-            print(f"Layer {i}:")
-            print(f"  Full: {num_full_heads}/{num_heads} Q heads, {num_full_kv}/{num_kv_heads} KV heads")
-            print(f"  Stream: {num_stream_heads}/{num_heads} Q heads, {num_stream_kv}/{num_kv_heads} KV heads")
-
-
+            # --- 4. Store the new head indices for the attention kernel ---
+            num_full_heads = len(q_full_indices)
+            
             model_config.duo_attn_config["retrieval_idx"].append(slice(0, num_full_heads))
             model_config.duo_attn_config["streaming_idx"].append(slice(num_full_heads, num_heads))
 
