@@ -186,7 +186,7 @@ def test_needle_in_haystack(base_url):
 
     context = "A quick brown fox jumps over the lazy dog. \n"
     
-    target_total_len = 1000
+    target_total_len = 5000
     insertion_point = 0.5
         
     len_context_tokens = len(context) / 4 
@@ -256,8 +256,6 @@ def main():
         print(f"Full heads count: {full_heads_count}")
         print(f"Streaming heads count: {streaming_heads_count}")
 
-        # 将 list 转为字符串
-        # retrieval_heads_str = ",".join(map(str, full_attention_heads))
         retrieval_heads_str = ";".join(
             ",".join(str(int(val)) for val in layer)
             for layer in full_attention_heads

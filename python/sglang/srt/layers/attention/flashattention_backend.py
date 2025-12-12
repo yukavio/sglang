@@ -798,19 +798,13 @@ class FlashAttentionBackend(AttentionBackend):
 
 
             if self.enable_duo_attention:
-                # print(f"DEBUG: enable_duo_attention = True")
                 layer_idx = layer.layer_id
                 recent_size = self.duo_attn_config["recent_size"]
                 sink_size = self.duo_attn_config["sink_size"]
 
-                # print(f"DEBUG: layer_idx = {layer_idx}")
-                # print(f"DEBUG: model_config.duo_attn_config = {self.duo_attn_config}")
-
                 retrieval_idx = self.duo_attn_config["retrieval_idx"][layer_idx]
                 streaming_idx = self.duo_attn_config["streaming_idx"][layer_idx]
 
-                # print(f"retrieval_idx: {retrieval_idx}")
-                # print(f"streaming_idx: {streaming_idx}")
 
                 num_retrieval_heads = retrieval_idx.stop - retrieval_idx.start
                 num_streaming_heads = streaming_idx.stop - streaming_idx.start
@@ -819,45 +813,27 @@ class FlashAttentionBackend(AttentionBackend):
 
 
                 if num_retrieval_heads == 0:
-                    # result, _ = cute_streaming_sparse_attn_with_kv_cache(
-                    #     q=q.contiguous().view(-1, layer.tp_q_head_num, layer.head_dim),
-                    #     k=key_cache,
-                    #     v=value_cache,
-                    #     cu_seqlens_q=cu_seqlens_q,
-                    #     cu_seqlens_k=None,
-                    #     seqused_k=cache_seqlens,
-                    #     page_table=page_table,
-                    #     softmax_scale=layer.scaling,
-                    #     causal=causal,
-                    #     window_size=(recent_size, 0),
-                    #     learnable_sink=None,
-                    #     sink_size=sink_size,
-                    #     enable_streaming=True,
-                    #     softcap=layer.logit_cap,
-                    #     pack_gqa=True if gqa_group_size > 1 else False,
-                    #     groupwise=False,
-                    #     position_ids=None,
-                    #     m_block_size=128,
-                    #     n_block_size=128,
-                    # )
-
-                    result = flash_attn_with_kvcache(
+                    result, _ = cute_streaming_sparse_attn_with_kv_cache(
                         q=q.contiguous().view(-1, layer.tp_q_head_num, layer.head_dim),
-                        k_cache=key_cache,
-                        v_cache=value_cache,
-                        page_table=page_table,
-                        cache_seqlens=cache_seqlens,
+                        k=key_cache,
+                        v=value_cache,
                         cu_seqlens_q=cu_seqlens_q,
-                        cu_seqlens_k_new=cu_seqlens_k if not use_local_attn else None,
-                        max_seqlen_q=max_seqlen_q,
+                        cu_seqlens_k=None,
+
+                        seqused_k=cache_seqlens,
+                        page_table=page_table,
                         softmax_scale=layer.scaling,
                         causal=True,
-                        window_size=window_size,
+                        window_size=(recent_size - 1, 0),
+                        learnable_sink=None,
+                        sink_size=sink_size,
+                        enable_streaming=True,
                         softcap=layer.logit_cap,
-                        k_descale=k_descale,
-                        v_descale=v_descale,
-                        return_softmax_lse=use_cascade_attn,
-                        **kwargs,
+                        pack_gqa=True if gqa_group_size > 1 else False,
+                        groupwise=False,
+                        position_ids=None,
+                        m_block_size=128,
+                        n_block_size=self.page_size,
                     )
                 elif num_streaming_heads == 0:
                     result = flash_attn_with_kvcache(
@@ -900,29 +876,8 @@ class FlashAttentionBackend(AttentionBackend):
                     k_cache_streaming = key_cache[:, :, kv_streaming_start:kv_streaming_stop, :]
                     v_cache_streaming = value_cache[:, :, kv_streaming_start:kv_streaming_stop, :]
 
-                    k_streaming_contiguous = gather_from_paged_cache(
-                        paged_cache=k_cache_streaming,
-                        page_table=page_table,
-                        cu_seqlens=cu_seqlens_q,
-                        max_seqlen=max_seqlen_q,
-                    )
 
-                    v_streaming_contiguous = gather_from_paged_cache(
-                        paged_cache=v_cache_streaming,
-                        page_table=page_table,
-                        cu_seqlens=cu_seqlens_q,
-                        max_seqlen=max_seqlen_q,
-                    )
-
-                    num_streaming_heads = q_streaming.shape[1]
-                    head_mask_type = torch.full(
-                        (num_streaming_heads,),
-                        -1,
-                        dtype=torch.int8,
-                        device=q.device
-                    )
-
-                    o_retrieval, lse_retrieval, *rest_retrieval = flash_attn_with_kvcache(
+                    o_retrieval, _, *_ = flash_attn_with_kvcache(
                         q=q_retrieval,
                         k_cache=k_cache_ret,
                         v_cache=v_cache_ret,
@@ -943,13 +898,7 @@ class FlashAttentionBackend(AttentionBackend):
                         **kwargs,
                     )
 
-
                     # For paged KV cache, n_block_size must match the page size in the cache layout
-                    # key_cache shape: (num_pages, page_size, num_heads, head_dim)
-                    # So n_block_size should be key_cache.shape[1]
-                    page_size = key_cache.shape[1]
-                    # print(f"DEBUG: page_size = {page_size}")
-
                     o_streaming, _ = cute_streaming_sparse_attn_with_kv_cache(
                         q=q_streaming,
                         k=k_cache_streaming,
@@ -970,40 +919,12 @@ class FlashAttentionBackend(AttentionBackend):
                         groupwise=False,
                         position_ids=None,
                         m_block_size=128,
-                        n_block_size=page_size,
+                        n_block_size=self.page_size,
                     )
-
-                    ref_o_streaming, _ = block_streaming_attention_ref(
-                        q=q_streaming,
-                        k=k_streaming_contiguous,
-                        v=v_streaming_contiguous,
-
-                        cu_seqlens_q=cu_seqlens_q,
-                        cu_seqlens_k=cu_seqlens_q,
-
-                        max_seqlen_q=max_seqlen_q,
-                        max_seqlen_k=max_seqlen_q,
-
-                        head_mask_type=head_mask_type,
-                        sink_size=sink_size,
-                        local_size=recent_size,
-                        is_causal=True,
-                    )
-
-
-                    # Compare o_streaming and ref_o_streaming
-                    # print(f"o_streaming: {o_streaming}")
-                    # print(f"ref_o_streaming: {ref_o_streaming}")
-                    # print(f"o_streaming - ref_o_streaming: {o_streaming - ref_o_streaming}")
-                    # torch.testing.assert_close(o_streaming, ref_o_streaming, atol=1e-2, rtol=1e-2)
-
-                    print(f"DEBUG: o_streaming shape: {o_streaming.shape}")
 
                     o = torch.empty_like(q_view)
                     o[:, retrieval_idx.start:retrieval_idx.stop, :] = o_retrieval
                     o[:, streaming_idx.start:streaming_idx.stop, :] = o_streaming
-                    # o[:, streaming_idx.start:streaming_idx.stop, :] = ref_o_streaming
-
                     result = o
             
             else:
