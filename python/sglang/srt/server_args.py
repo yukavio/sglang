@@ -306,8 +306,6 @@ class ServerArgs:
     enable_duo_attention: bool = False
     duo_attn_sink_size: int = 4
     duo_attn_streaming_window: int = 128
-    # duo_attn_retrieval_idx: int = 0
-    # duo_attn_streaming_idx: int = 1
     duo_attn_retrieval_idx: List[List[int]] = dataclasses.field(default_factory=list)
     duo_attn_streaming_idx: int = 0
 

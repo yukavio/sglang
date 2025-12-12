@@ -31,10 +31,6 @@ from sglang.srt.sparse_attention.updater.flashattention.cache_updater import (
     LServerUpdaterFlashAttentionBackend,
 )
 
-from sglang.test.attention.duoattention.streaming_attention_ref import (
-    block_streaming_attention_ref,
-    gather_from_paged_cache,
-)
 
 
 @dataclass
