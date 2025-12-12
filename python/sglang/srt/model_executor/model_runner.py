@@ -729,7 +729,6 @@ class ModelRunner:
 
         if self.server_args.enable_duo_attention:
             try:
-                logger.info(f"Initializing DuoAttention (Retrieval indices: {self.server_args.duo_attn_retrieval_idx}, Streaming index: {self.server_args.duo_attn_streaming_idx})")
                 self._init_duo_attention()
             except Exception as e:
                 logger.error(f"Failed to initialize DuoAttention: {e}")
