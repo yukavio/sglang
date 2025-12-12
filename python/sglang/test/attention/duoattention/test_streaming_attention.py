@@ -495,10 +495,12 @@ def test_paged_chunked_streaming_attention(
 @pytest.mark.skipif(
     not is_hopper(), reason="Streaming attention requires Hopper GPU (SM 9.0)"
 )
-def test_streaming_attention_gqa():
+@pytest.mark.parametrize("seqlen", [512, 1024, 2048, 4096])
+def test_streaming_attention_gqa(
+    seqlen
+):
     device = torch.device("cuda")
-    batch_size=2
-    seqlen=128
+    batch_size=1
     page_size=32
     sink_size=8
     local_size=16

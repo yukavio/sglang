@@ -152,10 +152,10 @@ class BlockInfo:
             m_idx_max_val = n_idx_max_limit
 
             # Handle GQA packing if necessary
-            if cutlass.const_expr(self.qhead_per_kvhead_packgqa > 1):
-                m_idx_max_val = cute.ceil_div(
-                    m_idx_max_val, self.qhead_per_kvhead_packgqa
-                )
+            # if cutlass.const_expr(self.qhead_per_kvhead_packgqa > 1):
+            #     m_idx_max_val = cute.ceil_div(
+            #         m_idx_max_val, self.qhead_per_kvhead_packgqa
+            #     )
 
             # Apply offset (0 for absolute pos, seqlen_diff for relative pos)
             n_idx_max = m_idx_max_val + offset
@@ -171,8 +171,8 @@ class BlockInfo:
             # The leftmost K position (excluding sink) that needs to be processed.
             m_idx_min_val = n_idx_min_limit
 
-            if cutlass.const_expr(self.qhead_per_kvhead_packgqa > 1):
-                m_idx_min_val = m_idx_min_val // self.qhead_per_kvhead_packgqa
+            # if cutlass.const_expr(self.qhead_per_kvhead_packgqa > 1):
+            #     m_idx_min_val = m_idx_min_val // self.qhead_per_kvhead_packgqa
 
             # Apply offset
             n_idx = m_idx_min_val + offset

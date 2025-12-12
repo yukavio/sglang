@@ -428,6 +428,9 @@ class AttentionMask:
                 # For regular attention, calculate it from the block index
                 q_pos = m_block * self.m_block_size + q_coord_in_block
 
+                if cutlass.const_expr(self.qhead_per_kvhead_packgqa > 1):
+                    q_pos = q_pos // self.qhead_per_kvhead_packgqa
+
             # Step 2: Determine the absolute key position (k_pos)
             k_pos = n_block * self.n_block_size + k_coord_in_block
 
