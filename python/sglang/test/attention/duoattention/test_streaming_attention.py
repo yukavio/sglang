@@ -490,3 +490,138 @@ def test_paged_chunked_streaming_attention(
     print(
         f"Paged streaming attention test passed for seqlen={seqlen}, dtype={dtype}, batch_size={batch_size}!"
     )
+
+
+@pytest.mark.skipif(
+    not is_hopper(), reason="Streaming attention requires Hopper GPU (SM 9.0)"
+)
+def test_streaming_attention_gqa():
+    device = torch.device("cuda")
+    batch_size=2
+    seqlen=128
+    page_size=32
+    sink_size=8
+    local_size=16
+    gqa_group_size=2
+    num_heads = 4  # must be divisible by gqa_group_size
+    num_kv_heads = num_heads // gqa_group_size
+    head_dim = 64
+    dtype = torch.bfloat16
+
+    # Q: [B, seqlen, num_heads, head_dim]
+    q = torch.randn(batch_size, seqlen, num_heads, head_dim, dtype=dtype, device=device)
+    # K/V: [B, seqlen, num_kv_heads, head_dim]
+    k = torch.randn(batch_size, seqlen, num_kv_heads, head_dim, dtype=dtype, device=device)
+    v = torch.randn(batch_size, seqlen, num_kv_heads, head_dim, dtype=dtype, device=device)
+
+    total_tokens = batch_size * seqlen
+
+    # Q: [total_tokens, num_heads, head_dim]
+    q_varlen = q.reshape(total_tokens, num_heads, head_dim)
+    # K/V: [total_tokens, num_kv_heads, head_dim]
+    k_varlen = k.reshape(total_tokens, num_kv_heads, head_dim)
+    v_varlen = v.reshape(total_tokens, num_kv_heads, head_dim)
+    cu_seqlens = torch.arange(
+        0, (batch_size + 1) * seqlen, step=seqlen, dtype=torch.int32, device=device
+    )
+
+    num_blocks_per_seq = (seqlen + page_size - 1) // page_size
+    max_num_blocks = num_blocks_per_seq * batch_size * 2
+
+    # K/V paged cache: [max_num_blocks, page_size, num_kv_heads, head_dim]
+    k_cache = torch.zeros(
+        max_num_blocks, page_size, num_kv_heads, head_dim, dtype=dtype, device=device
+    )
+    v_cache = torch.zeros(
+        max_num_blocks, page_size, num_kv_heads, head_dim, dtype=dtype, device=device
+    )
+
+    page_table = torch.zeros(
+        batch_size, num_blocks_per_seq, dtype=torch.int32, device=device
+    )
+    all_random_indices = torch.randperm(
+        max_num_blocks, device=device, dtype=torch.int32
+    )
+
+    for b in range(batch_size):
+        start_idx = b * num_blocks_per_seq
+        end_idx = start_idx + num_blocks_per_seq
+        available_indices = all_random_indices[start_idx:end_idx]
+        page_table[b] = available_indices
+
+        for i, block_idx in enumerate(available_indices):
+            start_token = i * page_size
+            end_token = min((i + 1) * page_size, seqlen)
+            valid_len = end_token - start_token
+
+            if valid_len > 0:
+                k_cache[block_idx, :valid_len, :, :] = k[b, start_token:end_token, :, :]
+                v_cache[block_idx, :valid_len, :, :] = v[b, start_token:end_token, :, :]
+
+    softmax_scale = 1.0 / math.sqrt(head_dim)
+    seqused_k = torch.full((batch_size,), seqlen, dtype=torch.int32, device=device)
+
+    out_cuda, _ = streaming_sparse_attn_func(
+        q,
+        k_cache,
+        v_cache,
+        cu_seqlens_q=None,
+        cu_seqlens_k=None,
+        seqused_q=None,
+        seqused_k=seqused_k,
+        page_table=page_table,
+        softmax_scale=softmax_scale,
+        causal=True,
+        window_size=(local_size - 1, 0),
+        learnable_sink=None,
+        sink_size=sink_size,
+        enable_streaming=True,
+        softcap=0.0,
+        pack_gqa=True,  # Enable GQA feature here
+        groupwise=False,
+        position_ids=None,
+        m_block_size=128,
+        n_block_size=page_size,
+    )
+
+    head_mask_type = torch.full((num_heads,), -1, dtype=torch.int32, device=device)
+
+    # For reference implementation, we must duplicate k/v heads for each group to match num_heads
+    # vllm/gptq-baseline does the same for GQA ref
+    expanded_k_varlen = k_varlen.repeat_interleave(gqa_group_size, dim=1)
+    expanded_v_varlen = v_varlen.repeat_interleave(gqa_group_size, dim=1)
+    # shape: [N, num_heads, head_dim]
+
+    out_ref_varlen, _ = block_streaming_attention_ref(
+        q_varlen,
+        expanded_k_varlen,
+        expanded_v_varlen,
+        cu_seqlens_q=cu_seqlens,
+        cu_seqlens_k=cu_seqlens,
+        max_seqlen_q=seqlen,
+        max_seqlen_k=seqlen,
+        head_mask_type=head_mask_type,
+        sink_size=sink_size,
+        local_size=local_size,
+        softmax_scale=softmax_scale,
+        is_causal=True,
+    )
+
+    out_ref = out_ref_varlen.reshape(batch_size, seqlen, num_heads, head_dim)
+
+    # Check output shape
+    assert out_cuda.shape == (
+        batch_size,
+        seqlen,
+        num_heads,
+        head_dim,
+    ), f"Expected shape {(batch_size, seqlen, num_heads, head_dim)}, got {out_cuda.shape}"
+
+    # Check output values
+    torch.testing.assert_close(out_cuda, out_ref, atol=5e-1, rtol=5e-1)
+
+    print(
+        f"Paged streaming attention with GQA test passed for seqlen={seqlen}, dtype={dtype}, batch_size={batch_size}, num_heads={num_heads}, gqa_group_size={gqa_group_size}!"
+    )
+
+
