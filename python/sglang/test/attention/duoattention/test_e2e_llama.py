@@ -168,6 +168,70 @@ def test_simple_generation(base_url):
     
     return test_results
 
+def test_needle_in_haystack(base_url):
+    """
+    Needle-in-Haystack 测试
+    """
+    print("\n" + "="*60)
+    print("Running Needle-in-Haystack Test...")
+    print("="*60)
+    
+
+    needle_content = (
+        "DuoAttention is an efficient framework for long-context LLM inference. "
+        "It observes that not all attention heads need full history. "
+        "It splits heads into Retrieval Heads (keeping full KV cache) and "
+        "Streaming Heads (keeping only recent tokens), significantly reducing memory usage."
+    )
+
+    context = "A quick brown fox jumps over the lazy dog. \n"
+    
+    target_total_len = 1000
+    insertion_point = 0.5
+        
+    len_context_tokens = len(context) / 4 
+    num_repetitions = int(target_total_len / len_context_tokens)
+    
+    prefix = "This is a very long story book: <book> "
+    
+    pre_context = context * int(num_repetitions * insertion_point)
+    post_context = context * int(num_repetitions * (1 - insertion_point))
+    
+    suffix = (
+        "</book>\n Based on the content of the book, please briefly tell me about DuoAttention.\nAnswer:"
+    )
+
+    prompt = prefix + pre_context + needle_content + post_context + suffix
+
+    print(f"Constructed prompt length: {len(prompt)} chars (approx {len(prompt)/4:.0f} tokens).")
+
+    payload = {
+        "text": prompt,
+        "sampling_params": {
+            "temperature": 0.0,
+            "max_new_tokens": 128,
+            "stop": ["\n", "</s>"]
+        }
+    }
+
+    print("Sending request to model...")
+    start_time = time.time()
+    response = requests.post(base_url + "/generate", json=payload).json()
+    end_time = time.time()
+
+
+    output_text = response["text"]
+    
+    print("\n" + "="*40)
+    print(f"Model Output:\n{output_text}")
+    print("="*40)
+    print(f"Latency: {end_time - start_time:.2f} seconds")
+
+    if "Retrieval Heads" in output_text and "Streaming Heads" in output_text:
+        print("\nTest Passed: Keywords found in output.")
+    else:
+        print("\nTest Failed: Keywords NOT found in output.")
+
 def main():
     server_process = None
 
@@ -235,64 +299,7 @@ def main():
         # ==========================================
         # 4. 运行 Needle-in-Haystack 测试
         # ==========================================
-        print("\n" + "="*60)
-        print("Running Needle-in-Haystack Test...")
-        print("="*60)
-
-        # needle_content = (
-        #     "DuoAttention is an efficient framework for long-context LLM inference. "
-        #     "It observes that not all attention heads need full history. "
-        #     "It splits heads into Retrieval Heads (keeping full KV cache) and "
-        #     "Streaming Heads (keeping only recent tokens), significantly reducing memory usage."
-        # )
-
-        # context = "A quick brown fox jumps over the lazy dog. \n"
-        
-        # target_total_len = 1000
-        # insertion_point = 0.5
-        
-        # len_context_tokens = len(context) / 4 
-        # num_repetitions = int(target_total_len / len_context_tokens)
-        
-        # prefix = "This is a very long story book: <book> "
-        
-        # pre_context = context * int(num_repetitions * insertion_point)
-        # post_context = context * int(num_repetitions * (1 - insertion_point))
-        
-        # suffix = (
-        #     "</book>\n Based on the content of the book, please briefly tell me about DuoAttention.\nAnswer:"
-        # )
-
-        # prompt = prefix + pre_context + needle_content + post_context + suffix
-
-        # print(f"Constructed prompt length: {len(prompt)} chars (approx {len(prompt)/4:.0f} tokens).")
-
-    #     payload = {
-    #         "text": prompt,
-    #         "sampling_params": {
-    #             "temperature": 0.0,
-    #             "max_new_tokens": 128,
-    #             "stop": ["\n", "</s>"]
-    #         }
-    #     }
-
-    #     print("Sending request to model...")
-    #     start_time = time.time()
-    #     response = requests.post(BASE_URL + "/generate", json=payload).json()
-    #     end_time = time.time()
-
-
-    #     output_text = response["text"]
-        
-    #     print("\n" + "="*40)
-    #     print(f"Model Output:\n{output_text}")
-    #     print("="*40)
-    #     print(f"Latency: {end_time - start_time:.2f} seconds")
-
-    #     if "Retrieval Heads" in output_text and "Streaming Heads" in output_text:
-    #         print("\nTest Passed: Keywords found in output.")
-    #     else:
-    #         print("\nTest Failed: Keywords NOT found in output.")
+        test_needle_in_haystack(BASE_URL)
 
     except Exception as e:
         print(f"\nAn error occurred: {e}")

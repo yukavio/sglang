@@ -286,3 +286,40 @@ def block_streaming_attention_ref(
         return output, attn_weight_lists
     else:
         return output, None
+
+
+def gather_from_paged_cache(
+    paged_cache: torch.Tensor, # Shape: [num_blocks, page_size, num_heads, head_dim]
+    page_table: torch.Tensor, # Shape: [batch_size, max_num_pages]
+    cu_seqlens: torch.Tensor, # Shape: [batch_size + 1]
+    max_seqlen: int,
+) -> torch.Tensor:
+    batch_size = page_table.shape[0]
+    page_size = paged_cache.shape[1]
+    num_heads = paged_cache.shape[2]
+    head_dim = paged_cache.shape[3]
+    device = paged_cache.device
+
+
+    contiguous_cache = torch.zeros(
+        (batch_size, max_seqlen, num_heads, head_dim),
+        dtype=paged_cache.dtype,
+        device=device
+    )
+
+    for i in range(batch_size):
+        seq_len = cu_seqlens[i + 1] - cu_seqlens[i]
+        if seq_len == 0:
+            continue
+
+        seq_page_table = page_table[i, : (seq_len + page_size - 1) // page_size]
+
+        blocks = paged_cache[seq_page_table]
+
+        flat_blocks = blocks.view(-1, num_heads, head_dim)
+        contiguous_cache[i, :seq_len] = flat_blocks[:seq_len]
+
+    mask = torch.arange(max_seqlen, device=device)[None, :] < (cu_seqlens[1:] - cu_seqlens[:-1])[:, None]
+    final_contiguous_tensor = contiguous_cache[mask]
+
+    return final_contiguous_tensor
