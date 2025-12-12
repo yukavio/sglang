@@ -271,6 +271,7 @@ def main():
             "--tp", "1",
             "--trust-remote-code",
             "--context-length", "32000",
+            "--page-size", "128",
 
             # DuoAttention Args
             "--enable-duo-attention",

@@ -627,3 +627,131 @@ def test_streaming_attention_gqa(
     )
 
 
+@pytest.mark.skipif(
+    not is_hopper(), reason="Streaming attention requires Hopper GPU (SM 9.0)"
+)
+@pytest.mark.parametrize("seqlen", [512, 1024, 2048, 4096])
+def test_streaming_attention_gqa_with_varlen(seqlen):
+    """
+    这个测试专门验证 CUDA Kernel 在 GQA (`pack_gqa=True`) 和
+    Varlen (`cu_seqlens_q` is not None) 两种模式同时开启时的正确性。
+    这精确地模拟了 sglang 集成环境中的失败场景。
+    """
+    # 1. 参数设置 (使用较小的值以便快速调试)
+    device = torch.device("cuda")
+    batch_size = 2
+    page_size = 32
+    sink_size = 8
+    local_size = 16
+    gqa_group_size = 2
+    num_heads = 4
+    num_kv_heads = num_heads // gqa_group_size
+    head_dim = 64
+    dtype = torch.bfloat16
+
+    # 2. 创建输入数据
+    # Q: [B, seqlen, num_heads, head_dim]
+    q_padded = torch.randn(batch_size, seqlen, num_heads, head_dim, dtype=dtype, device=device)
+    # K/V: [B, seqlen, num_kv_heads, head_dim]
+    k_padded = torch.randn(batch_size, seqlen, num_kv_heads, head_dim, dtype=dtype, device=device)
+    v_padded = torch.randn(batch_size, seqlen, num_kv_heads, head_dim, dtype=dtype, device=device)
+
+    # 3. 构造 Varlen 输入 (这是与之前测试的核心区别)
+    total_tokens = batch_size * seqlen
+    
+    # Q (Varlen): [total_tokens, num_heads, head_dim]
+    q_varlen = q_padded.reshape(total_tokens, num_heads, head_dim)
+    
+    # K/V (Varlen): [total_tokens, num_kv_heads, head_dim]
+    k_varlen = k_padded.reshape(total_tokens, num_kv_heads, head_dim)
+    v_varlen = v_padded.reshape(total_tokens, num_kv_heads, head_dim)
+    
+    # cu_seqlens_q: 描述 Varlen 张量的序列边界
+    cu_seqlens_q = torch.arange(
+        0, (batch_size + 1) * seqlen, step=seqlen, dtype=torch.int32, device=device
+    )
+
+    # 4. 构造 Paged K/V Cache
+    num_blocks_per_seq = (seqlen + page_size - 1) // page_size
+    max_num_blocks = num_blocks_per_seq * batch_size * 2
+    
+    k_cache = torch.zeros(max_num_blocks, page_size, num_kv_heads, head_dim, dtype=dtype, device=device)
+    v_cache = torch.zeros(max_num_blocks, page_size, num_kv_heads, head_dim, dtype=dtype, device=device)
+
+    page_table = torch.zeros(batch_size, num_blocks_per_seq, dtype=torch.int32, device=device)
+    all_random_indices = torch.randperm(max_num_blocks, device=device, dtype=torch.int32)
+
+    for b in range(batch_size):
+        start_idx = b * num_blocks_per_seq
+        end_idx = start_idx + num_blocks_per_seq
+        available_indices = all_random_indices[start_idx:end_idx]
+        page_table[b] = available_indices
+
+        for i, block_idx in enumerate(available_indices):
+            start_token = i * page_size
+            end_token = min((i + 1) * page_size, seqlen)
+            if (valid_len := end_token - start_token) > 0:
+                k_cache[block_idx, :valid_len] = k_padded[b, start_token:end_token]
+                v_cache[block_idx, :valid_len] = v_padded[b, start_token:end_token]
+
+    # 5. 调用待测的 CUDA Kernel
+    softmax_scale = 1.0 / math.sqrt(head_dim)
+    seqused_k = torch.full((batch_size,), seqlen, dtype=torch.int32, device=device)
+
+    # 核心调用：使用 q_varlen 和 cu_seqlens_q
+    out_cuda_varlen, _ = streaming_sparse_attn_func(
+        q_varlen,
+        k_cache,
+        v_cache,
+        cu_seqlens_q=cu_seqlens_q,  # <-- 使用 Varlen
+        cu_seqlens_k=None,
+        seqused_q=None,
+        seqused_k=seqused_k,
+        page_table=page_table,
+        softmax_scale=softmax_scale,
+        causal=True,
+        window_size=(local_size - 1, 0),
+        sink_size=sink_size,
+        enable_streaming=True,
+        pack_gqa=True,  # <-- 开启 GQA
+        position_ids=None,
+        # 其他参数
+        learnable_sink=None, softcap=0.0, groupwise=False, m_block_size=128, n_block_size=page_size,
+    )
+    # Kernel 返回的是 Varlen 格式，需要 reshape 以便比较
+    out_cuda = out_cuda_varlen.reshape(batch_size, seqlen, num_heads, head_dim)
+
+    # 6. 调用 PyTorch 参考实现
+    head_mask_type = torch.full((num_heads,), -1, dtype=torch.int32, device=device)
+    
+    # 参考实现需要手动扩展 K/V head
+    expanded_k_varlen = k_varlen.repeat_interleave(gqa_group_size, dim=1)
+    expanded_v_varlen = v_varlen.repeat_interleave(gqa_group_size, dim=1)
+
+    out_ref_varlen, _ = block_streaming_attention_ref(
+        q=q_varlen,
+        k=expanded_k_varlen,
+        v=expanded_v_varlen,
+        cu_seqlens_q=cu_seqlens_q,
+        cu_seqlens_k=cu_seqlens_q,
+        max_seqlen_q=seqlen,
+        max_seqlen_k=seqlen,
+        head_mask_type=head_mask_type,
+        sink_size=sink_size,
+        local_size=local_size,
+        softmax_scale=softmax_scale,
+        is_causal=True,
+    )
+    out_ref = out_ref_varlen.reshape(batch_size, seqlen, num_heads, head_dim)
+
+    # 7. 断言比较结果
+    print("Shape of CUDA output:", out_cuda.shape)
+    print("Shape of Reference output:", out_ref.shape)
+    assert out_cuda.shape == out_ref.shape, "Output shapes do not match!"
+
+    # 使用一个相对严格的容差来捕捉计算错误
+    torch.testing.assert_close(out_cuda, out_ref, atol=1e-2, rtol=1e-2)
+
+    print(f"Paged streaming attention with GQA and Varlen test passed!")
+
+
