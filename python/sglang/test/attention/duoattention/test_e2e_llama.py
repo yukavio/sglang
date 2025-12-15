@@ -15,7 +15,7 @@ from sglang.test.attention.duoattention.utils import (
 )
 
 
-ROOT_PATH = "/mnt/cephfs/chengqi/"
+ROOT_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../../.."))
 LLAMA_LONG_MODEL_PATH = os.path.join(ROOT_PATH, "models/Llama-3-8B-Instruct-Gradient-1048k")
 ATTN_PATTERN_PATH = os.path.join(ROOT_PATH, "attn_patterns/Llama-3-8B-Instruct-Gradient-4194k/lr=0.02-reg=0.05-ctx=1000_32000-multi_passkey10")
 BASE_URL = DEFAULT_URL_FOR_TEST
